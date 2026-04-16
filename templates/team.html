@@ -1,0 +1,386 @@
+{% extends "base.html" %}
+{% block title %}Team | {{ client_name or "Echo Audit" }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Team</div>
+    <div class="page-subtitle">Manage who has access to {{ active_org_name or client_name }}.</div>
+  </div>
+  {% if user_role in ('admin','super_admin') %}
+  <div class="hstack-wrap">
+    <button type="button" class="btn btn-primary btn-sm" id="btn-add-member">Add member</button>
+  </div>
+  {% endif %}
+</div>
+
+{# Temp-password banner slot — filled after a successful member creation. #}
+<div id="temp-pw-slot"></div>
+
+<section class="panel" style="margin-bottom:14px;">
+  <div class="panel-title">Members</div>
+  <div id="team-wrap">
+    <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+    <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+    <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+  </div>
+</section>
+
+<details class="collapsible" style="margin-top:14px;">
+  <summary>Departments</summary>
+  <div class="collapsible-body">
+    <div class="hstack-wrap" style="margin-bottom:10px;">
+      <span class="muted text-small">Users are scoped to the company through their department.</span>
+      <span class="spacer"></span>
+      {% if user_role in ('admin','super_admin') %}
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-add-dept">Add department</button>
+      {% endif %}
+    </div>
+    <div id="dept-wrap">
+      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+    </div>
+  </div>
+</details>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  "use strict";
+  const EA = window.EA;
+  const $ = (s) => document.querySelector(s);
+
+  const USER_ROLE = "{{ user_role or '' }}";
+  const USER_ID = {{ user_id or 'null' }};
+  const CAN_WRITE = ["admin","super_admin"].indexOf(USER_ROLE) !== -1;
+  const ROLE_OPTIONS = [
+    {value:"admin",   label:"Admin"},
+    {value:"manager", label:"Manager"},
+    {value:"caller",  label:"Caller"},
+  ];
+
+  let departments = [];
+
+  document.addEventListener("DOMContentLoaded", init);
+
+  async function init() {
+    await loadDepartments();   // load first so Add Member modal has options
+    await loadTeam();
+    if (CAN_WRITE) {
+      const addBtn = $("#btn-add-member"); if (addBtn) addBtn.addEventListener("click", onAddMember);
+      const deptBtn = $("#btn-add-dept"); if (deptBtn) deptBtn.addEventListener("click", onAddDept);
+    }
+  }
+
+  // ── Team members ─────────────────────────────────────
+  async function loadTeam() {
+    const wrap = $("#team-wrap");
+    try {
+      const team = await EA.fetchJSON("/api/team");
+      renderTeam(team);
+    } catch (err) {
+      EA.showError(wrap, err.message || "Failed to load team.");
+    }
+  }
+
+  function renderTeam(team) {
+    const wrap = $("#team-wrap");
+    if (!team.length) {
+      wrap.innerHTML = '<div class="empty-state">No members yet. Add someone to get started.</div>';
+      return;
+    }
+    const head =
+      '<table class="history-table">' +
+        '<thead><tr>' +
+          '<th>Name</th><th>Email</th><th>Role</th><th>Status</th>' +
+          '<th>Last login</th><th style="text-align:right;">Actions</th>' +
+        '</tr></thead><tbody id="team-tbody">';
+    wrap.innerHTML = head + team.map(renderRow).join("") + "</tbody></table>";
+    wireRowActions();
+  }
+
+  function renderRow(u) {
+    const name = [u.user_first_name, u.user_last_name].filter(Boolean).join(" ") || "—";
+    const roleSlug = (u.role_name || "").replace(/_/g, "-");
+    const rolePill = u.role_name
+      ? '<span class="role-pill role-' + u.role_name + ' role-' + roleSlug + '">' + EA.esc(u.role_name) + '</span>'
+      : '<span class="muted text-small">—</span>';
+    const statusSlug = (u.status_name || "").toLowerCase();
+    const statusPill = '<span class="status-pill status-' + statusSlug + '">' +
+      EA.esc(u.status_name || "—") + '</span>';
+    const last = u.user_last_login_at
+      ? EA.formatDate(u.user_last_login_at) : '<span class="muted text-small">Never</span>';
+
+    const isSelf = Number(u.user_id) === Number(USER_ID);
+    const canTouch = CAN_WRITE;
+    const isInactive = Number(u.status_id) === 2;
+
+    const editBtn = canTouch
+      ? '<button type="button" class="btn btn-ghost btn-sm action-edit" data-uid="' + u.user_id + '">Edit</button>'
+      : '';
+    const toggleBtn = (canTouch && !isSelf)
+      ? (isInactive
+          ? '<button type="button" class="btn btn-ghost btn-sm action-reactivate" data-uid="' + u.user_id + '">Reactivate</button>'
+          : '<button type="button" class="btn btn-ghost btn-sm action-deactivate" data-uid="' + u.user_id + '">Deactivate</button>')
+      : '';
+
+    return (
+      '<tr data-uid="' + u.user_id + '"' +
+        ' data-fname="' + EA.esc(u.user_first_name || "") + '"' +
+        ' data-lname="' + EA.esc(u.user_last_name || "") + '"' +
+        ' data-email="' + EA.esc(u.user_email || "") + '"' +
+        ' data-role="' + EA.esc(u.role_name || "") + '"' +
+        ' data-dept="' + EA.esc(u.department_id || "") + '"' +
+        '>' +
+        '<td>' + EA.esc(name) + (isSelf ? ' <span class="muted text-small">(you)</span>' : '') + '</td>' +
+        '<td>' + EA.esc(u.user_email || "—") + '</td>' +
+        '<td>' + rolePill + '</td>' +
+        '<td>' + statusPill + '</td>' +
+        '<td>' + last + '</td>' +
+        '<td style="text-align:right; white-space:nowrap;">' + editBtn + ' ' + toggleBtn + '</td>' +
+      '</tr>'
+    );
+  }
+
+  function wireRowActions() {
+    document.querySelectorAll(".action-edit").forEach((btn) => {
+      btn.addEventListener("click", () => onEditMember(btn.dataset.uid));
+    });
+    document.querySelectorAll(".action-deactivate").forEach((btn) => {
+      btn.addEventListener("click", () => onToggleMember(btn.dataset.uid, "deactivate"));
+    });
+    document.querySelectorAll(".action-reactivate").forEach((btn) => {
+      btn.addEventListener("click", () => onToggleMember(btn.dataset.uid, "reactivate"));
+    });
+  }
+
+  // ── Add member ───────────────────────────────────────
+  function randomTempPassword() {
+    const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    let out = "";
+    for (let i = 0; i < 12; i++) out += chars[Math.floor(Math.random() * chars.length)];
+    return out;
+  }
+
+  async function onAddMember() {
+    if (!departments.length) {
+      EA.toast("Create a department first.", "error");
+      return;
+    }
+    const temp = randomTempPassword();
+    const data = await EA.formDialog({
+      title: "Add team member",
+      fields: [
+        { name:"user_first_name", label:"First name", required:true },
+        { name:"user_last_name",  label:"Last name",  required:true },
+        { name:"user_email",      label:"Email", type:"email", required:true },
+        { name:"role_name", label:"Role", type:"select", required:true,
+          options: ROLE_OPTIONS, value:"caller" },
+        { name:"department_id", label:"Department", type:"select", required:true,
+          options: departments.map((d) => ({value:d.department_id, label:d.department_name})) },
+        { name:"password", label:"Temporary password", value: temp, readOnly:true,
+          help:"The member will be forced to change this on first login." },
+      ],
+      okLabel: "Add member",
+    });
+    if (!data) return;
+
+    try {
+      const payload = {
+        user_first_name: data.user_first_name,
+        user_last_name:  data.user_last_name,
+        user_email:      data.user_email,
+        role_name:       data.role_name,
+        department_id:   parseInt(data.department_id, 10),
+        password:        data.password || temp,
+      };
+      const created = await EA.fetchJSON("/api/team", { method:"POST", body: payload });
+      // Prepend to tbody without reload
+      const tbody = document.getElementById("team-tbody");
+      if (tbody) tbody.insertAdjacentHTML("afterbegin", renderRow(created));
+      else await loadTeam();
+      wireRowActions();
+      showTempPassword(payload.user_email, payload.password);
+      EA.toast("Member added.", "success");
+    } catch (err) {
+      EA.toast(err.message || "Could not add member", "error");
+    }
+  }
+
+  function showTempPassword(email, pw) {
+    const slot = $("#temp-pw-slot");
+    slot.innerHTML =
+      '<div class="temp-pw-banner">' +
+        '<span>Temporary password for <strong>' + EA.esc(email) + '</strong>:</span>' +
+        '<span class="temp-pw-value">' + EA.esc(pw) + '</span>' +
+        '<button type="button" class="inline-copy-btn" data-pw="' + EA.esc(pw) + '">Copy</button>' +
+        '<span class="spacer"></span>' +
+        '<button type="button" class="flash-dismiss" aria-label="Dismiss">×</button>' +
+      '</div>';
+    slot.querySelector(".inline-copy-btn").addEventListener("click", (e) => {
+      navigator.clipboard.writeText(e.target.dataset.pw).then(
+        () => EA.toast("Copied.", "info"),
+        () => EA.toast("Copy failed — select the text manually.", "error"),
+      );
+    });
+    slot.querySelector(".flash-dismiss").addEventListener("click", () => { slot.innerHTML = ""; });
+  }
+
+  // ── Edit member ───────────────────────────────────
+  async function onEditMember(userId) {
+    const tr = document.querySelector('tr[data-uid="' + userId + '"]');
+    if (!tr) return;
+    const data = await EA.formDialog({
+      title: "Edit member",
+      fields: [
+        { name:"user_first_name", label:"First name", required:true, value: tr.dataset.fname },
+        { name:"user_last_name",  label:"Last name",  required:true, value: tr.dataset.lname },
+        { name:"user_email",      label:"Email", type:"email", required:true, value: tr.dataset.email },
+        { name:"role_name", label:"Role", type:"select", required:true,
+          options: ROLE_OPTIONS, value: tr.dataset.role },
+      ],
+      okLabel: "Save",
+    });
+    if (!data) return;
+    try {
+      const updated = await EA.fetchJSON("/api/team/" + encodeURIComponent(userId), {
+        method: "PUT",
+        body: {
+          user_first_name: data.user_first_name,
+          user_last_name:  data.user_last_name,
+          user_email:      data.user_email,
+          role_name:       data.role_name,
+        },
+      });
+      // Replace row in place
+      tr.outerHTML = renderRow(updated);
+      wireRowActions();
+      EA.toast("Member updated.", "success");
+    } catch (err) {
+      EA.toast(err.message || "Update failed", "error");
+    }
+  }
+
+  async function onToggleMember(userId, action) {
+    const verb = action === "deactivate" ? "Deactivate" : "Reactivate";
+    const ok = await EA.confirmDialog({
+      title: verb + " member?",
+      body:  (action === "deactivate"
+        ? "Deactivated members can't log in until reactivated."
+        : "This user will regain access immediately."),
+      okLabel: verb,
+      variant: action === "deactivate" ? "danger" : "primary",
+    });
+    if (!ok) return;
+
+    try {
+      await EA.fetchJSON(
+        "/api/team/" + encodeURIComponent(userId) + "/" + action,
+        { method: "POST" },
+      );
+      // Re-fetch the row to pick up updated status fields
+      await loadTeam();
+      EA.toast("Member " + (action === "deactivate" ? "deactivated." : "reactivated."), "success");
+    } catch (err) {
+      EA.toast(err.message || "Update failed", "error");
+    }
+  }
+
+  // ── Departments ──────────────────────────────────
+  async function loadDepartments() {
+    const wrap = $("#dept-wrap");
+    try {
+      departments = await EA.fetchJSON("/api/departments");
+      renderDepartments();
+    } catch (err) {
+      EA.showError(wrap, err.message || "Failed to load departments.");
+    }
+  }
+
+  function renderDepartments() {
+    const wrap = $("#dept-wrap");
+    if (!departments.length) {
+      wrap.innerHTML = '<div class="empty-state">No departments yet.</div>';
+      return;
+    }
+    const rows = departments.map((d) => {
+      const actions = CAN_WRITE
+        ? ('<button type="button" class="btn btn-ghost btn-sm dept-edit" data-id="' + d.department_id + '" data-name="' + EA.esc(d.department_name) + '">Rename</button>' +
+           '<button type="button" class="btn btn-ghost btn-sm dept-delete" data-id="' + d.department_id + '">Delete</button>')
+        : '';
+      return (
+        '<tr data-did="' + d.department_id + '">' +
+          '<td>' + EA.esc(d.department_name) + '</td>' +
+          '<td style="text-align:right;">' + actions + '</td>' +
+        '</tr>'
+      );
+    }).join("");
+    wrap.innerHTML =
+      '<table class="history-table"><thead><tr><th>Name</th><th></th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table>';
+    wrap.querySelectorAll(".dept-edit").forEach((b) => {
+      b.addEventListener("click", () => onEditDept(b.dataset.id, b.dataset.name));
+    });
+    wrap.querySelectorAll(".dept-delete").forEach((b) => {
+      b.addEventListener("click", () => onDeleteDept(b.dataset.id));
+    });
+  }
+
+  async function onAddDept() {
+    const data = await EA.formDialog({
+      title: "Add department",
+      fields: [{ name:"department_name", label:"Name", required:true }],
+      okLabel: "Create",
+    });
+    if (!data) return;
+    try {
+      await EA.fetchJSON("/api/departments", {
+        method: "POST",
+        body: { department_name: data.department_name },
+      });
+      await loadDepartments();
+      EA.toast("Department added.", "success");
+    } catch (err) {
+      EA.toast(err.message || "Create failed", "error");
+    }
+  }
+
+  async function onEditDept(id, currentName) {
+    const data = await EA.formDialog({
+      title: "Rename department",
+      fields: [{ name:"department_name", label:"Name", required:true, value: currentName }],
+      okLabel: "Save",
+    });
+    if (!data) return;
+    try {
+      await EA.fetchJSON("/api/departments/" + encodeURIComponent(id), {
+        method: "PUT",
+        body: { department_name: data.department_name },
+      });
+      await loadDepartments();
+      EA.toast("Department renamed.", "success");
+    } catch (err) {
+      EA.toast(err.message || "Rename failed", "error");
+    }
+  }
+
+  async function onDeleteDept(id) {
+    const ok = await EA.confirmDialog({
+      title: "Delete department?",
+      body:  "Members in this department will need to be reassigned.",
+      okLabel: "Delete",
+      variant: "danger",
+    });
+    if (!ok) return;
+    try {
+      await EA.fetchJSON("/api/departments/" + encodeURIComponent(id), { method: "DELETE" });
+      await loadDepartments();
+      EA.toast("Department deleted.", "success");
+    } catch (err) {
+      EA.toast(err.message || "Delete failed", "error");
+    }
+  }
+})();
+</script>
+{% endblock %}

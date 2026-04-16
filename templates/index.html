@@ -1,0 +1,750 @@
+{% extends "base.html" %}
+{% block title %}Dashboard | {{ client_name or "Echo Audit" }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  /* ── Dashboard 3-row layout (scoped to this template) ─────── */
+  .dash3 {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* Row 1 — stat cards */
+  .dash3-stats {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+  }
+  .dash3-stats .stat-card {
+    min-width: 0;        /* allow text to ellipsize instead of blowing the row */
+    padding: 14px 16px;
+  }
+  .dash3-stats .stat-label { font-size: 0.78rem; }
+  .dash3-stats .stat-value { font-size: 1.7rem; }
+
+  /* Row 2 — filter bar + chart */
+  .dash3-chart-row {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .dash3-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 12px;
+    align-items: center;
+    padding: 10px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .dash3-filters .filter-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .dash3-filters label {
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin-right: 4px;
+  }
+  .dash3-filters select,
+  .dash3-filters input[type="date"] {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 0.82rem;
+    padding: 5px 8px;
+    border-radius: 6px;
+    font-family: inherit;
+  }
+  .segmented {
+    display: inline-flex;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .segmented button {
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    padding: 5px 10px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    border-right: 1px solid var(--border);
+  }
+  .segmented button:last-child { border-right: none; }
+  .segmented button:hover { color: var(--text); }
+  .segmented button.active {
+    background: var(--accent-soft);
+    color: var(--text);
+  }
+  .btn-clear-filters {
+    margin-left: auto;
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    font-size: 0.78rem;
+    cursor: pointer;
+    padding: 4px 8px;
+  }
+  .btn-clear-filters:hover { color: var(--text); }
+
+  .chart-panel {
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    min-height: 420px;
+  }
+  .chart-panel .chart-canvas-wrap {
+    flex: 1 1 auto;
+    position: relative;
+    width: 100%;
+    min-height: 420px;
+  }
+  /* Canvas occupies the wrap; overlays sit on top and are mutex with it. */
+  #score-chart { display: block; width: 100%; height: 100%; }
+
+  .chart-loading-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(13, 26, 46, 0.55);
+    border-radius: var(--radius);
+    z-index: 2;
+    backdrop-filter: blur(1px);
+  }
+  .chart-loading-overlay .spinner {
+    width: 28px; height: 28px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: chart-spin 0.8s linear infinite;
+  }
+  @keyframes chart-spin { to { transform: rotate(360deg); } }
+  .chart-empty-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 0.92rem;
+    z-index: 2;
+    background: var(--surface);
+    border-radius: var(--radius);
+  }
+  /* The `hidden` HTML attribute would normally apply
+     `[hidden] { display: none }` from the user-agent stylesheet, but the
+     two overlay rules above explicitly set `display: flex`, which has the
+     same specificity as `[hidden]` and is declared later, so it wins.
+     Force-hide the overlays when the attribute is set. */
+  .chart-loading-overlay[hidden],
+  .chart-empty-overlay[hidden] {
+    display: none !important;
+  }
+
+  /* Row 3 — bottom split */
+  .dash3-bottom {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .dash3-bottom .panel { padding: 16px 18px; }
+
+  .leader-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .leader-row:last-child { border-bottom: none; }
+  .leader-rank {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--surface-2);
+    color: var(--muted);
+    text-align: center;
+    line-height: 24px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .leader-name {
+    font-size: 0.92rem;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .leader-meta { font-size: 0.78rem; color: var(--muted); }
+
+  .recent-item {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .recent-item:last-child { border-bottom: none; }
+  .recent-item:hover { background: var(--surface-2); }
+  .recent-date { font-size: 0.8rem; color: var(--muted); width: 68px; flex-shrink: 0; }
+  .recent-name {
+    flex: 1;
+    font-size: 0.92rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Responsive: <768px */
+  @media (max-width: 768px) {
+    .dash3-stats { grid-template-columns: repeat(2, 1fr); }
+    .dash3-stats .stat-value { font-size: 1.4rem; }
+    .dash3-chart-row { }
+    .dash3-filters {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      padding-bottom: 8px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .dash3-filters .filter-group { flex-shrink: 0; }
+    .chart-panel { min-height: 340px; }
+    .chart-panel .chart-canvas-wrap { min-height: 340px; }
+    .dash3-bottom { grid-template-columns: 1fr; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Dashboard</div>
+    <div class="page-subtitle">
+      Welcome back{% if user_name %}, {{ user_name.split()[0] }}{% endif %}.
+    </div>
+  </div>
+</div>
+
+<div class="dash3">
+
+  {# ── Row 1: stat cards ─────────────────────────────────── #}
+  <div class="dash3-stats">
+    <div class="stat-card">
+      <span class="stat-label">Total Calls</span>
+      <span class="stat-value" id="stat-total">
+        <span class="skeleton" style="display:inline-block;width:54px;height:22px;"></span>
+      </span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Average Score</span>
+      <span class="stat-value" id="stat-avg">
+        <span class="skeleton" style="display:inline-block;width:54px;height:22px;"></span>
+      </span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Below 5.0</span>
+      <span class="stat-value stat-accent-danger" id="stat-below">
+        <span class="skeleton" style="display:inline-block;width:54px;height:22px;"></span>
+      </span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">No Answer</span>
+      <span class="stat-value stat-accent-warning" id="stat-noans">
+        <span class="skeleton" style="display:inline-block;width:54px;height:22px;"></span>
+      </span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Active Projects</span>
+      <span class="stat-value" id="stat-projects">
+        <span class="skeleton" style="display:inline-block;width:54px;height:22px;"></span>
+      </span>
+    </div>
+  </div>
+
+  {# ── Row 2: filter bar + chart ─────────────────────────── #}
+  <div class="dash3-chart-row">
+
+    <div class="dash3-filters">
+      <div class="filter-group">
+        <label>Date</label>
+        <div class="segmented" id="date-preset" role="tablist">
+          <button type="button" data-preset="7">Last 7 Days</button>
+          <button type="button" data-preset="30" class="active">Last 30 Days</button>
+          <button type="button" data-preset="90">Last 90 Days</button>
+          <button type="button" data-preset="all">All Time</button>
+          <button type="button" data-preset="custom">Custom</button>
+        </div>
+        <input type="date" id="date-from" hidden>
+        <input type="date" id="date-to"   hidden>
+      </div>
+
+      <div class="filter-group">
+        <label for="f-location">Location</label>
+        <select id="f-location"><option value="">All Locations</option></select>
+      </div>
+
+      <div class="filter-group">
+        <label for="f-project">Project</label>
+        <select id="f-project"><option value="">All Projects</option></select>
+      </div>
+
+      <div class="filter-group">
+        <label for="f-campaign">Campaign</label>
+        <select id="f-campaign"><option value="">All Campaigns</option></select>
+      </div>
+
+      <div class="filter-group">
+        <label for="f-agent">Agent</label>
+        <select id="f-agent"><option value="">All Agents</option></select>
+      </div>
+
+      <button type="button" class="btn-clear-filters" id="btn-clear-filters">
+        Clear filters
+      </button>
+    </div>
+
+    <section class="panel chart-panel">
+      <div class="panel-title">Score Trend</div>
+      <div class="chart-canvas-wrap" id="chart-wrap">
+        <canvas id="score-chart"></canvas>
+        <div id="chart-loading" class="chart-loading-overlay" hidden>
+          <div class="spinner" aria-label="Loading chart"></div>
+        </div>
+        <div id="chart-empty" class="chart-empty-overlay" hidden>
+          No calls match the current filters.
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  {# ── Row 3: leaderboard + recent grades (50/50) ────────── #}
+  <div class="dash3-bottom">
+    <section class="panel">
+      <div class="panel-title">Top Agents</div>
+      <div id="leaderboard">
+        <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+        <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+        <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">Recent Grades</div>
+      <div id="recent-wrap">
+        <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+        <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+        <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+      </div>
+    </section>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  "use strict";
+  const EA = window.EA;
+  let chart = null;
+  let activePreset = "30";
+
+  // ── Date helpers ─────────────────────────────────────────
+  function isoDaysAgo(days) {
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    return d.toISOString().slice(0, 10);
+  }
+  function isoToday() { return new Date().toISOString().slice(0, 10); }
+  function resolveDateRange() {
+    if (activePreset === "all") return {};
+    if (activePreset === "custom") {
+      const f = document.getElementById("date-from").value;
+      const t = document.getElementById("date-to").value;
+      const out = {};
+      if (f) out.date_from = f;
+      if (t) out.date_to = t;
+      return out;
+    }
+    const n = parseInt(activePreset, 10);
+    return { date_from: isoDaysAgo(n), date_to: isoToday() };
+  }
+
+  // ── Left column renderers ────────────────────────────────
+  function renderStats(s) {
+    s = s || {};
+    const num = (v, fallback = 0) =>
+      (v === null || v === undefined) ? fallback : v;
+    document.getElementById("stat-total").textContent    = num(s.total_calls, 0);
+    document.getElementById("stat-avg").textContent      =
+      (s.avg_score === null || s.avg_score === undefined)
+        ? "—" : EA.formatScore(s.avg_score);
+    document.getElementById("stat-below").textContent    = num(s.below_threshold, 0);
+    document.getElementById("stat-noans").textContent    = num(s.no_answer_count, 0);
+    document.getElementById("stat-projects").textContent = num(s.active_projects, 0);
+  }
+
+  function renderLeaderboard(rows) {
+    const box = document.getElementById("leaderboard");
+    if (!rows || !rows.length) {
+      box.innerHTML = '<div class="empty-state">No graded calls this month.</div>';
+      return;
+    }
+    box.innerHTML = rows.slice(0, 3).map((r, i) => {
+      const cls = EA.scoreClass(r.avg_score);
+      const name = EA.esc(r.respondent_name || "—");
+      return (
+        '<div class="leader-row">' +
+          '<span class="leader-rank">' + (i + 1) + '</span>' +
+          '<div class="leader-name" title="' + name + '">' + name + '</div>' +
+          '<span class="score-pill ' + cls + '">' +
+            EA.formatScore(r.avg_score) +
+          '</span>' +
+          '<span class="leader-meta">' + (r.call_count || 0) +
+            ' call' + ((r.call_count === 1) ? '' : 's') +
+          '</span>' +
+        '</div>'
+      );
+    }).join("");
+  }
+
+  function renderRecent(rows) {
+    const box = document.getElementById("recent-wrap");
+    if (!rows || !rows.length) {
+      box.innerHTML = '<div class="empty-state">No grades yet.</div>';
+      return;
+    }
+    box.innerHTML = rows.slice(0, 5).map((r) => {
+      const cls = EA.scoreClass(r.interaction_overall_score);
+      const href = "/app/history/" + encodeURIComponent(r.interaction_id);
+      const full = r.respondent_name || "—";
+      const name = full.length > 30 ? (full.slice(0, 29) + "…") : full;
+      let compact = "—";
+      if (r.interaction_date) {
+        const d = new Date(r.interaction_date);
+        if (!isNaN(d.getTime())) {
+          const months = ["Jan","Feb","Mar","Apr","May","Jun",
+                          "Jul","Aug","Sep","Oct","Nov","Dec"];
+          compact = months[d.getMonth()] + " " + d.getDate();
+        }
+      }
+      const callTime = EA.formatCallTime(
+        r.interaction_call_start_time,
+        r.interaction_uploaded_at,
+        null,
+      );
+      const dateCell = (callTime && callTime !== "—")
+        ? ('<span class="recent-date" style="display:flex;flex-direction:column;line-height:1.15;">' +
+             EA.esc(compact) +
+             '<span class="muted text-small" style="font-size:0.7rem;">' + EA.esc(callTime) + '</span>' +
+           '</span>')
+        : '<span class="recent-date">' + EA.esc(compact) + '</span>';
+      // Stack respondent name on top of a muted location line — location is
+      // optional (older rows / unscoped projects may have none).
+      const locName = r.location_name || "";
+      const nameStack = locName
+        ? ('<span class="recent-name" style="display:flex;flex-direction:column;line-height:1.15;" title="' + EA.esc(full) + '">' +
+             EA.esc(name) +
+             '<span class="muted text-small" style="font-size:0.7rem;">' + EA.esc(locName) + '</span>' +
+           '</span>')
+        : ('<span class="recent-name" title="' + EA.esc(full) + '">' + EA.esc(name) + '</span>');
+      return (
+        '<div class="recent-item" data-href="' + href + '">' +
+          dateCell +
+          nameStack +
+          '<span class="score-pill ' + cls + '">' +
+            EA.formatScore(r.interaction_overall_score) +
+          '</span>' +
+        '</div>'
+      );
+    }).join("");
+    box.querySelectorAll(".recent-item[data-href]").forEach((el) => {
+      el.addEventListener("click", () => { window.location.href = el.dataset.href; });
+    });
+  }
+
+  function populateAgentFilter(data) {
+    const sel = document.getElementById("f-agent");
+    const seen = new Set();
+    const add = (id, name) => {
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = name || ("User #" + id);
+      sel.appendChild(opt);
+    };
+    (data.leaderboard || []).forEach((r) => add(r.respondent_user_id, r.respondent_name));
+    (data.recent_interactions || []).forEach((r) => add(r.respondent_user_id, r.respondent_name));
+  }
+
+  function populateSelect(selId, rows, valueField, labelField) {
+    const sel = document.getElementById(selId);
+    if (!sel) return;
+    rows.forEach((row) => {
+      const opt = document.createElement("option");
+      opt.value = row[valueField];
+      opt.textContent = row[labelField];
+      sel.appendChild(opt);
+    });
+  }
+
+  // ── Chart state machine (mutex: loading / empty / rendered) ──
+  //
+  //   LOADING  → loading visible, empty hidden, canvas hidden
+  //   EMPTY    → loading hidden,  empty visible, canvas hidden
+  //   RENDERED → loading hidden,  empty hidden,  canvas visible
+  //
+  // Every transition goes through one of showChartLoading /
+  // showChartEmpty / renderChart — callers never toggle individual
+  // elements.
+  function _canvas() { return document.getElementById("score-chart"); }
+  function _loading() { return document.getElementById("chart-loading"); }
+  function _empty() { return document.getElementById("chart-empty"); }
+
+  function showChartLoading() {
+    _loading().hidden = false;
+    _empty().hidden   = true;
+    _canvas().style.visibility = "hidden";
+  }
+  function hideChartLoading() {
+    _loading().hidden = true;
+  }
+  function showChartEmpty(msg) {
+    const el = _empty();
+    el.textContent = msg || "No calls match the current filters.";
+    el.hidden = false;
+    _loading().hidden = true;
+    _canvas().style.visibility = "hidden";
+  }
+  function hideChartEmpty() { _empty().hidden = true; }
+  function showCanvas()     { _canvas().style.visibility = "visible"; }
+
+  function hasChartPoints(data) {
+    if (!data || !Array.isArray(data.labels) || data.labels.length === 0) return false;
+    const ds = (data.datasets || [])[0];
+    if (!ds || !Array.isArray(ds.data)) return false;
+    return ds.data.some((v) => v !== null && v !== undefined);
+  }
+
+  // ── Chart loader (filter-driven) ─────────────────────────
+  async function loadChart() {
+    const params = new URLSearchParams();
+    params.set("metric", "interaction_overall_score");
+    params.set("view_by", "date");
+
+    const range = resolveDateRange();
+    if (range.date_from) params.set("date_from", range.date_from);
+    if (range.date_to)   params.set("date_to",   range.date_to);
+
+    const loc   = document.getElementById("f-location").value;
+    const proj  = document.getElementById("f-project").value;
+    const camp  = document.getElementById("f-campaign").value;
+    const agent = document.getElementById("f-agent").value;
+    if (loc)   params.set("location_id",        loc);
+    if (proj)  params.set("project_id",         proj);
+    if (camp)  params.set("campaign_id",        camp);
+    if (agent) params.set("respondent_user_id", agent);
+
+    showChartLoading();
+    let data;
+    try {
+      data = await EA.fetchJSON("/api/dashboard/chart?" + params.toString());
+    } catch (err) {
+      hideChartLoading();
+      showChartEmpty(err.message || "Failed to load chart.");
+      return;
+    }
+    hideChartLoading();
+    if (!hasChartPoints(data)) {
+      showChartEmpty();
+    } else {
+      hideChartEmpty();
+      renderChart(data);
+    }
+  }
+
+  function renderChart(data) {
+    // Always tear down any prior instance before creating a new one —
+    // otherwise the old chart remains attached to the canvas, which
+    // manifests as ghost points on rerenders.
+    if (chart) { chart.destroy(); chart = null; }
+
+    const canvas = _canvas();
+    const dataset = (data.datasets && data.datasets[0]) || { data: [], label: "" };
+
+    const cfg = {
+      type: "line",
+      data: {
+        labels: data.labels,
+        datasets: [{
+          label: "Total Score",
+          data: dataset.data || [],
+          borderColor: "#2563eb",
+          backgroundColor: "rgba(37,99,235,0.15)",
+          borderWidth: 2,
+          pointRadius: 3,
+          pointHoverRadius: 5,
+          tension: 0.25,
+          fill: true,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          y: {
+            min: 0, max: 10,
+            ticks: { color: "#94a3b8", stepSize: 2 },
+            grid:  { color: "rgba(255,255,255,0.05)" },
+          },
+          x: {
+            ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true },
+            grid:  { color: "rgba(255,255,255,0.05)" },
+          },
+        },
+        plugins: { legend: { labels: { color: "#f1f5f9" } } },
+      },
+      plugins: [{
+        id: "threshold-line",
+        afterDraw(chartInstance) {
+          const { ctx, chartArea, scales } = chartInstance;
+          if (!scales.y) return;
+          const y = scales.y.getPixelForValue(5);
+          ctx.save();
+          ctx.strokeStyle = "rgba(239,68,68,0.7)";
+          ctx.setLineDash([4, 4]);
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(chartArea.left, y);
+          ctx.lineTo(chartArea.right, y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = "rgba(239,68,68,0.85)";
+          ctx.font = "11px Inter, sans-serif";
+          ctx.textAlign = "right";
+          ctx.fillText("threshold 5.0", chartArea.right - 6, y - 4);
+          ctx.restore();
+        },
+      }],
+    };
+
+    chart = new Chart(canvas, cfg);
+    showCanvas();
+    hideChartEmpty();
+  }
+
+  // ── Filter wiring ────────────────────────────────────────
+  function wireDatePresets() {
+    const wrap = document.getElementById("date-preset");
+    wrap.querySelectorAll("button[data-preset]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        activePreset = btn.dataset.preset;
+        wrap.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        const showCustom = (activePreset === "custom");
+        document.getElementById("date-from").hidden = !showCustom;
+        document.getElementById("date-to").hidden   = !showCustom;
+        if (!showCustom) loadChart();
+      });
+    });
+    ["date-from", "date-to"].forEach((id) => {
+      document.getElementById(id).addEventListener("change", () => {
+        if (activePreset === "custom") loadChart();
+      });
+    });
+  }
+
+  function wireDropdowns() {
+    ["f-location", "f-project", "f-campaign", "f-agent"].forEach((id) => {
+      document.getElementById(id).addEventListener("change", loadChart);
+    });
+    document.getElementById("btn-clear-filters").addEventListener("click", () => {
+      ["f-location", "f-project", "f-campaign", "f-agent"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.value = "";
+      });
+      activePreset = "30";
+      const wrap = document.getElementById("date-preset");
+      wrap.querySelectorAll("button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.preset === "30");
+      });
+      document.getElementById("date-from").hidden = true;
+      document.getElementById("date-to").hidden   = true;
+      document.getElementById("date-from").value = "";
+      document.getElementById("date-to").value   = "";
+      loadChart();
+    });
+  }
+
+  // ── Boot: 5 fetches in parallel on page load ─────────────
+  document.addEventListener("DOMContentLoaded", async function () {
+    wireDatePresets();
+    wireDropdowns();
+
+    showChartLoading();  // initial state: spinner shown, canvas + empty hidden
+
+    const initialDateFrom = isoDaysAgo(30);
+    const settle = (p) => p.then(
+      (v) => ({ ok: true, value: v }),
+      (e) => ({ ok: false, error: e }),
+    );
+
+    const [dash, chartData, projects, campaigns, locations] = await Promise.all([
+      settle(EA.fetchJSON("/api/dashboard")),
+      settle(EA.fetchJSON(
+        "/api/dashboard/chart?metric=interaction_overall_score&view_by=date" +
+        "&date_from=" + initialDateFrom)),
+      settle(EA.fetchJSON("/api/projects")),
+      settle(EA.fetchJSON("/api/campaigns")),
+      settle(EA.fetchJSON("/api/locations")),
+    ]);
+
+    // Left/bottom column renderers
+    if (dash.ok) {
+      const d = dash.value || {};
+      renderStats(d.stat_cards || {});
+      renderLeaderboard(d.leaderboard || []);
+      renderRecent(d.recent_interactions || []);
+      populateAgentFilter(d);
+    } else {
+      ["stat-total","stat-avg","stat-below","stat-noans","stat-projects"].forEach((id) => {
+        document.getElementById(id).textContent = "—";
+      });
+      EA.showError("#leaderboard",  dash.error.message || "Failed to load.");
+      EA.showError("#recent-wrap",  dash.error.message || "Failed to load.");
+    }
+
+    // Filter dropdowns
+    if (locations.ok) populateSelect("f-location", locations.value || [],
+                                      "location_id", "location_name");
+    if (projects.ok)  populateSelect("f-project",  projects.value  || [],
+                                      "project_id",  "project_name");
+    if (campaigns.ok) populateSelect("f-campaign", campaigns.value || [],
+                                      "campaign_id", "campaign_name");
+
+    // Chart — route through the same state machine loadChart uses.
+    hideChartLoading();
+    if (!chartData.ok) {
+      showChartEmpty(chartData.error.message || "Failed to load chart.");
+    } else if (!hasChartPoints(chartData.value)) {
+      showChartEmpty();
+    } else {
+      hideChartEmpty();
+      renderChart(chartData.value);
+    }
+  });
+})();
+</script>
+{% endblock %}

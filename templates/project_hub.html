@@ -1,0 +1,434 @@
+{% extends "base.html" %}
+{% block title %}Project | {{ client_name or "Echo Audit" }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  .hub-back {
+    display: inline-flex;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 0.85rem;
+    text-decoration: none;
+    margin-bottom: 10px;
+  }
+  .hub-back:hover { color: var(--text); }
+  .hub-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 22px;
+  }
+  .hub-subtitle { color: var(--muted); font-size: 0.9rem; margin-top: 4px; }
+
+  .hub-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+  @media (max-width: 720px) { .hub-stats { grid-template-columns: 1fr; } }
+  .hub-stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px 18px;
+  }
+  .hub-stat-label { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .hub-stat-value { font-size: 1.5rem; font-weight: 700; color: var(--text); margin-top: 4px; }
+  .hub-stat-value.good { color: var(--success); }
+  .hub-stat-value.warn { color: var(--warning); }
+  .hub-stat-value.bad  { color: var(--danger); }
+
+  .hub-action-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-bottom: 26px;
+  }
+  @media (max-width: 960px) { .hub-action-grid { grid-template-columns: 1fr; } }
+
+  .hub-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    min-height: 240px;
+  }
+  .hub-card-title { font-size: 1rem; font-weight: 700; margin-bottom: 8px; }
+  .hub-card-body  { flex: 1; color: var(--muted); font-size: 0.88rem; }
+  .hub-card-body table { width: 100%; border-collapse: collapse; }
+  .hub-card-body table td { padding: 6px 0; border-bottom: 1px dashed var(--border); font-size: 0.85rem; color: var(--text); }
+  .hub-card-body table tr:last-child td { border-bottom: none; }
+  .hub-card-footer { margin-top: 12px; display: flex; gap: 8px; }
+
+  .rubric-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 20px 22px;
+  }
+  .rubric-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+  .rubric-readonly-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .rubric-readonly-row {
+    display: grid;
+    grid-template-columns: 1fr 140px 60px;
+    gap: 12px;
+    padding: 10px 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    align-items: center;
+  }
+  .rubric-readonly-row .rr-name { font-weight: 600; color: var(--text); font-size: 0.92rem; }
+  .rubric-readonly-row .rr-type,
+  .rubric-readonly-row .rr-weight { color: var(--muted); font-size: 0.82rem; }
+  .rubric-readonly-row .rr-guidance {
+    grid-column: 1 / -1;
+    color: var(--muted);
+    font-size: 0.82rem;
+    padding-top: 4px;
+    border-top: 1px dashed var(--border);
+    line-height: 1.5;
+  }
+
+  /* ── Project Settings popover ───────────────────────── */
+  .settings-wrap { position: relative; display: inline-block; }
+  .settings-popover {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    min-width: 220px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+    z-index: 50;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+  }
+  .settings-popover[hidden] { display: none !important; }
+  .settings-popover button {
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 0.88rem;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .settings-popover button:hover { background: var(--surface-2); }
+  .settings-popover .settings-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 6px;
+  }
+  .settings-popover .danger { color: var(--danger); }
+  .settings-popover .danger:hover { background: rgba(255,69,58,0.1); }
+</style>
+{% endblock %}
+
+{% block content %}
+<a href="/app/projects" class="hub-back">← Projects</a>
+
+<div class="hub-header">
+  <div>
+    <div class="page-title" id="hub-title">Loading…</div>
+    <div class="hub-subtitle" id="hub-subtitle"></div>
+  </div>
+  <div class="settings-wrap">
+    <button type="button" class="btn btn-ghost" id="btn-project-settings"
+            aria-haspopup="menu" aria-expanded="false">Project Settings ▾</button>
+    <div id="settings-popover" class="settings-popover" role="menu" hidden>
+      <button type="button" role="menuitem" id="btn-settings-edit">Edit project…</button>
+      {% if user_role in ('admin', 'super_admin') %}
+      <div class="settings-divider"></div>
+      <button type="button" role="menuitem" class="danger" id="btn-settings-delete">
+        Delete project…
+      </button>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<section id="hub-stats" class="hub-stats">
+  <div class="hub-stat">
+    <div class="hub-stat-label">Total Calls</div>
+    <div class="hub-stat-value" id="stat-calls">
+      <div class="skeleton" style="height:28px;width:70px;"></div>
+    </div>
+  </div>
+  <div class="hub-stat">
+    <div class="hub-stat-label">Average Score</div>
+    <div class="hub-stat-value" id="stat-avg">
+      <div class="skeleton" style="height:28px;width:70px;"></div>
+    </div>
+  </div>
+  <div class="hub-stat">
+    <div class="hub-stat-label">Active Since</div>
+    <div class="hub-stat-value" id="stat-since">
+      <div class="skeleton" style="height:28px;width:120px;"></div>
+    </div>
+  </div>
+</section>
+
+<section class="hub-action-grid">
+  <div class="hub-card">
+    <div class="hub-card-title">Grade a Call</div>
+    <div class="hub-card-body">
+      Record or upload a new call. Project and location are pre-selected for you.
+    </div>
+    <div class="hub-card-footer">
+      <a href="#" class="btn btn-primary" id="btn-start-grading">Start Grading</a>
+    </div>
+  </div>
+
+  <div class="hub-card">
+    <div class="hub-card-title">Past Grades</div>
+    <div class="hub-card-body" id="recent-calls-body">
+      <div class="skeleton" style="height:18px;margin:6px 0;"></div>
+      <div class="skeleton" style="height:18px;margin:6px 0;"></div>
+      <div class="skeleton" style="height:18px;margin:6px 0;"></div>
+    </div>
+    <div class="hub-card-footer">
+      <a href="#" class="btn btn-ghost btn-sm" id="btn-view-all-history">View All</a>
+    </div>
+  </div>
+
+  <div class="hub-card">
+    <div class="hub-card-title">Performance Reports</div>
+    <div class="hub-card-body" id="top-agents-body">
+      <div class="skeleton" style="height:18px;margin:6px 0;"></div>
+      <div class="skeleton" style="height:18px;margin:6px 0;"></div>
+      <div class="skeleton" style="height:18px;margin:6px 0;"></div>
+    </div>
+    <div class="hub-card-footer">
+      <a href="#" class="btn btn-ghost btn-sm" id="btn-view-all-reports">View All</a>
+    </div>
+  </div>
+</section>
+
+<section class="rubric-section">
+  <div class="rubric-section-header">
+    <div class="panel-title">Rubric</div>
+    <a href="#" class="btn btn-ghost btn-sm" id="btn-edit-rubric" hidden>Edit rubric</a>
+  </div>
+  <div id="rubric-readonly" class="rubric-readonly-list">
+    <div class="skeleton" style="height:52px;"></div>
+    <div class="skeleton" style="height:52px;"></div>
+    <div class="skeleton" style="height:52px;"></div>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  "use strict";
+  const EA = window.EA;
+  const PROJECT_ID = {{ project_id }};
+  const $ = (s) => document.querySelector(s);
+
+  const state = { summary: null, rubricItems: [] };
+
+  async function init() {
+    $("#btn-start-grading").href   = "/app/grade?project_id="    + PROJECT_ID;
+    $("#btn-view-all-history").href = "/app/history?project_id="  + PROJECT_ID;
+    $("#btn-view-all-reports").href = "/app/reports?project_id="  + PROJECT_ID;
+    wireSettingsPopover();
+    await Promise.all([loadSummary(), loadRubric()]);
+  }
+
+  // ── Project Settings popover (Edit + Delete) ─────────────
+  // Delete is role-gated in the template (admin / super_admin); the popover
+  // itself is always present for Edit.
+  function wireSettingsPopover() {
+    const btn  = $("#btn-project-settings");
+    const menu = $("#settings-popover");
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      const opening = menu.hidden;
+      menu.hidden = !opening;
+      btn.setAttribute("aria-expanded", String(opening));
+    });
+    document.addEventListener("click", function (e) {
+      if (menu.hidden) return;
+      if (menu.contains(e.target) || btn.contains(e.target)) return;
+      menu.hidden = true;
+      btn.setAttribute("aria-expanded", "false");
+    });
+    $("#btn-settings-edit").addEventListener("click", function () {
+      // Edit lives on the Projects list page — redirect and pop the wizard
+      // there. Keeps all the wizard logic in one place.
+      window.location.href = "/app/projects?edit=" + PROJECT_ID;
+    });
+    const delBtn = document.getElementById("btn-settings-delete");
+    if (delBtn) delBtn.addEventListener("click", confirmAndDeleteProject);
+  }
+
+  async function confirmAndDeleteProject() {
+    const name = (state.summary && state.summary.project_name) || "this project";
+    const ok = await EA.confirmDialog({
+      title: "Delete this project?",
+      body:  "The project \u201C" + name + "\u201D will be removed but all graded " +
+             "calls will remain in Past Grades and Performance Reports.",
+      okLabel:     "Delete Project",
+      cancelLabel: "Cancel",
+      variant:     "danger",
+    });
+    if (!ok) return;
+    try {
+      await EA.fetchJSON("/api/projects/" + PROJECT_ID, { method: "DELETE" });
+      EA.toast("Project deleted.", "success");
+      window.location.href = "/app/projects";
+    } catch (err) {
+      EA.toast("Could not delete project: " + (err.message || "unknown"), "error");
+    }
+  }
+
+  async function loadSummary() {
+    try {
+      const s = await EA.fetchJSON("/api/projects/" + PROJECT_ID + "/summary");
+      state.summary = s;
+      renderSummary(s);
+    } catch (err) {
+      $("#hub-title").textContent = "Project not found";
+      $("#hub-subtitle").textContent = err.message || "";
+    }
+  }
+
+  function renderSummary(s) {
+    $("#hub-title").textContent = s.project_name || "Untitled";
+    const range = (s.project_start_date ? EA.formatDate(s.project_start_date) : "—") +
+                  " → " +
+                  (s.project_end_date   ? EA.formatDate(s.project_end_date)   : "ongoing");
+    $("#hub-subtitle").textContent =
+      [s.location_name, s.campaign_name, range].filter(Boolean).join(" · ");
+
+    $("#stat-calls").textContent = (s.call_count != null) ? s.call_count : "—";
+    const avg = s.avg_score;
+    const avgEl = $("#stat-avg");
+    avgEl.textContent = (avg == null) ? "—" : avg;
+    avgEl.className = "hub-stat-value " +
+      (avg == null ? "" : (avg > 7 ? "good" : (avg >= 5 ? "warn" : "bad")));
+    $("#stat-since").textContent = s.project_start_date
+      ? EA.formatDate(s.project_start_date) : "—";
+
+    renderRecentCalls(s.recent_calls || []);
+    renderTopAgents(s.top_agents || []);
+  }
+
+  function renderRecentCalls(calls) {
+    const el = $("#recent-calls-body");
+    if (!calls.length) {
+      el.innerHTML = '<div class="muted">No calls yet. Grade your first one.</div>';
+      return;
+    }
+    const rows = calls.slice(0, 3).map(function (c) {
+      const score = EA.formatScore(c.interaction_overall_score);
+      const callTime = EA.formatCallTime(
+        c.interaction_call_start_time,
+        c.interaction_uploaded_at,
+        null,
+      );
+      const timeBit = (callTime && callTime !== "—")
+        ? '<div class="muted text-small" style="font-size:0.74rem;line-height:1.2;">' +
+            EA.esc(callTime) + '</div>'
+        : '';
+      // Location column is most useful for all-locations projects (different
+      // calls land at different locations); single-location projects just see
+      // the same name repeated, which is fine.
+      const locName = c.location_name || "—";
+      return '<tr>' +
+        '<td><a href="/app/history/' + c.interaction_id + '">' +
+          EA.esc(EA.formatDate(c.interaction_date) || "—") + '</a>' +
+          timeBit +
+        '</td>' +
+        '<td class="muted text-small">' + EA.esc(locName) + '</td>' +
+        '<td>' + EA.esc(c.respondent_name || "—") + '</td>' +
+        '<td style="text-align:right;">' + score + '</td>' +
+      '</tr>';
+    }).join("");
+    el.innerHTML = '<table>' + rows + '</table>';
+  }
+
+  function renderTopAgents(agents) {
+    const el = $("#top-agents-body");
+    if (!agents.length) {
+      el.innerHTML = '<div class="muted">No respondents yet.</div>';
+      return;
+    }
+    const rows = agents.slice(0, 3).map(function (a) {
+      return '<tr>' +
+        '<td>' + EA.esc(a.respondent_name || "—") + '</td>' +
+        '<td style="text-align:right;">' + EA.formatScore(a.avg_score) +
+          ' <span class="muted">(' + a.call_count + ')</span></td>' +
+      '</tr>';
+    }).join("");
+    el.innerHTML = '<table>' + rows + '</table>';
+  }
+
+  async function loadRubric() {
+    // We derive rubric_group_id from the summary response, so wait for it.
+    let attempts = 0;
+    while (!state.summary && attempts++ < 30) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+    if (!state.summary || !state.summary.rubric_group_id) {
+      $("#rubric-readonly").innerHTML =
+        '<div class="muted">This project has no rubric attached.</div>';
+      return;
+    }
+    try {
+      const rgId = state.summary.rubric_group_id;
+      const items = await EA.fetchJSON("/api/rubric-groups/" + rgId + "/items");
+      state.rubricItems = items || [];
+      renderRubric();
+    } catch (err) {
+      $("#rubric-readonly").innerHTML =
+        '<div class="muted">Could not load rubric: ' + EA.esc(err.message || "") + '</div>';
+    }
+  }
+
+  const TYPE_LABELS = {
+    out_of_10:      "1–10 scale",
+    yes_no:         "Yes / No",
+    yes_no_pending: "Yes / No / Pending",
+  };
+
+  function renderRubric() {
+    const el = $("#rubric-readonly");
+    if (!state.rubricItems.length) {
+      el.innerHTML = '<div class="muted">No rubric items yet.</div>';
+      return;
+    }
+    el.innerHTML = state.rubricItems.map(function (r) {
+      const guidance = r.ri_scoring_guidance || "";
+      return '<div class="rubric-readonly-row">' +
+        '<div class="rr-name">' + EA.esc(r.ri_name || "—") + '</div>' +
+        '<div class="rr-type">' + EA.esc(TYPE_LABELS[r.ri_score_type] || r.ri_score_type || "—") + '</div>' +
+        '<div class="rr-weight" style="text-align:right;">w ' + (r.ri_weight != null ? r.ri_weight : "—") + '</div>' +
+        (guidance
+          ? '<div class="rr-guidance">' + EA.esc(guidance) + '</div>'
+          : '') +
+      '</div>';
+    }).join("");
+  }
+
+  document.addEventListener("DOMContentLoaded", init);
+})();
+</script>
+{% endblock %}

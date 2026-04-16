@@ -1,0 +1,563 @@
+{% extends "base.html" %}
+{% block title %}VoIP | {{ client_name or "Echo Audit" }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">VoIP</div>
+    <div class="page-subtitle">
+      Automatically receive calls from your phone system for grading.
+    </div>
+  </div>
+</div>
+
+{# ── Connection Setup ────────────────────────────────────── #}
+<section id="voip-setup-section" class="panel" style="margin-bottom:14px;">
+  <div id="voip-setup-wrap">
+    <div class="skeleton" style="height:22px;margin:8px 0;"></div>
+    <div class="skeleton" style="height:80px;margin:8px 0;"></div>
+  </div>
+</section>
+
+{# ── Call Queue ──────────────────────────────────────────── #}
+<section id="voip-queue-section" class="panel">
+  <div class="panel-title">Call Queue</div>
+  <div id="auto-grade-banner-slot"></div>
+
+  <div class="filters-bar" style="margin-bottom:12px;">
+    <div class="field">
+      <label class="field-label" for="q-status">Status</label>
+      <select id="q-status" class="field-select">
+        <option value="">All</option>
+        <option value="pending">Pending</option>
+        <option value="processing">Processing</option>
+        <option value="graded">Graded</option>
+        <option value="failed">Failed</option>
+        <option value="skipped">Skipped</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="field-label" for="q-from">From</label>
+      <input id="q-from" class="field-input" type="date">
+    </div>
+    <div class="field">
+      <label class="field-label" for="q-to">To</label>
+      <input id="q-to" class="field-input" type="date">
+    </div>
+    <button type="button" class="btn btn-ghost btn-sm" id="q-clear">Clear filters</button>
+  </div>
+
+  <div id="queue-wrap">
+    <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+    <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+    <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  "use strict";
+  const EA = window.EA;
+  const $  = (s) => document.querySelector(s);
+
+  const QUEUE_REFRESH_MS = 30000;
+  let queueTimer = null;
+  let providers  = [];
+  let openAudioRow = null;   // currently open inline audio element
+
+  document.addEventListener("DOMContentLoaded", init);
+  document.addEventListener("visibilitychange", onVisibilityChange);
+
+  async function init() {
+    // Providers first so setup form can render field lists for any provider.
+    try {
+      const resp = await EA.fetchJSON("/api/voip/providers");
+      providers = resp.providers || [];
+    } catch (_) { providers = []; }
+
+    await Promise.all([loadConfig(), loadQueue()]);
+
+    // Filter handlers
+    ["q-status","q-from","q-to"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("change", loadQueue);
+    });
+    const clr = document.getElementById("q-clear");
+    if (clr) clr.addEventListener("click", () => {
+      $("#q-status").value = "";
+      $("#q-from").value = "";
+      $("#q-to").value = "";
+      loadQueue();
+    });
+
+    startQueueTimer();
+  }
+
+  function startQueueTimer() {
+    stopQueueTimer();
+    queueTimer = setInterval(loadQueue, QUEUE_REFRESH_MS);
+  }
+  function stopQueueTimer() {
+    if (queueTimer) { clearInterval(queueTimer); queueTimer = null; }
+  }
+  function onVisibilityChange() {
+    if (document.hidden) stopQueueTimer();
+    else { loadQueue(); startQueueTimer(); }
+  }
+
+  // ── Connection Setup ─────────────────────────────────────
+  async function loadConfig() {
+    const wrap = $("#voip-setup-wrap");
+    try {
+      const cfg = await EA.fetchJSON("/api/voip/config");
+      if (!cfg || !cfg.credentials_configured) {
+        renderNotConnected();
+      } else {
+        renderConnected(cfg);
+      }
+    } catch (err) {
+      EA.showError(wrap, err.message || "Failed to load VoIP config.");
+    }
+  }
+
+  function providerLabel(key) {
+    const p = providers.find((x) => x.key === key);
+    return p ? p.name : key;
+  }
+
+  function humanizeField(key) {
+    return String(key || "")
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  function renderNotConnected() {
+    const wrap = $("#voip-setup-wrap");
+    const cards = providers.map((p) => (
+      '<div class="provider-card" data-key="' + EA.esc(p.key) + '">' +
+        '<div class="provider-card-title">' + EA.esc(p.name) + '</div>' +
+      '</div>'
+    )).join("");
+    wrap.innerHTML =
+      '<div class="panel-title">Connect your VoIP system</div>' +
+      '<div class="muted" style="margin-bottom:14px;">' +
+        'Calls will be automatically delivered to Echo Audit when a recording is ready.' +
+      '</div>' +
+      '<div class="provider-grid">' + cards + '</div>' +
+      '<div id="provider-form-slot"></div>';
+
+    wrap.querySelectorAll(".provider-card").forEach((c) => {
+      c.addEventListener("click", () => {
+        wrap.querySelectorAll(".provider-card").forEach((x) => x.classList.remove("selected"));
+        c.classList.add("selected");
+        renderCredentialsForm(c.dataset.key, /*existing=*/null);
+      });
+    });
+  }
+
+  function renderCredentialsForm(providerKey, existing) {
+    const slot = $("#provider-form-slot") || $("#setup-modal-slot");
+    if (!slot) return;
+    const p = providers.find((x) => x.key === providerKey);
+    if (!p) { slot.innerHTML = ""; return; }
+    const fields = (p.credentials_fields || []).map((fk) => (
+      '<div class="field" style="margin-bottom:12px;">' +
+        '<label class="field-label field-required" for="cred-' + EA.esc(fk) + '">' +
+          EA.esc(humanizeField(fk)) +
+        '</label>' +
+        '<input id="cred-' + EA.esc(fk) + '" name="' + EA.esc(fk) +
+               '" type="password" class="field-input" required autocomplete="off">' +
+      '</div>'
+    )).join("");
+
+    slot.innerHTML =
+      '<form id="cred-form" autocomplete="off" style="margin-top:14px;">' +
+        '<div class="panel-title" style="font-size:15px;margin-bottom:10px;">' +
+          EA.esc(p.name) + ' credentials' +
+        '</div>' +
+        fields +
+        '<div class="field hstack-wrap" style="gap:10px;align-items:center;">' +
+          '<label class="toggle-sw">' +
+            '<input type="checkbox" id="auto-grade-setup">' +
+            '<span class="slider"></span>' +
+          '</label>' +
+          '<span>Automatically grade calls when received</span>' +
+        '</div>' +
+        '<div class="muted text-small" style="margin-bottom:12px;">' +
+          'When off, calls go to the queue for manual review.' +
+        '</div>' +
+        '<div class="field">' +
+          '<label class="field-label" for="webhook-secret-in">Webhook secret (optional)</label>' +
+          '<input id="webhook-secret-in" class="field-input" type="text" ' +
+                 'placeholder="Leave blank to auto-generate">' +
+        '</div>' +
+        '<button type="submit" class="btn btn-primary" id="btn-connect">Connect</button>' +
+      '</form>';
+
+    $("#cred-form").addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      submitCredentials(providerKey);
+    });
+  }
+
+  async function submitCredentials(providerKey) {
+    const form = $("#cred-form");
+    const p = providers.find((x) => x.key === providerKey);
+    const creds = {};
+    (p.credentials_fields || []).forEach((fk) => {
+      const inp = form.querySelector('[name="' + CSS.escape(fk) + '"]');
+      creds[fk] = inp ? inp.value.trim() : "";
+    });
+    const missing = Object.keys(creds).filter((k) => !creds[k]);
+    if (missing.length) {
+      EA.toast("Please fill all credential fields.", "error");
+      return;
+    }
+    const autoGrade = !!$("#auto-grade-setup").checked;
+    const webhookSecret = ($("#webhook-secret-in").value || "").trim();
+
+    const overlay = EA.showOverlay("Connecting to " + p.name + "…");
+    try {
+      await EA.fetchJSON("/api/voip/config", {
+        method: "POST",
+        body: {
+          voip_config_provider: providerKey,
+          credentials: creds,
+          voip_config_auto_grade: autoGrade,
+          voip_config_webhook_secret: webhookSecret || undefined,
+        },
+      });
+      overlay.close();
+      EA.toast("VoIP connected.", "success");
+      await loadConfig();
+      await loadQueue();
+    } catch (err) {
+      overlay.close();
+      EA.toast(err.message || "Could not connect VoIP.", "error");
+    }
+  }
+
+  function renderConnected(cfg) {
+    const wrap = $("#voip-setup-wrap");
+    wrap.innerHTML =
+      '<div class="hstack-wrap" style="margin-bottom:14px;">' +
+        '<div>' +
+          '<div class="panel-title" style="margin-bottom:4px;">' +
+            EA.esc(providerLabel(cfg.voip_config_provider)) +
+            ' <span class="status-pill status-active" style="margin-left:10px;">Connected</span>' +
+          '</div>' +
+          '<div class="muted text-small">Auto-grade is ' +
+            (cfg.voip_config_auto_grade ? "on" : "off") + '.</div>' +
+        '</div>' +
+        '<span class="spacer"></span>' +
+        '<button type="button" class="btn btn-ghost btn-sm" id="btn-update-creds">Update credentials</button>' +
+        '<button type="button" class="btn btn-danger btn-sm" id="btn-disconnect">Disconnect</button>' +
+      '</div>' +
+
+      '<div class="field hstack-wrap" style="gap:10px;align-items:center;margin-bottom:12px;">' +
+        '<label class="toggle-sw">' +
+          '<input type="checkbox" id="auto-grade-toggle"' +
+            (cfg.voip_config_auto_grade ? " checked" : "") + '>' +
+          '<span class="slider"></span>' +
+        '</label>' +
+        '<span>Auto-grade: <strong id="auto-grade-label">' +
+          (cfg.voip_config_auto_grade ? "On" : "Off") + '</strong></span>' +
+      '</div>' +
+
+      '<div class="field">' +
+        '<label class="field-label" for="webhook-url-out">Webhook URL</label>' +
+        '<div class="hstack-wrap" style="gap:8px;">' +
+          '<input id="webhook-url-out" class="field-input" type="text" readonly ' +
+                 'value="" style="flex:1;">' +
+          '<button type="button" class="btn btn-ghost btn-sm" id="btn-copy-url">Copy</button>' +
+        '</div>' +
+        '<div class="muted text-small">' +
+          'Paste this URL into your VoIP provider\'s webhook settings.' +
+        '</div>' +
+      '</div>';
+
+    // Fetch the webhook URL (separate endpoint)
+    EA.fetchJSON("/api/voip/webhook-url").then((r) => {
+      const inp = $("#webhook-url-out");
+      if (inp && r && r.webhook_url) inp.value = r.webhook_url;
+    }).catch(() => {});
+
+    $("#auto-grade-toggle").addEventListener("change", async (ev) => {
+      const next = ev.target.checked;
+      try {
+        await EA.fetchJSON("/api/voip/config", {
+          method: "POST",
+          body: {
+            voip_config_provider: cfg.voip_config_provider,
+            credentials: { _noop: "_noop" },   // rejected; need real creds
+            voip_config_auto_grade: next,
+          },
+        });
+        $("#auto-grade-label").textContent = next ? "On" : "Off";
+        refreshAutoGradeBanner(next);
+        EA.toast("Auto-grade " + (next ? "on" : "off") + ".", "success");
+      } catch (err) {
+        // Toggle-only path needs credentials too per current backend shape,
+        // so if the shortcut fails fall back to a full credentials modal.
+        ev.target.checked = !next;
+        EA.toast("Re-enter credentials to change auto-grade.", "error");
+      }
+    });
+
+    $("#btn-copy-url").addEventListener("click", copyWebhookUrl);
+    $("#btn-update-creds").addEventListener("click", () => openUpdateModal(cfg));
+    $("#btn-disconnect").addEventListener("click", () => disconnect());
+
+    refreshAutoGradeBanner(cfg.voip_config_auto_grade);
+  }
+
+  function copyWebhookUrl() {
+    const inp = $("#webhook-url-out");
+    if (!inp || !inp.value) return;
+    navigator.clipboard.writeText(inp.value).then(
+      () => EA.toast("Copied.", "info"),
+      () => EA.toast("Copy failed.", "error"),
+    );
+  }
+
+  async function openUpdateModal(cfg) {
+    // Render the same form as setup inside a modal via confirmDialog DOM body.
+    const host = document.createElement("div");
+    host.id = "setup-modal-slot";
+    document.body.appendChild(host);
+    // Render form into a detached holder first
+    host.innerHTML = '<div id="provider-form-slot"></div>';
+    // Prefill provider
+    const providerKey = cfg.voip_config_provider;
+    renderCredentialsForm(providerKey, cfg);
+    $("#auto-grade-setup").checked = !!cfg.voip_config_auto_grade;
+
+    // Move into a modal
+    const bodyHost = document.createElement("div");
+    bodyHost.appendChild(host);
+    const ok = await EA.confirmDialog({
+      title: "Update credentials",
+      body: bodyHost,
+      okLabel: "Save",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) { host.remove(); return; }
+    // Reuse the inline form submit
+    const form = host.querySelector("#cred-form");
+    if (form) submitCredentials(providerKey);
+    host.remove();
+  }
+
+  async function disconnect() {
+    const ok = await EA.confirmDialog({
+      title: "Disconnect VoIP?",
+      body:  "Incoming calls will no longer be delivered to Echo Audit. " +
+             "Calls already in the queue will remain available.",
+      okLabel: "Disconnect",
+      variant: "danger",
+    });
+    if (!ok) return;
+    try {
+      await EA.fetchJSON("/api/voip/config", { method: "DELETE" });
+      EA.toast("VoIP disconnected.", "success");
+      await loadConfig();
+    } catch (err) {
+      EA.toast(err.message || "Disconnect failed.", "error");
+    }
+  }
+
+  function refreshAutoGradeBanner(on) {
+    const slot = $("#auto-grade-banner-slot");
+    if (!slot) return;
+    slot.innerHTML = on
+      ? ('<div class="temp-pw-banner" style="background:#0d3b6e;">' +
+          '<span>Auto-grade is enabled. Incoming calls are graded automatically and ' +
+          'will appear here once complete.</span>' +
+         '</div>')
+      : "";
+  }
+
+  // ── Call Queue ───────────────────────────────────────────
+  async function loadQueue() {
+    const wrap = $("#queue-wrap");
+    const params = new URLSearchParams();
+    const st = $("#q-status") && $("#q-status").value;
+    const fr = $("#q-from")   && $("#q-from").value;
+    const to = $("#q-to")     && $("#q-to").value;
+    if (st) params.append("status", st);
+    if (fr) params.append("from_date", fr);
+    if (to) params.append("to_date", to);
+
+    try {
+      const rows = await EA.fetchJSON("/api/voip/queue" +
+                                      (params.toString() ? "?" + params.toString() : ""));
+      renderQueue(rows || []);
+    } catch (err) {
+      EA.showError(wrap, err.message || "Failed to load queue.");
+    }
+  }
+
+  function fmtDuration(sec) {
+    const n = Number(sec || 0);
+    if (!n) return "—";
+    const m = Math.floor(n / 60);
+    const s = Math.floor(n % 60);
+    return m + ":" + (s < 10 ? "0" + s : s);
+  }
+
+  function queueStatusPill(status) {
+    const s = String(status || "").toLowerCase();
+    const cls =
+      s === "processing" ? "status-processing" :
+      s === "graded"     ? "status-active" :
+      s === "failed"     ? "status-inactive" :
+      s === "skipped"    ? "status-skipped" :
+                           "status-pending";
+    const label = s ? s.charAt(0).toUpperCase() + s.slice(1) : "—";
+    return '<span class="status-pill ' + cls + '">' + EA.esc(label) + '</span>';
+  }
+
+  function renderQueue(rows) {
+    const wrap = $("#queue-wrap");
+    if (!rows.length) {
+      const anyFilter = ($("#q-status").value || $("#q-from").value || $("#q-to").value);
+      wrap.innerHTML = '<div class="empty-state">' +
+        (anyFilter
+          ? "No calls match the current filters."
+          : "No calls in the queue.") +
+        '</div>';
+      openAudioRow = null;
+      return;
+    }
+
+    const body = rows.map(renderQueueRow).join("");
+    wrap.innerHTML =
+      '<table class="history-table">' +
+        '<thead><tr>' +
+          '<th>Date</th><th>Provider</th><th>Caller</th><th>Called</th>' +
+          '<th>Duration</th><th>Status</th><th>Interaction</th>' +
+          '<th style="text-align:right;">Actions</th>' +
+        '</tr></thead><tbody id="queue-tbody">' + body + '</tbody>' +
+      '</table>';
+
+    wireQueueActions();
+    openAudioRow = null;
+  }
+
+  function renderQueueRow(r) {
+    const status = String(r.voip_queue_status || "").toLowerCase();
+    const date = EA.formatDate(r.voip_queue_call_date);
+    const interaction = r.voip_queue_interaction_id
+      ? '<a href="/app/history/' + encodeURIComponent(r.voip_queue_interaction_id) +
+        '" class="link">View Grade</a>'
+      : '<span class="muted text-small">—</span>';
+
+    let actions = "";
+    if (status === "pending" || status === "failed") {
+      const label = status === "failed" ? "Retry" : "Grade Now";
+      actions +=
+        '<button type="button" class="btn btn-ghost btn-sm queue-audio" ' +
+          'data-qid="' + r.voip_queue_id + '" title="Preview audio">▶</button> ' +
+        '<button type="button" class="btn btn-primary btn-sm queue-grade" ' +
+          'data-qid="' + r.voip_queue_id + '">' + label + '</button> ' +
+        '<button type="button" class="btn btn-ghost btn-sm queue-skip" ' +
+          'data-qid="' + r.voip_queue_id + '">Skip</button>';
+    } else if (status === "processing") {
+      actions = '<span class="muted text-small">Processing…</span>';
+    }
+
+    return (
+      '<tr data-qid="' + r.voip_queue_id + '">' +
+        '<td>' + EA.esc(date) + '</td>' +
+        '<td>' + EA.esc(providerLabel(r.voip_queue_provider) || "—") + '</td>' +
+        '<td>' + EA.esc(r.voip_queue_caller_number || "—") + '</td>' +
+        '<td>' + EA.esc(r.voip_queue_called_number || "—") + '</td>' +
+        '<td>' + EA.esc(fmtDuration(r.voip_queue_duration_seconds)) + '</td>' +
+        '<td>' + queueStatusPill(status) + '</td>' +
+        '<td>' + interaction + '</td>' +
+        '<td style="text-align:right; white-space:nowrap;">' + actions + '</td>' +
+      '</tr>'
+    );
+  }
+
+  function wireQueueActions() {
+    document.querySelectorAll(".queue-grade").forEach((b) => {
+      b.addEventListener("click", () => gradeNow(b.dataset.qid));
+    });
+    document.querySelectorAll(".queue-skip").forEach((b) => {
+      b.addEventListener("click", () => skipItem(b.dataset.qid));
+    });
+    document.querySelectorAll(".queue-audio").forEach((b) => {
+      b.addEventListener("click", () => toggleAudio(b.dataset.qid));
+    });
+  }
+
+  async function gradeNow(qid) {
+    const tr = document.querySelector('tr[data-qid="' + qid + '"]');
+    try {
+      await EA.fetchJSON("/api/voip/queue/" + encodeURIComponent(qid) + "/grade",
+                         { method: "POST" });
+      // Optimistically flip the row to processing
+      if (tr) {
+        const cell = tr.children[5];
+        if (cell) cell.innerHTML = queueStatusPill("processing");
+        const actions = tr.children[7];
+        if (actions) actions.innerHTML = '<span class="muted text-small">Processing…</span>';
+      }
+      EA.toast("Grading started. Results appear after the 30s refresh.", "info");
+    } catch (err) {
+      EA.toast(err.message || "Could not start grading.", "error");
+    }
+  }
+
+  async function skipItem(qid) {
+    const ok = await EA.confirmDialog({
+      title: "Skip this call?",
+      body:  "Are you sure you want to skip this call? It will not be graded.",
+      okLabel: "Skip",
+      variant: "danger",
+    });
+    if (!ok) return;
+    try {
+      await EA.fetchJSON("/api/voip/queue/" + encodeURIComponent(qid) + "/skip",
+                         { method: "POST" });
+      const tr = document.querySelector('tr[data-qid="' + qid + '"]');
+      if (tr) {
+        const cell = tr.children[5];
+        if (cell) cell.innerHTML = queueStatusPill("skipped");
+        const actions = tr.children[7];
+        if (actions) actions.innerHTML = "";
+      }
+      EA.toast("Call skipped.", "success");
+    } catch (err) {
+      EA.toast(err.message || "Could not skip.", "error");
+    }
+  }
+
+  function toggleAudio(qid) {
+    // Close any currently open audio row first
+    if (openAudioRow && openAudioRow.getAttribute("data-audio-for") !== String(qid)) {
+      openAudioRow.remove();
+      openAudioRow = null;
+    }
+    // Toggle current
+    const existing = document.querySelector('tr[data-audio-for="' + qid + '"]');
+    if (existing) { existing.remove(); openAudioRow = null; return; }
+
+    const tr = document.querySelector('tr[data-qid="' + qid + '"]');
+    if (!tr) return;
+    const newTr = document.createElement("tr");
+    newTr.setAttribute("data-audio-for", qid);
+    newTr.innerHTML =
+      '<td colspan="8">' +
+        '<audio controls preload="metadata" style="width:100%;" ' +
+               'src="/api/voip/queue/' + encodeURIComponent(qid) + '/audio"></audio>' +
+      '</td>';
+    tr.parentNode.insertBefore(newTr, tr.nextSibling);
+    openAudioRow = newTr;
+  }
+})();
+</script>
+{% endblock %}

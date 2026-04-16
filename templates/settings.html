@@ -1,0 +1,1192 @@
+{% extends "base.html" %}
+{% block title %}Settings | {{ client_name or "Echo Audit" }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Settings</div>
+    <div class="page-subtitle">Labels, rubrics, locations, campaigns, projects, and your account.</div>
+  </div>
+</div>
+
+{# ── General ────────────────────────────────────────── #}
+<details class="collapsible settings-section" open>
+  <summary>General</summary>
+  <div class="collapsible-body">
+    <div class="section-desc">Customize how entities are labeled throughout the app.</div>
+    <form id="form-general" class="form-grid">
+      <div class="field">
+        <label class="field-label" for="s-location_label">Location label</label>
+        <input id="s-location_label" name="location_label" class="field-input" type="text">
+      </div>
+      <div class="field">
+        <label class="field-label" for="s-location_list_label">Location list label</label>
+        <input id="s-location_list_label" name="location_list_label" class="field-input" type="text">
+      </div>
+      <div class="field">
+        <label class="field-label" for="s-caller_label">Caller label</label>
+        <input id="s-caller_label" name="caller_label" class="field-input" type="text">
+      </div>
+      <div class="field">
+        <label class="field-label" for="s-respondent_label">Respondent label</label>
+        <input id="s-respondent_label" name="respondent_label" class="field-input" type="text">
+      </div>
+      <div class="field">
+        <label class="field-label" for="s-campaign_label">Campaign label</label>
+        <input id="s-campaign_label" name="campaign_label" class="field-input" type="text">
+      </div>
+      <div class="field">
+        <label class="field-label" for="s-project_label">Project label</label>
+        <input id="s-project_label" name="project_label" class="field-input" type="text">
+      </div>
+    </form>
+    <div class="hstack-wrap" style="margin-top:8px;">
+      <button type="button" class="btn btn-primary btn-sm" id="btn-save-general">Save general</button>
+      <span class="muted text-small" id="general-dirty-hint" hidden>Unsaved changes</span>
+    </div>
+  </div>
+</details>
+
+{# ── Grading ────────────────────────────────────────── #}
+<details class="collapsible settings-section" open>
+  <summary>Grading</summary>
+  <div class="collapsible-body">
+    <div class="section-desc">Behavioral toggles that affect the grading flow.</div>
+    <div class="toggle-row">
+      <div>
+        <div class="toggle-label">Auto-save grades</div>
+        <div class="toggle-hint">Automatically save grade results as they finish.</div>
+      </div>
+      <label class="toggle-sw">
+        <input type="checkbox" id="tg-grading_auto_save" data-key="grading_auto_save">
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="toggle-row">
+      <div>
+        <div class="toggle-label">Show transcript in interaction detail</div>
+        <div class="toggle-hint">When off, the transcript panel stays collapsed by default.</div>
+      </div>
+      <label class="toggle-sw">
+        <input type="checkbox" id="tg-show_transcript" data-key="show_transcript">
+        <span class="slider"></span>
+      </label>
+    </div>
+  </div>
+</details>
+
+{# ── Rubric Groups ─────────────────────────────────── #}
+<details class="collapsible settings-section">
+  <summary>Rubric Groups</summary>
+  <div class="collapsible-body">
+    <div class="hstack-wrap" style="margin-bottom:10px;">
+      <span class="muted text-small">Group related rubric items; projects are assigned to a group.</span>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-use-template">Use a template</button>
+      <button type="button" class="btn btn-primary btn-sm" id="btn-add-rubric-group">Create rubric group</button>
+    </div>
+    <div id="rubric-wrap">
+      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+    </div>
+  </div>
+</details>
+
+{# ── Locations ────────────────────────────────────── #}
+<details class="collapsible settings-section">
+  <summary>Locations</summary>
+  <div class="collapsible-body">
+    <div id="locations-wrap">
+      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+    </div>
+
+    {% if user_role in ('admin', 'super_admin') %}
+    <div class="panel" id="bulk-upload-panel"
+         style="margin-top:14px; padding:14px; border:1px dashed var(--border); border-radius:var(--radius-lg);">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
+        <div>
+          <div class="panel-title" style="margin:0 0 2px;">Bulk upload locations</div>
+          <div class="muted text-small">
+            Upload a CSV or Excel file with columns: Name, Phone, Engagement Date
+          </div>
+        </div>
+        <a href="#" id="bulk-template-link" class="text-small">Download template</a>
+      </div>
+      <div class="hstack-wrap" style="margin-top:10px; gap:8px;">
+        <input type="file" id="bulk-file" accept=".csv,.xlsx,.xls" style="flex:1; min-width:220px;">
+        <button type="button" class="btn btn-primary btn-sm" id="btn-bulk-upload" disabled>Upload</button>
+      </div>
+      <div id="bulk-file-meta" class="muted text-small" style="margin-top:6px;" hidden></div>
+      <div id="bulk-results" style="margin-top:10px;" hidden></div>
+    </div>
+    {% endif %}
+
+    <div class="hstack-wrap" style="margin-top:14px;">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-primary btn-sm" id="btn-add-location">Add location</button>
+    </div>
+  </div>
+</details>
+
+{# ── Campaigns ────────────────────────────────────── #}
+<details class="collapsible settings-section">
+  <summary>Campaigns</summary>
+  <div class="collapsible-body">
+    <div class="hstack-wrap" style="margin-bottom:10px;">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-primary btn-sm" id="btn-add-campaign">Add campaign</button>
+    </div>
+    <div id="campaigns-wrap">
+      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+    </div>
+  </div>
+</details>
+
+{# ── Projects ─────────────────────────────────────── #}
+<details class="collapsible settings-section">
+  <summary>Projects</summary>
+  <div class="collapsible-body">
+    <div class="hstack-wrap" style="margin-bottom:10px;">
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-primary btn-sm" id="btn-add-project">Add project</button>
+    </div>
+    <div id="projects-wrap">
+      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+    </div>
+  </div>
+</details>
+
+{# ── Account ───────────────────────────────────────── #}
+<details class="collapsible settings-section" open>
+  <summary>Account</summary>
+  <div class="collapsible-body">
+    <div class="section-desc">Your own profile and password.</div>
+    <form id="form-account" class="form-grid">
+      <div class="field">
+        <label class="field-label" for="a-first">First name</label>
+        <input id="a-first" name="user_first_name" class="field-input" type="text">
+      </div>
+      <div class="field">
+        <label class="field-label" for="a-last">Last name</label>
+        <input id="a-last" name="user_last_name" class="field-input" type="text">
+      </div>
+      <div class="field">
+        <label class="field-label" for="a-email">Email</label>
+        <input id="a-email" name="user_email" class="field-input" type="email">
+      </div>
+    </form>
+    <div style="margin-top:8px;">
+      <button type="button" class="btn btn-primary btn-sm" id="btn-save-account">Save profile</button>
+    </div>
+
+    <div style="margin-top:22px; border-top: 1px solid var(--border); padding-top:16px;">
+      <div class="panel-title" style="margin-bottom:10px;">Change password</div>
+      <form id="form-pw" class="form-grid" autocomplete="off">
+        <div class="field">
+          <label class="field-label" for="pw-current">Current password</label>
+          <input id="pw-current" name="current_password" class="field-input" type="password" autocomplete="current-password">
+        </div>
+        <div class="field">
+          <label class="field-label" for="pw-new">New password</label>
+          <input id="pw-new" name="new_password" class="field-input" type="password" minlength="8" autocomplete="new-password">
+        </div>
+        <div class="field">
+          <label class="field-label" for="pw-confirm">Confirm</label>
+          <input id="pw-confirm" name="confirm_password" class="field-input" type="password" minlength="8" autocomplete="new-password">
+        </div>
+      </form>
+      <div style="margin-top:8px;">
+        <button type="button" class="btn btn-primary btn-sm" id="btn-change-pw">Change password</button>
+      </div>
+    </div>
+  </div>
+</details>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  "use strict";
+  const EA = window.EA;
+  const $ = (s) => document.querySelector(s);
+
+  const GRADE_TARGETS = [
+    {value:"caller",     label:"Caller"},
+    {value:"respondent", label:"Respondent"},
+  ];
+  const SCORE_TYPES = [
+    {value:"out_of_10",      label:"Out of 10"},
+    {value:"yes_no",         label:"Yes / No"},
+    {value:"yes_no_pending", label:"Yes / No / Pending"},
+  ];
+
+  // Shared caches so child dropdowns don't each refetch.
+  const cache = { locations: [], campaigns: [], rubricGroups: [], projects: [] };
+
+  // Track dirty state for General + Grading sections.
+  let originalSettings = {};
+  let generalDirty = false;
+
+  document.addEventListener("DOMContentLoaded", init);
+
+  async function init() {
+    wireGeneral();
+    wireAccount();
+    wireBulkUpload();
+    await Promise.all([
+      loadSettings(),
+      loadLocations(),
+      loadCampaigns(),
+      loadRubricGroups(),
+      loadProjects(),
+      loadAccount(),
+    ]);
+    wireDirtyGuard();
+  }
+
+  // ── Settings (general + grading) ─────────────────────
+  async function loadSettings() {
+    try {
+      const s = await EA.fetchJSON("/api/settings");
+      originalSettings = s || {};
+      [
+        "location_label","location_list_label","caller_label",
+        "respondent_label","campaign_label","project_label",
+      ].forEach((k) => {
+        const el = document.getElementById("s-" + k);
+        if (el) el.value = (s[k] != null ? s[k] : "");
+      });
+      // Toggle switches read "true"/"false" strings.
+      ["grading_auto_save","show_transcript"].forEach((k) => {
+        const el = document.getElementById("tg-" + k);
+        if (el) el.checked = String(s[k] || "").toLowerCase() === "true";
+      });
+    } catch (err) {
+      EA.toast("Failed to load settings", "error");
+    }
+    wireToggles();
+  }
+
+  function wireGeneral() {
+    ["location_label","location_list_label","caller_label","respondent_label",
+     "campaign_label","project_label"].forEach((k) => {
+      const el = document.getElementById("s-" + k);
+      if (el) el.addEventListener("input", () => {
+        generalDirty = true;
+        document.getElementById("general-dirty-hint").hidden = false;
+      });
+    });
+
+    $("#btn-save-general").addEventListener("click", async () => {
+      const payload = {};
+      ["location_label","location_list_label","caller_label","respondent_label",
+       "campaign_label","project_label"].forEach((k) => {
+        payload[k] = document.getElementById("s-" + k).value.trim();
+      });
+      try {
+        await EA.fetchJSON("/api/settings", { method:"POST", body: payload });
+        Object.assign(originalSettings, payload);
+        generalDirty = false;
+        document.getElementById("general-dirty-hint").hidden = true;
+        EA.toast("Settings saved.", "success");
+      } catch (err) {
+        EA.toast(err.message || "Save failed", "error");
+      }
+    });
+  }
+
+  // Toggles post immediately to /api/settings/<key> — no save button.
+  function wireToggles() {
+    ["grading_auto_save","show_transcript"].forEach((k) => {
+      const el = document.getElementById("tg-" + k);
+      if (!el) return;
+      el.addEventListener("change", async () => {
+        const value = el.checked ? "true" : "false";
+        el.disabled = true;
+        try {
+          await EA.fetchJSON("/api/settings/" + encodeURIComponent(k), {
+            method: "POST",
+            body: { value: value },
+          });
+          originalSettings[k] = value;
+          EA.toast(k.replace(/_/g," ") + " " + (el.checked ? "on" : "off"), "success");
+        } catch (err) {
+          el.checked = !el.checked;
+          EA.toast(err.message || "Save failed", "error");
+        } finally {
+          el.disabled = false;
+        }
+      });
+    });
+  }
+
+  function wireDirtyGuard() {
+    window.addEventListener("beforeunload", (e) => {
+      if (!generalDirty) return;
+      e.preventDefault();
+      e.returnValue = "";
+    });
+  }
+
+  // ── Locations ──────────────────────────────────
+  async function loadLocations() {
+    try {
+      cache.locations = await EA.fetchJSON("/api/locations");
+    } catch (err) {
+      cache.locations = [];
+      EA.showError("#locations-wrap", err.message || "Failed to load locations.");
+      return;
+    }
+    renderLocations();
+  }
+
+  function renderLocations() {
+    const wrap = $("#locations-wrap");
+    if (!cache.locations.length) {
+      wrap.innerHTML = '<div class="empty-state">No locations yet. Add one to get started.</div>';
+    } else {
+      const rows = cache.locations.map((l) => (
+        '<tr data-id="' + l.location_id + '">' +
+          '<td>' + EA.esc(l.location_name) + '</td>' +
+          '<td>' + EA.esc(l.location_phone || "—") + '</td>' +
+          '<td>' + EA.esc(EA.formatDate(l.location_engagement_date) || "—") + '</td>' +
+          '<td><span class="status-pill">' + EA.esc(l.status_name || "—") + '</span></td>' +
+          '<td style="text-align:right;">' +
+            '<button type="button" class="btn btn-ghost btn-sm loc-edit" data-id="' + l.location_id + '">Edit</button>' +
+            '<button type="button" class="btn btn-ghost btn-sm loc-delete" data-id="' + l.location_id + '">Delete</button>' +
+          '</td>' +
+        '</tr>'
+      )).join("");
+      wrap.innerHTML =
+        '<table class="history-table"><thead><tr>' +
+          '<th>Name</th><th>Phone</th><th>Engagement date</th><th>Status</th><th></th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+    $("#btn-add-location").onclick = onAddLocation;
+    wrap.querySelectorAll(".loc-edit").forEach((b) => b.onclick = () => onEditLocation(b.dataset.id));
+    wrap.querySelectorAll(".loc-delete").forEach((b) => b.onclick = () => onDeleteLocation(b.dataset.id));
+  }
+
+  async function onAddLocation() {
+    const data = await EA.formDialog({
+      title: "Add location",
+      fields: [
+        { name:"location_name",  label:"Name", required:true },
+        { name:"location_phone", label:"Phone" },
+        { name:"location_engagement_date", label:"Engagement date", type:"date" },
+      ],
+      okLabel: "Create",
+    });
+    if (!data) return;
+    try {
+      await EA.fetchJSON("/api/locations", { method:"POST", body: data });
+      await loadLocations();
+      EA.toast("Location added.", "success");
+    } catch (err) { EA.toast(err.message || "Create failed", "error"); }
+  }
+
+  async function onEditLocation(id) {
+    const loc = cache.locations.find((x) => String(x.location_id) === String(id));
+    if (!loc) return;
+    const data = await EA.formDialog({
+      title: "Edit location",
+      fields: [
+        { name:"location_name",  label:"Name", required:true, value: loc.location_name },
+        { name:"location_phone", label:"Phone", value: loc.location_phone },
+        { name:"location_engagement_date", label:"Engagement date", type:"date",
+          value: loc.location_engagement_date ? String(loc.location_engagement_date).slice(0,10) : "" },
+      ],
+    });
+    if (!data) return;
+    try {
+      await EA.fetchJSON("/api/locations/" + encodeURIComponent(id), { method:"PUT", body: data });
+      await loadLocations();
+      EA.toast("Location saved.", "success");
+    } catch (err) { EA.toast(err.message || "Save failed", "error"); }
+  }
+
+  async function onDeleteLocation(id) {
+    const ok = await EA.confirmDialog({
+      title: "Delete location?", body:"Soft-delete only. Can be restored by a super admin.",
+      okLabel:"Delete", variant:"danger",
+    });
+    if (!ok) return;
+    try {
+      await EA.fetchJSON("/api/locations/" + encodeURIComponent(id), { method:"DELETE" });
+      await loadLocations();
+      EA.toast("Location deleted.", "success");
+    } catch (err) { EA.toast(err.message || "Delete failed", "error"); }
+  }
+
+  // ── Bulk upload ───────────────────────────────
+  function wireBulkUpload() {
+    const panel = $("#bulk-upload-panel");
+    if (!panel) return;  // hidden for non-admin roles
+
+    const fileInput = $("#bulk-file");
+    const uploadBtn = $("#btn-bulk-upload");
+    const meta      = $("#bulk-file-meta");
+    const results   = $("#bulk-results");
+    const tmplLink  = $("#bulk-template-link");
+
+    tmplLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      const csv =
+        "Location Name,Phone Number,Engagement Date\n" +
+        "Example Property,555-123-4567,2026-01-15\n";
+      const url = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "locations_template.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+
+    fileInput.addEventListener("change", () => {
+      results.hidden = true;
+      results.innerHTML = "";
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) {
+        meta.hidden = true;
+        uploadBtn.disabled = true;
+        return;
+      }
+      const okExt = /\.(csv|xlsx|xls)$/i.test(file.name);
+      if (!okExt) {
+        meta.hidden = false;
+        meta.innerHTML =
+          '<span style="color:var(--danger,#e5484d);">' +
+          'Unsupported file type. Please upload a CSV or Excel file.</span>';
+        uploadBtn.disabled = true;
+        return;
+      }
+      const kb = (file.size / 1024).toFixed(1);
+      meta.hidden = false;
+      meta.textContent = file.name + " (" + kb + " KB)";
+      uploadBtn.disabled = false;
+    });
+
+    uploadBtn.addEventListener("click", async () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append("file", file);
+
+      uploadBtn.disabled = true;
+      const origLabel = uploadBtn.textContent;
+      uploadBtn.innerHTML = '<span class="spinner" aria-hidden="true"></span> Uploading…';
+      results.hidden = false;
+      results.innerHTML = '<div class="skeleton" style="height:18px;margin:6px 0;"></div>' +
+                          '<div class="skeleton" style="height:18px;margin:6px 0;"></div>';
+
+      try {
+        const resp = await EA.fetchJSON("/api/locations/bulk-upload", {
+          method: "POST", body: fd,
+        });
+        renderBulkResults(resp);
+        const total = (resp.created || 0) + (resp.updated || 0);
+        if ((resp.errors || []).length === 0) {
+          await loadLocations();
+          EA.toast("Upload complete — " + total + " location" +
+                   (total === 1 ? "" : "s") + " added.", "success");
+        } else {
+          EA.toast("Upload finished with " + resp.errors.length +
+                   " error" + (resp.errors.length === 1 ? "" : "s") + ".", "error");
+        }
+        // Clear file input so the same file can be re-selected.
+        fileInput.value = "";
+        meta.hidden = true;
+      } catch (err) {
+        results.hidden = false;
+        results.innerHTML = '<div style="color:var(--danger,#e5484d);">' +
+                            EA.esc(err.message || "Upload failed.") + '</div>';
+        EA.toast(err.message || "Upload failed.", "error");
+      } finally {
+        uploadBtn.textContent = origLabel;
+        uploadBtn.disabled = !(fileInput.files && fileInput.files[0]);
+      }
+    });
+  }
+
+  function renderBulkResults(resp) {
+    const results = $("#bulk-results");
+    const parts = [];
+    if (resp.created) {
+      parts.push(
+        '<div style="color:var(--success,#30a46c); margin:4px 0;">' +
+        '✓ ' + resp.created + ' location' + (resp.created === 1 ? "" : "s") + ' created</div>'
+      );
+    }
+    if (resp.updated) {
+      parts.push(
+        '<div style="color:var(--accent,#3b82f6); margin:4px 0;">' +
+        'ℹ ' + resp.updated + ' location' + (resp.updated === 1 ? "" : "s") + ' updated</div>'
+      );
+    }
+    (resp.warnings || []).forEach((w) => {
+      parts.push(
+        '<div style="color:#d97706; margin:4px 0;" class="text-small">' +
+        '⚠ Row ' + w.row + ' — ' + EA.esc(w.location_name || "") + ': ' +
+        EA.esc(w.message || "") + '</div>'
+      );
+    });
+    (resp.errors || []).forEach((err) => {
+      parts.push(
+        '<div style="color:var(--danger,#e5484d); margin:4px 0;" class="text-small">' +
+        '✕ Row ' + err.row + ' — ' + EA.esc(err.message || "") + '</div>'
+      );
+    });
+    if (!parts.length) {
+      parts.push('<div class="muted text-small">No rows processed.</div>');
+    }
+    results.innerHTML = parts.join("");
+    results.hidden = false;
+  }
+
+  // ── Campaigns ─────────────────────────────────
+  async function loadCampaigns() {
+    try {
+      cache.campaigns = await EA.fetchJSON("/api/campaigns");
+    } catch (err) {
+      cache.campaigns = [];
+      EA.showError("#campaigns-wrap", err.message || "Failed to load campaigns.");
+      return;
+    }
+    renderCampaigns();
+  }
+
+  function renderCampaigns() {
+    const wrap = $("#campaigns-wrap");
+    if (!cache.campaigns.length) {
+      wrap.innerHTML = '<div class="empty-state">No campaigns yet.</div>';
+    } else {
+      const rows = cache.campaigns.map((c) => (
+        '<tr data-id="' + c.campaign_id + '">' +
+          '<td>' + EA.esc(c.campaign_name) + '</td>' +
+          '<td>' + EA.esc(c.location_name || "—") + '</td>' +
+          '<td style="text-align:right;">' +
+            '<button type="button" class="btn btn-ghost btn-sm cmp-edit" data-id="' + c.campaign_id + '">Edit</button>' +
+            '<button type="button" class="btn btn-ghost btn-sm cmp-delete" data-id="' + c.campaign_id + '">Delete</button>' +
+          '</td>' +
+        '</tr>'
+      )).join("");
+      wrap.innerHTML =
+        '<table class="history-table"><thead><tr><th>Name</th><th>Location</th><th></th></tr></thead>' +
+        '<tbody>' + rows + '</tbody></table>';
+    }
+    $("#btn-add-campaign").onclick = onAddCampaign;
+    wrap.querySelectorAll(".cmp-edit").forEach((b) => b.onclick = () => onEditCampaign(b.dataset.id));
+    wrap.querySelectorAll(".cmp-delete").forEach((b) => b.onclick = () => onDeleteCampaign(b.dataset.id));
+  }
+
+  function locationOptions() {
+    return cache.locations.map((l) => ({value:l.location_id, label:l.location_name}));
+  }
+
+  async function onAddCampaign() {
+    if (!cache.locations.length) return EA.toast("Add a location first.", "error");
+    const data = await EA.formDialog({
+      title: "Add campaign",
+      fields: [
+        { name:"campaign_name", label:"Name", required:true },
+        { name:"location_id", label:"Location", type:"select", required:true,
+          options: locationOptions() },
+      ],
+      okLabel:"Create",
+    });
+    if (!data) return;
+    try {
+      await EA.fetchJSON("/api/campaigns", {
+        method:"POST",
+        body: { campaign_name: data.campaign_name, location_id: parseInt(data.location_id, 10) },
+      });
+      await loadCampaigns();
+      EA.toast("Campaign added.", "success");
+    } catch (err) { EA.toast(err.message || "Create failed", "error"); }
+  }
+
+  async function onEditCampaign(id) {
+    const c = cache.campaigns.find((x) => String(x.campaign_id) === String(id));
+    if (!c) return;
+    const data = await EA.formDialog({
+      title: "Edit campaign",
+      fields: [{ name:"campaign_name", label:"Name", required:true, value: c.campaign_name }],
+    });
+    if (!data) return;
+    try {
+      await EA.fetchJSON("/api/campaigns/" + encodeURIComponent(id), {
+        method:"PUT", body: { campaign_name: data.campaign_name },
+      });
+      await loadCampaigns();
+      EA.toast("Campaign saved.", "success");
+    } catch (err) { EA.toast(err.message || "Save failed", "error"); }
+  }
+
+  async function onDeleteCampaign(id) {
+    const ok = await EA.confirmDialog({ title:"Delete campaign?", okLabel:"Delete", variant:"danger" });
+    if (!ok) return;
+    try {
+      await EA.fetchJSON("/api/campaigns/" + encodeURIComponent(id), { method:"DELETE" });
+      await loadCampaigns();
+      EA.toast("Campaign deleted.", "success");
+    } catch (err) { EA.toast(err.message || "Delete failed", "error"); }
+  }
+
+  // ── Rubric Groups ─────────────────────────────
+  async function loadRubricGroups() {
+    try {
+      cache.rubricGroups = await EA.fetchJSON("/api/rubric-groups");
+    } catch (err) {
+      cache.rubricGroups = [];
+      EA.showError("#rubric-wrap", err.message || "Failed to load rubric groups.");
+      return;
+    }
+    renderRubricGroups();
+  }
+
+  function renderRubricGroups() {
+    const wrap = $("#rubric-wrap");
+    if (!cache.rubricGroups.length) {
+      wrap.innerHTML = '<div class="empty-state">No rubric groups yet. Create one or start from a template.</div>';
+    } else {
+      const rows = cache.rubricGroups.map((rg) => (
+        '<tr data-id="' + rg.rubric_group_id + '">' +
+          '<td>' + EA.esc(rg.rg_name) + '</td>' +
+          '<td>' + EA.esc(rg.location_name || "—") + '</td>' +
+          '<td>' + EA.esc(rg.rg_grade_target) + '</td>' +
+          '<td><span class="status-pill">' + EA.esc(rg.status_name || "—") + '</span></td>' +
+          '<td style="text-align:right;">' +
+            '<button type="button" class="btn btn-ghost btn-sm rg-items" data-id="' + rg.rubric_group_id + '">Manage items</button>' +
+            '<button type="button" class="btn btn-ghost btn-sm rg-edit" data-id="' + rg.rubric_group_id + '">Edit</button>' +
+            '<button type="button" class="btn btn-ghost btn-sm rg-delete" data-id="' + rg.rubric_group_id + '">Delete</button>' +
+          '</td>' +
+        '</tr>' +
+        '<tr class="rg-items-row" data-parent="' + rg.rubric_group_id + '" hidden>' +
+          '<td colspan="5" style="padding-left:28px;background:var(--surface-2);"></td>' +
+        '</tr>'
+      )).join("");
+      wrap.innerHTML =
+        '<table class="history-table"><thead><tr>' +
+          '<th>Name</th><th>Location</th><th>Grade target</th><th>Status</th><th></th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+    $("#btn-add-rubric-group").onclick = onAddRubricGroup;
+    $("#btn-use-template").onclick = onUseTemplate;
+    wrap.querySelectorAll(".rg-edit").forEach((b) => b.onclick = () => onEditRubricGroup(b.dataset.id));
+    wrap.querySelectorAll(".rg-delete").forEach((b) => b.onclick = () => onDeleteRubricGroup(b.dataset.id));
+    wrap.querySelectorAll(".rg-items").forEach((b) => b.onclick = () => toggleItemsRow(b.dataset.id));
+  }
+
+  async function onAddRubricGroup() {
+    if (!cache.locations.length) return EA.toast("Add a location first.", "error");
+    const data = await EA.formDialog({
+      title: "Create rubric group",
+      fields: [
+        { name:"rg_name", label:"Name", required:true },
+        { name:"rg_grade_target", label:"Grade target", type:"select", required:true, options: GRADE_TARGETS, value:"respondent" },
+        { name:"location_id", label:"Location", type:"select", required:true, options: locationOptions() },
+      ],
+      okLabel:"Create",
+    });
+    if (!data) return;
+    try {
+      await EA.fetchJSON("/api/rubric-groups", {
+        method:"POST",
+        body: {
+          rg_name: data.rg_name,
+          rg_grade_target: data.rg_grade_target,
+          location_id: parseInt(data.location_id, 10),
+        },
+      });
+      await loadRubricGroups();
+      EA.toast("Rubric group created.", "success");
+    } catch (err) { EA.toast(err.message || "Create failed", "error"); }
+  }
+
+  async function onEditRubricGroup(id) {
+    const rg = cache.rubricGroups.find((x) => String(x.rubric_group_id) === String(id));
+    if (!rg) return;
+    const data = await EA.formDialog({
+      title: "Edit rubric group",
+      fields: [
+        { name:"rg_name", label:"Name", required:true, value: rg.rg_name },
+        { name:"rg_grade_target", label:"Grade target", type:"select", required:true, options: GRADE_TARGETS, value: rg.rg_grade_target },
+        { name:"location_id", label:"Location", type:"select", required:true, options: locationOptions(), value: rg.location_id },
+      ],
+    });
+    if (!data) return;
+    try {
+      await EA.fetchJSON("/api/rubric-groups/" + encodeURIComponent(id), {
+        method:"PUT",
+        body: {
+          rg_name: data.rg_name,
+          rg_grade_target: data.rg_grade_target,
+          location_id: parseInt(data.location_id, 10),
+        },
+      });
+      await loadRubricGroups();
+      EA.toast("Rubric group saved.", "success");
+    } catch (err) { EA.toast(err.message || "Save failed", "error"); }
+  }
+
+  async function onDeleteRubricGroup(id) {
+    const ok = await EA.confirmDialog({
+      title:"Delete rubric group?",
+      body:"Blocked if any active projects reference this group.",
+      okLabel:"Delete", variant:"danger",
+    });
+    if (!ok) return;
+    try {
+      await EA.fetchJSON("/api/rubric-groups/" + encodeURIComponent(id), { method:"DELETE" });
+      await loadRubricGroups();
+      EA.toast("Rubric group deleted.", "success");
+    } catch (err) { EA.toast(err.message || "Delete failed", "error"); }
+  }
+
+  async function onUseTemplate() {
+    if (!cache.locations.length) return EA.toast("Add a location first.", "error");
+    let templates;
+    try { templates = await EA.fetchJSON("/api/rubric-templates"); }
+    catch (err) { return EA.toast(err.message || "Failed to load templates", "error"); }
+
+    const tplOptions = Object.keys(templates).map((k) => ({
+      value: k, label: templates[k].name + " (" + templates[k].criteria.length + " items)"
+    }));
+
+    const data = await EA.formDialog({
+      title: "Apply an industry template",
+      fields: [
+        { name:"template_key", label:"Template", type:"select", required:true, options: tplOptions },
+        { name:"location_id", label:"Location", type:"select", required:true, options: locationOptions() },
+        { name:"rg_name", label:"Name this rubric group", required:true },
+        { name:"rg_grade_target", label:"Grade target", type:"select", required:true, options: GRADE_TARGETS, value:"respondent" },
+      ],
+      okLabel:"Create from template",
+    });
+    if (!data) return;
+    try {
+      await EA.fetchJSON("/api/rubric-templates/" + encodeURIComponent(data.template_key) + "/apply", {
+        method:"POST",
+        body: {
+          location_id: parseInt(data.location_id, 10),
+          rg_name: data.rg_name,
+          rg_grade_target: data.rg_grade_target,
+        },
+      });
+      await loadRubricGroups();
+      EA.toast("Template applied.", "success");
+    } catch (err) { EA.toast(err.message || "Apply failed", "error"); }
+  }
+
+  // ── Rubric items (inline expanded) ────────────
+  async function toggleItemsRow(rubricGroupId) {
+    const row = document.querySelector('.rg-items-row[data-parent="' + rubricGroupId + '"]');
+    if (!row) return;
+    if (!row.hidden) { row.hidden = true; return; }
+    row.hidden = false;
+    const cell = row.querySelector("td");
+    cell.innerHTML = '<div class="skeleton" style="height:16px;margin:8px 0;"></div>';
+    try {
+      const items = await EA.fetchJSON("/api/rubric-groups/" + rubricGroupId + "/items");
+      renderItemsInline(cell, rubricGroupId, items);
+    } catch (err) {
+      cell.innerHTML = '<div class="section-error">' + EA.esc(err.message || "Failed to load items.") + '</div>';
+    }
+  }
+
+  function renderItemsInline(cell, rubricGroupId, items) {
+    const list = items.length
+      ? items.map((it) => itemDragRowHtml(it)).join("")
+      : '<div class="empty-state">No items yet. Add one below.</div>';
+
+    cell.innerHTML =
+      '<div class="stack-sm" style="padding:8px 0;">' +
+        '<div class="muted text-small">Drag to reorder.</div>' +
+        '<div id="item-list-' + rubricGroupId + '">' + list + '</div>' +
+        '<div>' +
+          '<button type="button" class="btn btn-ghost btn-sm" data-act="add-item" data-rg="' + rubricGroupId + '">Add item</button>' +
+        '</div>' +
+      '</div>';
+
+    cell.querySelector('[data-act="add-item"]').addEventListener("click", () => onAddItem(rubricGroupId));
+    cell.querySelectorAll(".item-edit").forEach((b) => b.addEventListener("click", () => onEditItem(rubricGroupId, b.dataset.iid)));
+    cell.querySelectorAll(".item-delete").forEach((b) => b.addEventListener("click", () => onDeleteItem(rubricGroupId, b.dataset.iid)));
+    cell.querySelectorAll(".item-guide").forEach((b) => b.addEventListener("click", () => onGenerateGuidance(rubricGroupId, b.dataset.iid)));
+
+    wireItemDragDrop(cell.querySelector("#item-list-" + rubricGroupId), rubricGroupId);
+  }
+
+  function itemDragRowHtml(it) {
+    return (
+      '<div class="drag-row" draggable="true" data-iid="' + it.rubric_item_id + '">' +
+        '<span class="drag-handle" title="Drag to reorder">⋮⋮</span>' +
+        '<div>' +
+          '<div class="drag-row-title">' + EA.esc(it.ri_name) + '</div>' +
+          '<div class="drag-row-meta">' +
+            '<span class="meta-chip">' + EA.esc(it.ri_score_type) + '</span>' +
+            '<span class="meta-chip">weight ' + EA.esc(String(it.ri_weight)) + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div>' +
+          '<button type="button" class="btn btn-ghost btn-sm item-guide" data-iid="' + it.rubric_item_id + '">Guidance</button>' +
+          '<button type="button" class="btn btn-ghost btn-sm item-edit" data-iid="' + it.rubric_item_id + '">Edit</button>' +
+          '<button type="button" class="btn btn-ghost btn-sm item-delete" data-iid="' + it.rubric_item_id + '">Delete</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function wireItemDragDrop(listEl, rubricGroupId) {
+    if (!listEl) return;
+    let dragged = null;
+
+    listEl.querySelectorAll(".drag-row").forEach((row) => {
+      row.addEventListener("dragstart", (e) => {
+        dragged = row;
+        row.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+      });
+      row.addEventListener("dragend", () => {
+        if (dragged) dragged.classList.remove("dragging");
+        listEl.querySelectorAll(".drag-over").forEach((n) => n.classList.remove("drag-over"));
+        dragged = null;
+      });
+      row.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        if (!dragged || row === dragged) return;
+        row.classList.add("drag-over");
+      });
+      row.addEventListener("dragleave", () => row.classList.remove("drag-over"));
+      row.addEventListener("drop", (e) => {
+        e.preventDefault();
+        row.classList.remove("drag-over");
+        if (!dragged || row === dragged) return;
+        // Insert before or after depending on mouse Y
+        const rect = row.getBoundingClientRect();
+        const after = (e.clientY - rect.top) > rect.height / 2;
+        row.parentNode.insertBefore(dragged, after ? row.nextSibling : row);
+        postNewOrder(rubricGroupId, listEl);
+      });
+    });
+  }
+
+  async function postNewOrder(rubricGroupId, listEl) {
+    const body = Array.from(listEl.querySelectorAll(".drag-row")).map((row, idx) => ({
+      rubric_item_id: parseInt(row.dataset.iid, 10),
+      ri_order: idx,
+    }));
+    try {
+      await EA.fetchJSON("/api/rubric-groups/" + rubricGroupId + "/items/reorder", {
+        method: "POST", body: body,
+      });
+      EA.toast("Order updated.", "success");
+    } catch (err) {
+      EA.toast(err.message || "Reorder failed", "error");
+    }
+  }
+
+  async function onAddItem(rubricGroupId) {
+    const data = await EA.formDialog({
+      title: "Add rubric item",
+      fields: [
+        { name:"ri_name", label:"Name", required:true },
+        { name:"ri_score_type", label:"Score type", type:"select", required:true, options: SCORE_TYPES, value:"out_of_10" },
+        { name:"ri_weight", label:"Weight", type:"number", value:"1.0", step:"0.1", min:"0.1" },
+        { name:"ri_scoring_guidance", label:"Scoring guidance", type:"textarea" },
+      ],
+      okLabel:"Create",
+    });
+    if (!data) return;
+    try {
+      await EA.fetchJSON("/api/rubric-groups/" + rubricGroupId + "/items", {
+        method:"POST",
+        body: {
+          ri_name: data.ri_name,
+          ri_score_type: data.ri_score_type,
+          ri_weight: parseFloat(data.ri_weight || "1.0"),
+          ri_scoring_guidance: data.ri_scoring_guidance || null,
+        },
+      });
+      // Refresh the inline list
+      await refreshItems(rubricGroupId);
+      EA.toast("Item added.", "success");
+    } catch (err) { EA.toast(err.message || "Add failed", "error"); }
+  }
+
+  async function refreshItems(rubricGroupId) {
+    const row = document.querySelector('.rg-items-row[data-parent="' + rubricGroupId + '"]');
+    if (!row || row.hidden) return;
+    const items = await EA.fetchJSON("/api/rubric-groups/" + rubricGroupId + "/items");
+    renderItemsInline(row.querySelector("td"), rubricGroupId, items);
+  }
+
+  async function onEditItem(rubricGroupId, itemId) {
+    const items = await EA.fetchJSON("/api/rubric-groups/" + rubricGroupId + "/items");
+    const it = items.find((x) => String(x.rubric_item_id) === String(itemId));
+    if (!it) return;
+    const data = await EA.formDialog({
+      title: "Edit rubric item",
+      fields: [
+        { name:"ri_name", label:"Name", required:true, value: it.ri_name },
+        { name:"ri_score_type", label:"Score type", type:"select", required:true, options: SCORE_TYPES, value: it.ri_score_type },
+        { name:"ri_weight", label:"Weight", type:"number", value: it.ri_weight, step:"0.1", min:"0.1" },
+        { name:"ri_scoring_guidance", label:"Scoring guidance", type:"textarea", value: it.ri_scoring_guidance || "" },
+      ],
+    });
+    if (!data) return;
+    try {
+      await EA.fetchJSON("/api/rubric-groups/" + rubricGroupId + "/items/" + itemId, {
+        method:"PUT",
+        body: {
+          ri_name: data.ri_name,
+          ri_score_type: data.ri_score_type,
+          ri_weight: parseFloat(data.ri_weight || "1.0"),
+          ri_scoring_guidance: data.ri_scoring_guidance || null,
+        },
+      });
+      await refreshItems(rubricGroupId);
+      EA.toast("Item saved.", "success");
+    } catch (err) { EA.toast(err.message || "Save failed", "error"); }
+  }
+
+  async function onDeleteItem(rubricGroupId, itemId) {
+    const ok = await EA.confirmDialog({ title:"Delete item?", okLabel:"Delete", variant:"danger" });
+    if (!ok) return;
+    try {
+      await EA.fetchJSON("/api/rubric-groups/" + rubricGroupId + "/items/" + itemId, { method:"DELETE" });
+      await refreshItems(rubricGroupId);
+      EA.toast("Item deleted.", "success");
+    } catch (err) { EA.toast(err.message || "Delete failed", "error"); }
+  }
+
+  async function onGenerateGuidance(rubricGroupId, itemId) {
+    const items = await EA.fetchJSON("/api/rubric-groups/" + rubricGroupId + "/items");
+    const it = items.find((x) => String(x.rubric_item_id) === String(itemId));
+    if (!it) return;
+    const rg = cache.rubricGroups.find((x) => String(x.rubric_group_id) === String(rubricGroupId));
+
+    const overlay = EA.showOverlay("Generating scoring guidance…");
+    try {
+      const resp = await EA.fetchJSON(
+        "/api/rubric-groups/" + rubricGroupId + "/items/" + itemId + "/generate-guidance",
+        { method:"POST",
+          body: {
+            category_name: it.ri_name,
+            grade_target:  rg ? rg.rg_grade_target : "respondent",
+          },
+        },
+      );
+      overlay.close();
+      // Render the guidance inline below the row
+      const row = document.querySelector('.drag-row[data-iid="' + itemId + '"]');
+      if (row) {
+        // Remove any existing preview
+        const existing = row.parentNode.querySelector('[data-guide-for="' + itemId + '"]');
+        if (existing) existing.remove();
+        const preview = document.createElement("div");
+        preview.dataset.guideFor = itemId;
+        preview.style.margin = "0 0 8px 0";
+        preview.innerHTML =
+          '<div class="panel" style="background:var(--surface-2);">' +
+            '<div class="panel-title">Generated guidance</div>' +
+            '<textarea class="field-textarea" readonly>' + EA.esc(resp.guidance || "") + '</textarea>' +
+            '<div class="hstack-wrap" style="margin-top:8px;">' +
+              '<button type="button" class="btn btn-primary btn-sm" data-act="save-guide">Save as scoring guidance</button>' +
+              '<button type="button" class="btn btn-ghost btn-sm" data-act="dismiss-guide">Dismiss</button>' +
+            '</div>' +
+          '</div>';
+        row.insertAdjacentElement("afterend", preview);
+        preview.querySelector('[data-act="save-guide"]').addEventListener("click", async () => {
+          try {
+            await EA.fetchJSON("/api/rubric-groups/" + rubricGroupId + "/items/" + itemId, {
+              method:"PUT",
+              body: { ri_scoring_guidance: resp.guidance },
+            });
+            preview.remove();
+            EA.toast("Guidance saved.", "success");
+          } catch (err) { EA.toast(err.message || "Save failed", "error"); }
+        });
+        preview.querySelector('[data-act="dismiss-guide"]').addEventListener("click", () => preview.remove());
+      }
+    } catch (err) {
+      overlay.close();
+      EA.toast(err.message || "Generation failed", "error");
+    }
+  }
+
+  // ── Projects ──────────────────────────────────
+  async function loadProjects() {
+    try {
+      cache.projects = await EA.fetchJSON("/api/projects");
+    } catch (err) {
+      cache.projects = [];
+      EA.showError("#projects-wrap", err.message || "Failed to load projects.");
+      return;
+    }
+    renderProjects();
+  }
+
+  function renderProjects() {
+    const wrap = $("#projects-wrap");
+    if (!cache.projects.length) {
+      wrap.innerHTML = '<div class="empty-state">No projects yet.</div>';
+    } else {
+      const rows = cache.projects.map((p) => (
+        '<tr data-id="' + p.project_id + '">' +
+          '<td>' + EA.esc(p.project_name) + '</td>' +
+          '<td>' + EA.esc(p.campaign_name || "—") + '</td>' +
+          '<td>' + EA.esc(rubricGroupName(p.rubric_group_id)) + '</td>' +
+          '<td>' + EA.esc(EA.formatDate(p.project_start_date) || "—") + '</td>' +
+          '<td>' + EA.esc(EA.formatDate(p.project_end_date) || "—") + '</td>' +
+          '<td><span class="status-pill">' + EA.esc(p.status_name || "—") + '</span></td>' +
+          '<td style="text-align:right;">' +
+            '<button type="button" class="btn btn-ghost btn-sm proj-edit" data-id="' + p.project_id + '">Edit</button>' +
+            '<button type="button" class="btn btn-ghost btn-sm proj-delete" data-id="' + p.project_id + '">Delete</button>' +
+          '</td>' +
+        '</tr>'
+      )).join("");
+      wrap.innerHTML =
+        '<table class="history-table"><thead><tr>' +
+          '<th>Name</th><th>Campaign</th><th>Rubric group</th><th>Start</th><th>End</th><th>Status</th><th></th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+    $("#btn-add-project").onclick = onAddProject;
+    wrap.querySelectorAll(".proj-edit").forEach((b) => b.onclick = () => onEditProject(b.dataset.id));
+    wrap.querySelectorAll(".proj-delete").forEach((b) => b.onclick = () => onDeleteProject(b.dataset.id));
+  }
+
+  function rubricGroupName(id) {
+    const rg = cache.rubricGroups.find((x) => String(x.rubric_group_id) === String(id));
+    return rg ? rg.rg_name : "—";
+  }
+
+  async function onAddProject() {
+    if (!cache.rubricGroups.length) return EA.toast("Create a rubric group first.", "error");
+    const data = await EA.formDialog({
+      title:"Add project",
+      fields: [
+        { name:"project_name", label:"Name", required:true },
+        { name:"rubric_group_id", label:"Rubric group", type:"select", required:true,
+          options: cache.rubricGroups.map((r) => ({value:r.rubric_group_id, label:r.rg_name})) },
+        { name:"campaign_id", label:"Campaign", type:"select",
+          options: [{value:"", label:"—"}].concat(cache.campaigns.map((c) => ({value:c.campaign_id, label:c.campaign_name}))) },
+        { name:"project_start_date", label:"Start date", type:"date", required:true,
+          value: new Date().toISOString().slice(0,10) },
+        { name:"project_end_date", label:"End date (optional)", type:"date" },
+      ],
+      okLabel:"Create",
+    });
+    if (!data) return;
+    try {
+      await EA.fetchJSON("/api/projects", {
+        method:"POST",
+        body: {
+          project_name: data.project_name,
+          rubric_group_id: parseInt(data.rubric_group_id, 10),
+          campaign_id: data.campaign_id ? parseInt(data.campaign_id, 10) : null,
+          project_start_date: data.project_start_date,
+          project_end_date:   data.project_end_date || null,
+        },
+      });
+      await loadProjects();
+      EA.toast("Project added.", "success");
+    } catch (err) { EA.toast(err.message || "Create failed", "error"); }
+  }
+
+  async function onEditProject(id) {
+    const p = cache.projects.find((x) => String(x.project_id) === String(id));
+    if (!p) return;
+    const data = await EA.formDialog({
+      title:"Edit project",
+      fields: [
+        { name:"project_name", label:"Name", required:true, value: p.project_name },
+        { name:"rubric_group_id", label:"Rubric group", type:"select", required:true,
+          options: cache.rubricGroups.map((r) => ({value:r.rubric_group_id, label:r.rg_name})),
+          value: p.rubric_group_id },
+        { name:"campaign_id", label:"Campaign", type:"select",
+          options: [{value:"", label:"—"}].concat(cache.campaigns.map((c) => ({value:c.campaign_id, label:c.campaign_name}))),
+          value: p.campaign_id || "" },
+        { name:"project_start_date", label:"Start date", type:"date", required:true,
+          value: p.project_start_date ? String(p.project_start_date).slice(0,10) : "" },
+        { name:"project_end_date", label:"End date", type:"date",
+          value: p.project_end_date ? String(p.project_end_date).slice(0,10) : "" },
+      ],
+    });
+    if (!data) return;
+    try {
+      await EA.fetchJSON("/api/projects/" + encodeURIComponent(id), {
+        method:"PUT",
+        body: {
+          project_name: data.project_name,
+          rubric_group_id: parseInt(data.rubric_group_id, 10),
+          campaign_id: data.campaign_id ? parseInt(data.campaign_id, 10) : null,
+          project_start_date: data.project_start_date,
+          project_end_date:   data.project_end_date || null,
+        },
+      });
+      await loadProjects();
+      EA.toast("Project saved.", "success");
+    } catch (err) { EA.toast(err.message || "Save failed", "error"); }
+  }
+
+  async function onDeleteProject(id) {
+    const ok = await EA.confirmDialog({ title:"Delete project?", okLabel:"Delete", variant:"danger" });
+    if (!ok) return;
+    try {
+      await EA.fetchJSON("/api/projects/" + encodeURIComponent(id), { method:"DELETE" });
+      await loadProjects();
+      EA.toast("Project deleted.", "success");
+    } catch (err) { EA.toast(err.message || "Delete failed", "error"); }
+  }
+
+  // ── Account ───────────────────────────────
+  async function loadAccount() {
+    try {
+      const a = await EA.fetchJSON("/api/account");
+      $("#a-first").value = a.user_first_name || "";
+      $("#a-last").value  = a.user_last_name  || "";
+      $("#a-email").value = a.user_email      || "";
+    } catch (err) {
+      // Non-fatal — fields stay empty
+    }
+  }
+
+  function wireAccount() {
+    $("#btn-save-account").addEventListener("click", async () => {
+      const payload = {
+        user_first_name: $("#a-first").value.trim(),
+        user_last_name:  $("#a-last").value.trim(),
+        user_email:      $("#a-email").value.trim(),
+      };
+      try {
+        await EA.fetchJSON("/api/account", { method:"PUT", body: payload });
+        EA.toast("Profile saved.", "success");
+      } catch (err) { EA.toast(err.message || "Save failed", "error"); }
+    });
+
+    $("#btn-change-pw").addEventListener("click", async () => {
+      const current_password = $("#pw-current").value;
+      const new_password     = $("#pw-new").value;
+      const confirm_password = $("#pw-confirm").value;
+      if (!current_password || !new_password || !confirm_password) {
+        return EA.toast("Fill in all password fields.", "error");
+      }
+      if (new_password.length < 8) return EA.toast("New password must be at least 8 characters.", "error");
+      if (new_password !== confirm_password) return EA.toast("New passwords don't match.", "error");
+
+      try {
+        await EA.fetchJSON("/api/account/password", {
+          method:"POST",
+          body: { current_password, new_password, confirm_password },
+        });
+        $("#pw-current").value = "";
+        $("#pw-new").value = "";
+        $("#pw-confirm").value = "";
+        EA.toast("Password changed.", "success");
+      } catch (err) { EA.toast(err.message || "Change failed", "error"); }
+    });
+  }
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,388 @@
+{% extends "base.html" %}
+{% block title %}Past Grades | {{ client_name or "Echo Audit" }}{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Past Grades</div>
+    <div class="page-subtitle">Search, filter, and export your graded interactions.</div>
+  </div>
+</div>
+
+{# ── Project-scoped banner (shown only when arriving from a hub) ── #}
+<div id="project-filter-banner" class="panel" hidden
+     style="margin-bottom:14px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+  <div>
+    Showing grades for <strong id="project-filter-banner-name">…</strong>.
+  </div>
+  <a href="/app/history" class="text-small">View all grades →</a>
+</div>
+
+<section class="panel">
+  {# ── Filters bar ───────────────────────────────────── #}
+  <div class="filters-bar">
+    <div class="field">
+      <label class="field-label" for="f-search">Search</label>
+      <input id="f-search" type="text" class="field-input" placeholder="Search transcript…">
+    </div>
+    <div class="field">
+      <label class="field-label" for="f-location">Location</label>
+      <select id="f-location" class="field-select">
+        <option value="">All Locations</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="field-label" for="f-project">Project</label>
+      <select id="f-project" class="field-select">
+        <option value="">All</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="field-label" for="f-respondent">Respondent</label>
+      <select id="f-respondent" class="field-select">
+        <option value="">All</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="field-label" for="f-from">From</label>
+      <input id="f-from" type="date" class="field-input">
+    </div>
+    <div class="field">
+      <label class="field-label" for="f-to">To</label>
+      <input id="f-to" type="date" class="field-input">
+    </div>
+    <div class="field">
+      <label class="field-label" for="f-score-max">Score ≤</label>
+      <input id="f-score-max" type="number" step="0.1" min="0" max="10"
+             class="field-input" placeholder="e.g. 6.5">
+    </div>
+    <div class="field">
+      <label class="field-label" for="f-status">Status</label>
+      <select id="f-status" class="field-select">
+        <option value="">All</option>
+        <option value="43">Graded</option>
+        <option value="41">Awaiting clarification</option>
+        <option value="44">No answer</option>
+        <option value="45">Pending</option>
+        <option value="42">Grading</option>
+        <option value="40">Transcribing</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="filters-actions">
+    <button type="button" class="btn btn-ghost btn-sm" id="btn-clear-filters">Clear filters</button>
+    <div class="filters-actions-right">
+      {% if user_role in ('admin','super_admin') %}
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-export">Export to Excel</button>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── Table ─────────────────────────────────────────── #}
+  <div id="history-wrap">
+    <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+    <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+    <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+  </div>
+
+  <div class="load-more-wrap" id="load-more-wrap" hidden>
+    <button type="button" class="btn btn-ghost" id="btn-load-more">Load more</button>
+  </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  "use strict";
+  const EA = window.EA;
+  const PAGE_SIZE = 25;
+
+  // ── State ────────────────────────────────────────────
+  const state = {
+    all: [],       // every row fetched from /api/interactions with current filters
+    shown: 0,      // number of rows currently rendered
+    userRole: "{{ user_role or '' }}",
+    canDelete: {{ 'true' if user_role in ('admin','super_admin') else 'false' }},
+    debounceId: null,
+  };
+
+  const $ = function (s) { return document.querySelector(s); };
+
+  // ── Bootstrap ────────────────────────────────────────
+  async function init() {
+    wireFilters();
+    // Locations + projects can load in parallel — neither depends on the other.
+    // loadHistory waits for both so the project_id query-param pre-filter
+    // (set inside loadProjects) is in effect when the first fetch fires.
+    await Promise.all([loadLocations(), loadProjects()]);
+    await loadHistory();
+  }
+
+  async function loadLocations() {
+    try {
+      const locations = await EA.fetchJSON("/api/locations");
+      const sel = $("#f-location");
+      (locations || []).forEach(function (l) {
+        const o = document.createElement("option");
+        o.value = l.location_id;
+        o.textContent = l.location_name;
+        sel.appendChild(o);
+      });
+    } catch (_) { /* non-fatal — filter is optional */ }
+  }
+
+  async function loadProjects() {
+    try {
+      const projects = await EA.fetchJSON("/api/projects");
+      const sel = $("#f-project");
+      projects.forEach(function (p) {
+        const o = document.createElement("option");
+        o.value = p.project_id;
+        o.textContent = p.project_name;
+        sel.appendChild(o);
+      });
+      // If arrived from a project hub with ?project_id=<id>, pre-apply the
+      // filter and show the banner. The filter stays editable — the banner
+      // is purely a visible cue, not a lock (per spec).
+      const qp = new URLSearchParams(window.location.search).get("project_id");
+      if (qp) {
+        sel.value = qp;
+        const p = projects.find(x => String(x.project_id) === String(qp));
+        const banner = document.getElementById("project-filter-banner");
+        if (p && banner) {
+          document.getElementById("project-filter-banner-name").textContent = p.project_name;
+          banner.hidden = false;
+        }
+      }
+    } catch (_) { /* non-fatal */ }
+  }
+
+  // ── Filters ──────────────────────────────────────────
+  function wireFilters() {
+    $("#f-search").addEventListener("input", debouncedLoad);
+
+    ["#f-location","#f-project","#f-from","#f-to","#f-score-max","#f-status","#f-respondent"]
+      .forEach(function (sel) {
+        $(sel).addEventListener("change", loadHistory);
+      });
+
+    $("#btn-clear-filters").addEventListener("click", function () {
+      ["#f-search","#f-from","#f-to","#f-score-max"].forEach(function (s) { $(s).value = ""; });
+      ["#f-location","#f-project","#f-status","#f-respondent"].forEach(function (s) { $(s).value = ""; });
+      loadHistory();
+    });
+
+    const btnExport = document.getElementById("btn-export");
+    if (btnExport) btnExport.addEventListener("click", exportCurrent);
+
+    $("#btn-load-more").addEventListener("click", function () {
+      state.shown += PAGE_SIZE;
+      render();
+    });
+  }
+
+  function debouncedLoad() {
+    clearTimeout(state.debounceId);
+    state.debounceId = setTimeout(loadHistory, 300);
+  }
+
+  function buildParams() {
+    const qs = new URLSearchParams();
+    const search = $("#f-search").value.trim();
+    if (search)                 qs.set("q", search);
+    if ($("#f-location").value) qs.set("location_id", $("#f-location").value);
+    if ($("#f-project").value)  qs.set("project_id", $("#f-project").value);
+    if ($("#f-from").value)     qs.set("from_date", $("#f-from").value);
+    if ($("#f-to").value)       qs.set("to_date", $("#f-to").value);
+    if ($("#f-status").value)   qs.set("status_id", $("#f-status").value);
+    if ($("#f-respondent").value) qs.set("respondent_user_id", $("#f-respondent").value);
+    return qs;
+  }
+
+  // ── Data load ────────────────────────────────────────
+  async function loadHistory() {
+    const wrap = $("#history-wrap");
+    EA.showLoading(wrap, 5);
+    $("#load-more-wrap").hidden = true;
+
+    const qs = buildParams();
+    try {
+      let rows = await EA.fetchJSON("/api/interactions" + (qs.toString() ? "?" + qs : ""));
+      rows = rows || [];
+
+      // Client-side score-max filter (no server-side param for this yet).
+      const maxRaw = $("#f-score-max").value;
+      if (maxRaw !== "") {
+        const max = parseFloat(maxRaw);
+        if (!isNaN(max)) {
+          rows = rows.filter(function (r) {
+            return r.interaction_overall_score !== null
+                && r.interaction_overall_score !== undefined
+                && Number(r.interaction_overall_score) <= max;
+          });
+        }
+      }
+
+      state.all = rows;
+      state.shown = Math.min(PAGE_SIZE, rows.length);
+
+      populateRespondentFilter(rows);
+      render();
+    } catch (err) {
+      EA.showError(wrap, err.message || "Failed to load history");
+    }
+  }
+
+  // Populate the respondent dropdown from unique names in the current result
+  // set. Preserves the current selection if it's still present.
+  function populateRespondentFilter(rows) {
+    const sel = $("#f-respondent");
+    const currentVal = sel.value;
+    const seen = new Map();
+    rows.forEach(function (r) {
+      if (r.respondent_user_id && r.respondent_name && !seen.has(r.respondent_user_id)) {
+        seen.set(r.respondent_user_id, r.respondent_name);
+      }
+    });
+    sel.innerHTML = '<option value="">All</option>';
+    Array.from(seen.entries())
+      .sort(function (a, b) { return a[1].localeCompare(b[1]); })
+      .forEach(function (entry) {
+        const o = document.createElement("option");
+        o.value = entry[0];
+        o.textContent = entry[1];
+        sel.appendChild(o);
+      });
+    // Restore prior selection if still valid
+    if (currentVal && seen.has(parseInt(currentVal, 10))) sel.value = currentVal;
+  }
+
+  // ── Render ──────────────────────────────────────────
+  function render() {
+    const wrap = $("#history-wrap");
+    const rows = state.all;
+    if (!rows.length) {
+      wrap.innerHTML = '<div class="empty-state">No interactions match these filters.</div>';
+      $("#load-more-wrap").hidden = true;
+      return;
+    }
+    const visible = rows.slice(0, state.shown);
+    const head =
+      '<table class="history-table">' +
+        '<thead><tr>' +
+          '<th>Date</th><th>Time</th><th>Location</th>' +
+          '<th>Project</th><th>Campaign</th><th>Respondent</th>' +
+          '<th>Caller</th><th>Score</th><th>Status</th><th style="text-align:right;">Actions</th>' +
+        '</tr></thead><tbody>';
+    const body = visible.map(renderRow).join("");
+    wrap.innerHTML = head + body + "</tbody></table>";
+
+    $("#load-more-wrap").hidden = state.shown >= rows.length;
+
+    // Wire row clicks + delete buttons
+    wrap.querySelectorAll("tr[data-iid]").forEach(function (tr) {
+      tr.addEventListener("click", function (e) {
+        if (e.target.closest(".row-action")) return;   // action clicks handled separately
+        window.location.href = "/app/history/" + tr.dataset.iid;
+      });
+    });
+    wrap.querySelectorAll(".action-delete").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        onDelete(btn.dataset.iid);
+      });
+    });
+    wrap.querySelectorAll(".action-view").forEach(function (a) {
+      a.addEventListener("click", function (e) { e.stopPropagation(); });
+    });
+  }
+
+  function renderRow(r) {
+    const iid = r.interaction_id;
+    const cls = EA.scoreClass(r.interaction_overall_score);
+    const score = (r.status_id === 44)
+      ? '<span class="score-pill gray">N/A</span>'
+      : '<span class="score-pill ' + cls + '">' + EA.formatScore(r.interaction_overall_score) + '</span>';
+    const statusName = statusIdToName(r.status_id);
+    const statusCls = "status-" + statusName.replace(/_/g,'-');
+    const actions =
+      '<a class="btn btn-ghost btn-sm row-action action-view" href="/app/history/' + iid + '">View</a>' +
+      (state.canDelete
+        ? '<button type="button" class="btn btn-ghost btn-sm row-action action-delete" data-iid="' + iid + '">Delete</button>'
+        : '');
+    const callTime = EA.formatCallTime(
+      r.interaction_call_start_time,
+      r.interaction_uploaded_at,
+      r.interaction_call_duration_seconds,
+    );
+    const locName = r.location_name || "";
+    const locCell = locName
+      ? '<td>' + EA.esc(locName) + '</td>'
+      : '<td class="muted">—</td>';
+    return (
+      '<tr data-iid="' + iid + '">' +
+        '<td>' + EA.esc(EA.formatDate(r.interaction_date)) + '</td>' +
+        '<td class="muted text-small">' + EA.esc(callTime) + '</td>' +
+        locCell +
+        '<td>' + EA.esc(r.project_name || "—") + '</td>' +
+        '<td>' + EA.esc(r.campaign_name || "—") + '</td>' +
+        '<td>' + EA.esc(r.respondent_name || "—") + '</td>' +
+        '<td>' + EA.esc(r.caller_name || "—") + '</td>' +
+        '<td>' + score + '</td>' +
+        '<td><span class="status-pill ' + statusCls + '">' + EA.esc(statusName) + '</span></td>' +
+        '<td style="text-align:right; white-space:nowrap;">' + actions + '</td>' +
+      '</tr>'
+    );
+  }
+
+  // Local map of status IDs → readable names. Matches the seed in db.py.
+  function statusIdToName(id) {
+    switch (Number(id)) {
+      case 40: return "transcribing";
+      case 41: return "awaiting_clarification";
+      case 42: return "grading";
+      case 43: return "graded";
+      case 44: return "no_answer";
+      case 45: return "pending";
+      default: return "—";
+    }
+  }
+
+  // ── Delete ───────────────────────────────────────────
+  async function onDelete(interactionId) {
+    const ok = await EA.confirmDialog({
+      title:   "Delete interaction?",
+      body:    "This soft-deletes interaction #" + interactionId + ". It can be restored by a super admin.",
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+      variant: "danger",
+    });
+    if (!ok) return;
+    try {
+      await EA.fetchJSON("/api/interactions/" + encodeURIComponent(interactionId), {
+        method: "DELETE",
+      });
+      // Remove from local state and re-render without re-fetching
+      state.all = state.all.filter(function (r) { return r.interaction_id !== Number(interactionId); });
+      state.shown = Math.min(state.shown, state.all.length);
+      render();
+      EA.toast("Interaction deleted.", "success");
+    } catch (err) {
+      EA.toast(err.message || "Delete failed", "error");
+    }
+  }
+
+  // ── Export ──────────────────────────────────────────
+  function exportCurrent() {
+    const qs = buildParams();
+    // A straight navigation so the browser triggers the download dialog.
+    const url = "/api/export/interactions" + (qs.toString() ? "?" + qs : "");
+    window.location.href = url;
+  }
+
+  document.addEventListener("DOMContentLoaded", init);
+})();
+</script>
+{% endblock %}

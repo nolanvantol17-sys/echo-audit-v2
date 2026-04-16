@@ -1,0 +1,537 @@
+// ================================================================
+// Echo Audit V2 — dbdiagram.io DBML
+// ================================================================
+// Paste this entire file into https://dbdiagram.io to render the
+// ERD visually. DBML is 1:1 with schema.sql except for three things
+// that the format doesn't express:
+//   1. Partial indexes (WHERE deleted_at IS NULL) — render as plain
+//   2. Triggers (set_updated_at) — not representable
+//   3. CHECK constraints — added as inline notes where helpful
+// ================================================================
+
+
+Project echo_audit_v2 {
+  database_type: 'PostgreSQL'
+  Note: '''
+    Multi-tenant AI call grading platform.
+    All text status fields route through the `statuses` lookup table.
+    Tenant isolation is application-enforced via companyid (or via
+    locations for the interactions table where companyid was removed).
+  '''
+}
+
+
+// ================================================================
+// 0. statuses  (reference/lookup)
+// ================================================================
+Table statuses {
+  status_id          int           [pk, note: 'Explicit integer, not SERIAL']
+  status_name        text          [not null]
+  status_description text
+  status_category    text          [not null, note: 'general | company | user | project | interaction | api_key']
+  is_active          boolean       [not null, default: true]
+  created_at         timestamptz   [not null, default: `NOW()`]
+
+  Indexes {
+    (status_name, status_category) [unique, name: 'uq_statuses_name_category']
+    status_category [name: 'idx_statuses_category']
+  }
+
+  Note: '''
+    Centralized status taxonomy. No updated_at or deleted_at —
+    retire values by setting is_active = FALSE.
+    Seeded IDs: 1 active, 2 inactive, 10 suspended, 11 churned,
+    20 pending(user), 30 completed, 31 archived, 40 transcribing,
+    41 awaiting_clarification, 42 grading, 43 graded, 44 no_answer,
+    45 pending(interaction), 50 revoked.
+  '''
+}
+
+
+// ================================================================
+// 1. industries
+// ================================================================
+Table industries {
+  industry_id    int         [pk, increment]
+  industry_name  text        [not null, unique]
+  statusid       int         [not null, default: 1, ref: > statuses.status_id]
+  created_at     timestamptz [not null, default: `NOW()`]
+  updated_at     timestamptz [not null, default: `NOW()`]
+
+  Indexes {
+    statusid [name: 'idx_industries_statusid']
+  }
+}
+
+
+// ================================================================
+// 2. roles
+// ================================================================
+Table roles {
+  role_id    int         [pk, increment]
+  role_name  text        [not null, unique]
+  role_scope text        [not null, note: 'platform | company']
+  created_at timestamptz [not null, default: `NOW()`]
+  updated_at timestamptz [not null, default: `NOW()`]
+}
+
+
+// ================================================================
+// 3. companies  (tenants)
+// ================================================================
+Table companies {
+  company_id              int         [pk, increment]
+  industryid              int         [not null, ref: > industries.industry_id]
+  company_name            text        [not null]
+  statusid                int         [not null, default: 1, ref: > statuses.status_id]
+  company_engagement_date date        [note: 'Client go-live date, separate from created_at']
+  deleted_at              timestamptz
+  created_at              timestamptz [not null, default: `NOW()`]
+  updated_at              timestamptz [not null, default: `NOW()`]
+
+  Indexes {
+    industryid              [name: 'idx_companies_industryid']
+    statusid                [name: 'idx_companies_statusid']
+    company_engagement_date [name: 'idx_companies_engagement_date']
+  }
+}
+
+
+// ================================================================
+// 4. company_labels
+// ================================================================
+Table company_labels {
+  company_label_id int         [pk, increment]
+  companyid        int         [not null, ref: > companies.company_id]
+  label_key        text        [not null]
+  label_value      text        [not null]
+  created_at       timestamptz [not null, default: `NOW()`]
+  updated_at       timestamptz [not null, default: `NOW()`]
+
+  Indexes {
+    (companyid, label_key) [unique, name: 'uq_company_labels_key']
+    companyid              [name: 'idx_company_labels_companyid']
+  }
+
+  Note: 'Configurable UI labels per company. App falls back to defaults when no row exists.'
+}
+
+
+// ================================================================
+// 5. locations
+// ================================================================
+Table locations {
+  location_id              int         [pk, increment]
+  companyid                int         [not null, ref: > companies.company_id]
+  location_name            text        [not null]
+  location_phone           text
+  statusid                 int         [not null, default: 1, ref: > statuses.status_id]
+  location_engagement_date date        [note: 'Per-location go-live date']
+  deleted_at               timestamptz
+  created_at               timestamptz [not null, default: `NOW()`]
+  updated_at               timestamptz [not null, default: `NOW()`]
+
+  Indexes {
+    companyid                [name: 'idx_locations_companyid']
+    statusid                 [name: 'idx_locations_statusid']
+    location_engagement_date [name: 'idx_locations_engagement_date']
+  }
+}
+
+
+// ================================================================
+// 6. departments
+// ================================================================
+Table departments {
+  department_id   int         [pk, increment]
+  companyid       int         [not null, ref: > companies.company_id, note: 'ON DELETE CASCADE']
+  department_name text        [not null]
+  statusid        int         [not null, default: 1, ref: > statuses.status_id]
+  deleted_at      timestamptz
+  created_at      timestamptz [not null, default: `NOW()`]
+  updated_at      timestamptz [not null, default: `NOW()`]
+
+  Indexes {
+    companyid [name: 'idx_departments_companyid']
+    statusid  [name: 'idx_departments_statusid']
+  }
+
+  Note: 'Orthogonal to roles. Role = what you can do. Department = which part of the business.'
+}
+
+
+// ================================================================
+// 7. users
+// ================================================================
+Table users {
+  user_id               int         [pk, increment]
+  companyid             int         [ref: > companies.company_id, note: 'NULL for platform-scoped super admins']
+  departmentid          int         [ref: > departments.department_id, note: 'Nullable. ON DELETE SET NULL']
+  user_email            text        [not null, unique]
+  user_password_hash    text        [note: 'NULL when using SSO provider']
+  user_first_name       text        [not null]
+  user_last_name        text        [not null]
+  user_auth_provider    text        [note: 'NULL = email/password; future: google | microsoft']
+  user_auth_provider_id text
+  statusid              int         [not null, default: 1, ref: > statuses.status_id]
+  deleted_at            timestamptz
+  created_at            timestamptz [not null, default: `NOW()`]
+  updated_at            timestamptz [not null, default: `NOW()`]
+
+  Indexes {
+    companyid    [name: 'idx_users_companyid']
+    departmentid [name: 'idx_users_departmentid']
+    statusid     [name: 'idx_users_statusid']
+  }
+}
+
+
+// ================================================================
+// 8. user_roles  (junction)
+// ================================================================
+Table user_roles {
+  user_role_id int         [pk, increment]
+  userid       int         [not null, ref: > users.user_id, note: 'ON DELETE CASCADE']
+  roleid       int         [not null, ref: > roles.role_id]
+  created_at   timestamptz [not null, default: `NOW()`]
+  updated_at   timestamptz [not null, default: `NOW()`]
+
+  Indexes {
+    (userid, roleid) [unique, name: 'uq_user_roles']
+    userid           [name: 'idx_user_roles_userid']
+    roleid           [name: 'idx_user_roles_roleid']
+  }
+
+  Note: 'companyid removed — derivable via userid → users.companyid.'
+}
+
+
+// ================================================================
+// 9. campaign_types
+// ================================================================
+Table campaign_types {
+  campaign_type_id   int         [pk, increment]
+  companyid          int         [ref: > companies.company_id, note: 'NULL = industry-level default']
+  industryid         int         [ref: > industries.industry_id, note: 'NULL for company-created custom types']
+  campaign_type_name text        [not null]
+  created_at         timestamptz [not null, default: `NOW()`]
+  updated_at         timestamptz [not null, default: `NOW()`]
+
+  Indexes {
+    companyid  [name: 'idx_campaign_types_companyid']
+    industryid [name: 'idx_campaign_types_industryid']
+  }
+}
+
+
+// ================================================================
+// 10. rubric_groups
+// ================================================================
+Table rubric_groups {
+  rubric_group_id           int         [pk, increment]
+  companyid                 int         [ref: > companies.company_id, note: 'NULL = industry-level template']
+  rubric_group_name         text        [not null]
+  rubric_group_grade_target text        [not null, note: 'caller | respondent']
+  source_industry_id        int         [note: 'Lineage reference only — NO FK enforced. NULL = created from scratch.']
+  statusid                  int         [not null, default: 1, ref: > statuses.status_id]
+  deleted_at                timestamptz
+  created_at                timestamptz [not null, default: `NOW()`]
+  updated_at                timestamptz [not null, default: `NOW()`]
+
+  Indexes {
+    companyid [name: 'idx_rubric_groups_companyid']
+    statusid  [name: 'idx_rubric_groups_statusid']
+  }
+}
+
+
+// ================================================================
+// 11. rubric_items
+// ================================================================
+Table rubric_items {
+  rubric_item_id               int           [pk, increment]
+  rubricgroupid                int           [not null, ref: > rubric_groups.rubric_group_id, note: 'ON DELETE CASCADE']
+  rubric_item_name             text          [not null]
+  rubric_item_score_type       text          [not null, note: 'out_of_10 | yes_no | yes_no_pending']
+  rubric_item_weight           numeric(5,2)  [not null, default: 1.00]
+  rubric_item_scoring_guidance text
+  rubric_item_order            int           [not null, default: 0]
+  statusid                     int           [not null, default: 1, ref: > statuses.status_id]
+  deleted_at                   timestamptz
+  created_at                   timestamptz   [not null, default: `NOW()`]
+  updated_at                   timestamptz   [not null, default: `NOW()`]
+
+  Indexes {
+    rubricgroupid [name: 'idx_rubric_items_rubricgroupid']
+    statusid      [name: 'idx_rubric_items_statusid']
+  }
+}
+
+
+// ================================================================
+// 12. projects
+// ================================================================
+Table projects {
+  project_id         int         [pk, increment]
+  companyid          int         [not null, ref: > companies.company_id]
+  project_name       text        [not null]
+  campaigntypeid     int         [ref: > campaign_types.campaign_type_id, note: 'ON DELETE SET NULL']
+  rubricgroupid      int         [not null, ref: > rubric_groups.rubric_group_id]
+  project_start_date date        [not null]
+  project_end_date   date
+  statusid           int         [not null, default: 1, ref: > statuses.status_id]
+  deleted_at         timestamptz
+  created_at         timestamptz [not null, default: `NOW()`]
+  updated_at         timestamptz [not null, default: `NOW()`]
+
+  Indexes {
+    companyid              [name: 'idx_projects_companyid']
+    (companyid, statusid)  [name: 'idx_projects_companyid_statusid']
+    rubricgroupid          [name: 'idx_projects_rubricgroupid']
+    campaigntypeid         [name: 'idx_projects_campaigntypeid']
+    statusid               [name: 'idx_projects_statusid']
+  }
+
+  Note: 'Replaces V1 "campaign". Strict 1:1 with one rubric group. CHECK: end_date >= start_date.'
+}
+
+
+// project_users junction table intentionally omitted.
+// Users are company-scoped and can work on any project within their company.
+
+
+// ================================================================
+// 13. interactions
+// ================================================================
+Table interactions {
+  interaction_id                    int           [pk, increment]
+  locationid                        int           [ref: > locations.location_id, note: 'ON DELETE SET NULL']
+  projectid                         int           [ref: > projects.project_id, note: 'ON DELETE SET NULL']
+  campaigntypeid                    int           [ref: > campaign_types.campaign_type_id]
+  calleruserid                      int           [ref: > users.user_id, note: 'My Team member who placed the call']
+  respondentuserid                  int           [ref: > users.user_id, note: 'Person who answered — detected or manually set']
+  interaction_date                  date          [not null]
+  interaction_submitted_at          timestamptz
+  statusid                          int           [not null, default: 45, ref: > statuses.status_id, note: '45 = pending (interaction), the initial state']
+  interaction_transcript            text          [note: 'NULL for no_answer calls']
+  interaction_audio_url             text          [note: 'Object storage URL; never binary']
+  interaction_overall_score         numeric(5,2)  [note: 'NULL until graded; 0-10 scale']
+  interaction_original_score        numeric(5,2)  [note: 'Frozen after first grade, never overwritten']
+  interaction_regrade_count         int           [not null, default: 0]
+  interaction_regraded_with_context boolean       [not null, default: false]
+  interaction_reviewer_context      text
+  deleted_at                        timestamptz
+  created_at                        timestamptz   [not null, default: `NOW()`]
+  updated_at                        timestamptz   [not null, default: `NOW()`]
+
+  Indexes {
+    locationid                      [name: 'idx_interactions_locationid']
+    (locationid, interaction_date)  [name: 'idx_interactions_locationid_date']
+    projectid                       [name: 'idx_interactions_projectid']
+    statusid                        [name: 'idx_interactions_statusid']
+    calleruserid                    [name: 'idx_interactions_calleruserid']
+    respondentuserid                [name: 'idx_interactions_respondentuserid']
+    campaigntypeid                  [name: 'idx_interactions_campaigntypeid']
+  }
+
+  Note: '''
+    Core entity. companyid removed — reachable via locationid → locations.companyid.
+    Status pipeline: pending → transcribing → awaiting_clarification → grading → graded | no_answer.
+  '''
+}
+
+
+// ================================================================
+// 14. interaction_rubric_scores
+// ================================================================
+Table interaction_rubric_scores {
+  interaction_rubric_score_id           int           [pk, increment]
+  interactionid                         int           [not null, ref: > interactions.interaction_id, note: 'ON DELETE CASCADE']
+  rubricitemid                          int           [ref: > rubric_items.rubric_item_id, note: 'Nullable lineage FK. ON DELETE SET NULL']
+  snapshot_rubric_item_name             text          [not null, note: 'SNAPSHOT: frozen at grade time, write-once']
+  snapshot_rubric_item_score_type       text          [not null, note: 'SNAPSHOT: frozen at grade time']
+  snapshot_rubric_item_weight           numeric(5,2)  [not null, note: 'SNAPSHOT: frozen at grade time']
+  snapshot_rubric_item_scoring_guidance text          [note: 'SNAPSHOT: frozen at grade time']
+  score_value                           numeric(5,2)  [not null, note: '0-10; updated on regrade']
+  score_ai_explanation                  text          [note: 'Updated on regrade']
+  created_at                            timestamptz   [not null, default: `NOW()`]
+  updated_at                            timestamptz   [not null, default: `NOW()`]
+
+  Indexes {
+    interactionid [name: 'idx_irs_interactionid']
+    rubricitemid  [name: 'idx_irs_rubricitemid']
+  }
+}
+
+
+// ================================================================
+// 15. clarifying_questions
+// ================================================================
+Table clarifying_questions {
+  clarifying_question_id   int         [pk, increment]
+  interactionid            int         [not null, ref: > interactions.interaction_id, note: 'ON DELETE CASCADE']
+  question_text            text        [not null]
+  question_ai_reason       text        [not null]
+  question_response_format text        [not null, note: 'yes_no | scale_1_10 | multiple_choice']
+  question_answer_value    text        [note: 'NULL until user answers']
+  question_order           int         [not null]
+  created_at               timestamptz [not null, default: `NOW()`]
+  updated_at               timestamptz [not null, default: `NOW()`]
+
+  Indexes {
+    interactionid [name: 'idx_cq_interactionid']
+  }
+}
+
+
+// ================================================================
+// 16. performance_reports  (renamed from person_reports)
+// ================================================================
+Table performance_reports {
+  performance_report_id                       int           [pk, increment]
+  subject_userid                              int           [ref: > users.user_id, note: 'Nullable. ON DELETE SET NULL.']
+  performance_report_data                     jsonb         [not null, note: 'Sections: strengths, weaknesses, coaching_recommendations, trend_data']
+  performance_report_average_score            numeric(5,2)
+  performance_report_call_count               int           [not null, default: 0]
+  performance_report_processed_interactionids jsonb         [not null, note: 'JSONB array — dedup guard only, no RI enforced']
+  created_at                                  timestamptz   [not null, default: `NOW()`]
+  updated_at                                  timestamptz   [not null, default: `NOW()`]
+
+  Indexes {
+    subject_userid [unique, name: 'uq_performance_reports_subject']
+  }
+
+  Note: '''
+    Subject type (caller vs respondent) is derived from the user's role
+    at query time. Not stored here. companyid removed — reachable via
+    subject_userid → users.companyid.
+  '''
+}
+
+
+// ================================================================
+// 17. api_keys
+// ================================================================
+Table api_keys {
+  api_key_id           int         [pk, increment]
+  companyid            int         [not null, ref: > companies.company_id, note: 'ON DELETE CASCADE']
+  api_key_prefix       text        [not null, note: 'First 8 chars, plain text']
+  api_key_hash         text        [not null, note: 'bcrypt hash of full key']
+  api_key_name         text        [not null]
+  statusid             int         [not null, default: 1, ref: > statuses.status_id]
+  api_key_last_used_at timestamptz
+  api_key_revoked_at   timestamptz
+  created_at           timestamptz [not null, default: `NOW()`]
+  updated_at           timestamptz [not null, default: `NOW()`]
+
+  Indexes {
+    companyid      [name: 'idx_api_keys_companyid']
+    api_key_prefix [name: 'idx_api_keys_prefix']
+    statusid       [name: 'idx_api_keys_statusid']
+  }
+}
+
+
+// ================================================================
+// 18. api_usage  (rate limiting counters)
+// ================================================================
+Table api_usage {
+  api_usage_id            int         [pk, increment]
+  companyid               int         [not null, ref: > companies.company_id, note: 'ON DELETE CASCADE']
+  api_usage_service       text        [not null, note: 'assemblyai | anthropic | twilio']
+  api_usage_period_start  timestamptz [not null]
+  api_usage_period_type   text        [not null, note: 'hour | day']
+  api_usage_request_count int         [not null, default: 0]
+  created_at              timestamptz [not null, default: `NOW()`]
+  updated_at              timestamptz [not null, default: `NOW()`]
+
+  Indexes {
+    (companyid, api_usage_service, api_usage_period_start, api_usage_period_type) [unique, name: 'uq_api_usage']
+    companyid [name: 'idx_api_usage_companyid']
+  }
+}
+
+
+// ================================================================
+// 19. api_call_log  (append-only)
+// ================================================================
+Table api_call_log {
+  api_call_log_id              bigint      [pk, increment, note: 'BIGSERIAL']
+  companyid                    int         [not null, ref: > companies.company_id, note: 'ON DELETE CASCADE']
+  api_call_log_service         text        [not null]
+  api_call_log_called_at       timestamptz [not null, default: `NOW()`]
+  api_call_log_response_status text        [note: 'HTTP response status (not a business status)']
+  api_call_log_latency_ms      int
+  interactionid                int         [ref: > interactions.interaction_id, note: 'ON DELETE SET NULL']
+  created_at                   timestamptz [not null, default: `NOW()`]
+  updated_at                   timestamptz [not null, default: `NOW()`, note: 'Append-only; never actually updated']
+
+  Indexes {
+    (companyid, api_call_log_called_at) [name: 'idx_api_call_log_companyid_called_at']
+    interactionid                        [name: 'idx_api_call_log_interactionid']
+  }
+}
+
+
+// ================================================================
+// 20. audit_log  (platform-wide, append-only)
+// ================================================================
+Table audit_log {
+  audit_log_id                 bigint      [pk, increment, note: 'BIGSERIAL']
+  actoruserid                  int         [ref: > users.user_id, note: 'ON DELETE SET NULL']
+  audit_log_action_type        text        [not null, note: 'e.g. impersonate_company, regrade_call, edit_rubric']
+  audit_log_target_entity_type text
+  audit_log_target_entity_id   text        [note: 'TEXT so target can be any table PK']
+  companyid                    int         [ref: > companies.company_id, note: 'NULL for platform-level actions']
+  audit_log_metadata           jsonb       [note: 'old_value, new_value, ip, user_agent, etc.']
+  created_at                   timestamptz [not null, default: `NOW()`]
+  updated_at                   timestamptz [not null, default: `NOW()`, note: 'Append-only; never actually updated']
+
+  Indexes {
+    (companyid, created_at)                                     [name: 'idx_audit_log_companyid_created_at']
+    actoruserid                                                 [name: 'idx_audit_log_actoruserid']
+    audit_log_action_type                                       [name: 'idx_audit_log_action_type']
+    (audit_log_target_entity_type, audit_log_target_entity_id)  [name: 'idx_audit_log_target']
+  }
+}
+
+
+// ================================================================
+// Table Groups — visual clustering on the dbdiagram canvas
+// ================================================================
+
+TableGroup lookup_and_reference {
+  statuses
+  industries
+  roles
+}
+
+TableGroup tenant_core {
+  companies
+  company_labels
+  locations
+  departments
+  users
+  user_roles
+}
+
+TableGroup rubric {
+  rubric_groups
+  rubric_items
+  campaign_types
+}
+
+TableGroup grading {
+  projects
+  interactions
+  interaction_rubric_scores
+  clarifying_questions
+  performance_reports
+}
+
+TableGroup platform {
+  api_keys
+  api_usage
+  api_call_log
+  audit_log
+}

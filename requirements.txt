@@ -1,0 +1,11 @@
+anthropic
+assemblyai
+cryptography
+flask
+flask-login
+gunicorn
+openpyxl
+psycopg2-binary
+python-dotenv
+requests
+werkzeug

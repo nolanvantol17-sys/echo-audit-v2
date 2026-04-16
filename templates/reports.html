@@ -1,0 +1,316 @@
+{% extends "base.html" %}
+{% block title %}Performance Reports | {{ client_name or "Echo Audit" }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.report-resp-row {
+    cursor: pointer;
+    border-radius: var(--border-radius-md);
+    transition: background 0.1s;
+}
+.report-resp-row:hover {
+    background: var(--surface-2);
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Performance Reports</div>
+    <div class="page-subtitle">AI-compiled summaries per respondent, grouped by location.</div>
+  </div>
+</div>
+
+{# ── Project-scoped banner (display-only, from the project hub) ── #}
+<div id="project-filter-banner" class="panel" hidden
+     style="margin-bottom:14px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+  <div>
+    Showing reports opened from <strong id="project-filter-banner-name">…</strong>.
+  </div>
+  <a href="/app/reports" class="text-small">View all reports →</a>
+</div>
+
+<section id="reports-list-section">
+  <div id="reports-wrap">
+    <div class="skeleton" style="height:20px;margin:8px 0;"></div>
+    <div class="skeleton" style="height:80px;margin:8px 0;"></div>
+    <div class="skeleton" style="height:80px;margin:8px 0;"></div>
+  </div>
+</section>
+
+{# Detail panel replaces the list when opened #}
+<section id="report-detail-section" hidden></section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  "use strict";
+  const EA = window.EA;
+  const $ = (s) => document.querySelector(s);
+
+  let reportsCache = [];   // flat list
+
+  document.addEventListener("DOMContentLoaded", function () {
+    maybeShowProjectBanner();
+    loadReports();
+  });
+
+  // Look up the project name for the banner if we arrived from a project hub.
+  // Per spec the banner is display-only; we don't filter the report list,
+  // since performance reports are scoped per respondent not per project.
+  async function maybeShowProjectBanner() {
+    const qp = new URLSearchParams(window.location.search).get("project_id");
+    if (!qp) return;
+    try {
+      const projects = await EA.fetchJSON("/api/projects");
+      const p = (projects || []).find(x => String(x.project_id) === String(qp));
+      const banner = document.getElementById("project-filter-banner");
+      if (p && banner) {
+        document.getElementById("project-filter-banner-name").textContent = p.project_name;
+        banner.hidden = false;
+      }
+    } catch (_) { /* non-fatal */ }
+  }
+
+  async function loadReports() {
+    const wrap = $("#reports-wrap");
+    try {
+      const data = await EA.fetchJSON("/api/performance-reports");
+      reportsCache = data.reports || [];
+      renderList(data.groups || {});
+    } catch (err) {
+      EA.showError(wrap, err.message || "Failed to load reports.");
+    }
+  }
+
+  function renderList(groups) {
+    const wrap = $("#reports-wrap");
+    const keys = Object.keys(groups);
+    if (!keys.length) {
+      wrap.innerHTML = '<div class="empty-state">No performance reports yet. They\'re built automatically as calls are graded.</div>';
+      return;
+    }
+
+    // Aggregate per-location summary stats
+    const sections = keys.sort().map((loc) => {
+      const rows = groups[loc] || [];
+      const totalCalls = rows.reduce((n, r) => n + (r.pr_call_count || 0), 0);
+      const weightedSum = rows.reduce((n, r) => {
+        const avg = Number(r.pr_average_score);
+        const cnt = Number(r.pr_call_count || 0);
+        return n + (isNaN(avg) ? 0 : avg * cnt);
+      }, 0);
+      const avg = totalCalls ? (weightedSum / totalCalls) : null;
+
+      const respondentRows = rows.map((r) => {
+        const cls = EA.scoreClass(r.pr_average_score);
+        const isUnnamed = r.respondent_name === "Name Not Detected";
+        return (
+          '<div class="report-resp-row" data-report-id="' + r.performance_report_id + '">' +
+            '<div>' +
+              '<div style="font-weight:500;">' +
+                (isUnnamed
+                  ? '<em class="muted">Name Not Detected</em>'
+                  : EA.esc(r.respondent_name || "Unknown")) +
+              '</div>' +
+              '<div class="muted text-small">Updated ' + EA.esc(EA.formatDate(r.pr_updated_at)) + '</div>' +
+            '</div>' +
+            '<span class="score-pill ' + cls + '">' + EA.formatScore(r.pr_average_score) + '</span>' +
+            '<span class="muted text-small">' + (r.pr_call_count || 0) + ' call' +
+              (r.pr_call_count === 1 ? '' : 's') + '</span>' +
+          '</div>'
+        );
+      }).join("");
+
+      return (
+        '<details class="collapsible report-location" open>' +
+          '<summary>' +
+            EA.esc(loc) +
+            ' <span class="muted text-small" style="margin-left:10px;">' +
+              rows.length + ' respondent' + (rows.length === 1 ? '' : 's') +
+              ' · ' + totalCalls + ' calls · avg ' + EA.formatScore(avg) +
+            '</span>' +
+          '</summary>' +
+          '<div class="collapsible-body">' + respondentRows + '</div>' +
+        '</details>'
+      );
+    }).join("");
+
+    wrap.innerHTML = sections;
+
+    wrap.querySelectorAll(".report-resp-row[data-report-id]").forEach((row) => {
+      row.addEventListener("click", () => {
+        if (window.getSelection().toString().length > 0) return;
+        openReport(row.dataset.reportId);
+      });
+    });
+  }
+
+  // ── Detail view ───────────────────────────────────
+  async function openReport(reportId) {
+    const list = $("#reports-list-section");
+    const detail = $("#report-detail-section");
+    list.hidden = true;
+    detail.hidden = false;
+    detail.innerHTML =
+      '<div class="skeleton" style="height:92px;margin:0 0 14px;border-radius:var(--radius-lg);"></div>' +
+      '<div class="skeleton" style="height:100px;margin:0 0 10px;"></div>' +
+      '<div class="skeleton" style="height:100px;margin:0 0 10px;"></div>' +
+      '<div class="skeleton" style="height:100px;margin:0 0 14px;"></div>' +
+      '<div class="panel" style="margin-top:14px;">' +
+        '<div class="skeleton" style="height:20px;width:180px;margin:0 0 12px;"></div>' +
+        '<div class="skeleton" style="height:34px;margin:6px 0;"></div>' +
+        '<div class="skeleton" style="height:34px;margin:6px 0;"></div>' +
+        '<div class="skeleton" style="height:34px;margin:6px 0;"></div>' +
+      '</div>';
+    window.scrollTo({ top: 0, behavior: "smooth" });
+
+    try {
+      const r = await EA.fetchJSON("/api/performance-reports/" + encodeURIComponent(reportId));
+      renderDetail(r);
+    } catch (err) {
+      detail.innerHTML =
+        '<div class="panel"><div class="section-error">' +
+          EA.esc(err.message || "Failed to load report.") +
+        '</div>' +
+        '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-list" style="margin-top:12px;">Back to list</button>' +
+        '</div>';
+      $("#btn-back-to-list").addEventListener("click", backToList);
+    }
+  }
+
+  function backToList() {
+    $("#report-detail-section").hidden = true;
+    $("#report-detail-section").innerHTML = "";
+    $("#reports-list-section").hidden = false;
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function renderDetail(r) {
+    const data = r.pr_data || {};
+    const interactions = (r.interactions || []).slice();
+    // Sort ascending so the trend indicator reflects earliest → latest
+    interactions.sort((a, b) => {
+      const ad = new Date(a.interaction_date || 0).getTime();
+      const bd = new Date(b.interaction_date || 0).getTime();
+      return ad - bd;
+    });
+
+    // Crude trend: compare first-half avg vs second-half avg of scored calls.
+    const scored = interactions.filter((x) =>
+      x.interaction_overall_score !== null &&
+      x.interaction_overall_score !== undefined &&
+      Number(x.status_id) !== 44
+    );
+    let trend = "flat";
+    if (scored.length >= 4) {
+      const mid = Math.floor(scored.length / 2);
+      const firstAvg = avgOf(scored.slice(0, mid).map((x) => x.interaction_overall_score));
+      const lastAvg  = avgOf(scored.slice(mid) .map((x) => x.interaction_overall_score));
+      const diff = (lastAvg || 0) - (firstAvg || 0);
+      if (diff >= 0.3) trend = "up";
+      else if (diff <= -0.3) trend = "down";
+    }
+
+    const firstDate = interactions[0] ? EA.formatDate(interactions[0].interaction_date) : "—";
+    const lastDate  = interactions[interactions.length-1]
+      ? EA.formatDate(interactions[interactions.length-1].interaction_date) : "—";
+
+    const trendArrow = trend === "up" ? "↑"
+                     : trend === "down" ? "↓" : "→";
+
+    const rowsHtml = interactions.map((x) => {
+      const cls = EA.scoreClass(x.interaction_overall_score);
+      const score = Number(x.status_id) === 44
+        ? '<span class="score-pill gray">N/A</span>'
+        : '<span class="score-pill ' + cls + '">' + EA.formatScore(x.interaction_overall_score) + '</span>';
+      const callTime = EA.formatCallTime(
+        x.interaction_call_start_time,
+        x.interaction_uploaded_at,
+        x.interaction_call_duration_seconds,
+      );
+      return (
+        '<tr data-iid="' + x.interaction_id + '">' +
+          '<td>' + EA.esc(EA.formatDate(x.interaction_date)) + '</td>' +
+          '<td class="muted text-small">' + EA.esc(callTime) + '</td>' +
+          '<td>' + EA.esc(x.location_name || x.project_name || "—") + '</td>' +
+          '<td style="text-align:right;">' + score + '</td>' +
+        '</tr>'
+      );
+    }).join("");
+
+    const detail = $("#report-detail-section");
+    detail.innerHTML =
+      '<div class="hstack-wrap" style="margin-bottom:12px;">' +
+        '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-list">← Back</button>' +
+      '</div>' +
+      '<div class="score-hero">' +
+        '<div class="score-hero-value" style="color:' + EA.scoreColor(r.pr_average_score) + ';">' +
+          EA.formatScore(r.pr_average_score) +
+        '</div>' +
+        '<div class="score-hero-meta">' +
+          '<span class="score-hero-label">' +
+            (r.respondent_name === "Name Not Detected"
+              ? '<em class="muted">Name Not Detected</em>'
+              : EA.esc(r.respondent_name || "Unknown")) +
+          '</span>' +
+          (r.respondent_name === "Name Not Detected"
+            ? '<span class="text-small muted">Multiple callers may be represented in this report</span>'
+            : '') +
+          '<span class="text-small muted">' + (r.pr_call_count || 0) + ' calls · ' +
+            EA.esc(firstDate) + ' → ' + EA.esc(lastDate) + '</span>' +
+        '</div>' +
+        '<span class="trend ' + trend + '">' + trendArrow + ' ' +
+          (trend === "up" ? "Trending up" : trend === "down" ? "Trending down" : "Flat") +
+        '</span>' +
+      '</div>' +
+
+      panelBullets("Consistent Strengths", data.strengths) +
+      panelBullets("Areas for Improvement", data.weaknesses) +
+      panelBullets("Coaching Recommendations", data.coaching) +
+
+      '<div class="panel" style="margin-top:14px;">' +
+        '<div class="panel-title">Calls in this report</div>' +
+        (interactions.length
+          ? ('<table class="history-table"><thead><tr>' +
+               '<th>Date</th><th>Time</th><th>Location</th>' +
+               '<th style="text-align:right;">Score</th>' +
+             '</tr></thead><tbody>' + rowsHtml + '</tbody></table>')
+          : '<div class="empty-state">No interactions recorded.</div>') +
+      '</div>';
+
+    $("#btn-back-to-list").addEventListener("click", backToList);
+    detail.querySelectorAll("tr[data-iid]").forEach((tr) => {
+      tr.addEventListener("click", () => {
+        window.location.href = "/app/history/" + tr.dataset.iid;
+      });
+    });
+  }
+
+  function panelBullets(title, text) {
+    const items = (text || "").split(/\n+/)
+      .map((s) => s.replace(/^\s*[•\-*]\s*/, "").trim())
+      .filter(Boolean);
+    const body = items.length
+      ? ('<ul class="bullet-list">' +
+           items.map((s) => '<li>' + EA.esc(s) + '</li>').join("") +
+         '</ul>')
+      : '<div class="muted text-small">—</div>';
+    return (
+      '<details class="collapsible" open style="margin-bottom:10px;">' +
+        '<summary>' + EA.esc(title) + '</summary>' +
+        '<div class="collapsible-body">' + body + '</div>' +
+      '</details>'
+    );
+  }
+
+  function avgOf(nums) {
+    const clean = nums.map(Number).filter((x) => !isNaN(x));
+    if (!clean.length) return 0;
+    return clean.reduce((a, b) => a + b, 0) / clean.length;
+  }
+})();
+</script>
+{% endblock %}

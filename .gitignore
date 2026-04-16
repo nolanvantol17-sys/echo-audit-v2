@@ -1,0 +1,50 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+ENV/
+
+# Local SQLite fallback database (Postgres is authoritative in prod)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Uploaded call audio (PII — must never be committed)
+audio_uploads/
+
+# Logs and test artifacts
+*.log
+test_report.txt
+test_stderr.log
+phase3_report.log
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# Coverage / reports
+.coverage
+htmlcov/
+coverage.xml

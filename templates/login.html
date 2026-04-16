@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign In | {{ client_name or "Echo Audit" }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:       #080f1e;
+      --surface:  #0d1a2e;
+      --surface-2:#142238;
+      --border:   rgba(255,255,255,0.08);
+      --text:     #f1f5f9;
+      --muted:    #94a3b8;
+      --accent:   #2563eb;
+      --accent-h: #1d4ed8;
+      --danger:   #ef4444;
+      --radius:   10px;
+    }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .auth-card {
+      width: 100%; max-width: 400px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 40px 36px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    .auth-logo {
+      display: flex; align-items: center; justify-content: center;
+      gap: 10px; margin-bottom: 32px;
+    }
+    .auth-logo img { height: 44px; width: auto; filter: brightness(0) invert(1); }
+    .auth-logo-text {
+      font-size: 1.1rem; font-weight: 800; letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    h1 {
+      font-size: 1.2rem; font-weight: 700; margin-bottom: 6px; text-align: center;
+    }
+    .auth-subtitle {
+      font-size: 0.85rem; color: var(--muted); text-align: center; margin-bottom: 28px;
+    }
+    label {
+      display: block; font-size: 0.76rem; font-weight: 600; color: var(--muted);
+      margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    input[type="email"], input[type="password"], input[type="text"] {
+      width: 100%; padding: 10px 14px;
+      border: 1px solid var(--border); border-radius: 8px;
+      font-family: inherit; font-size: 0.9rem;
+      background: var(--surface-2); color: var(--text);
+      outline: none; transition: border 0.15s, box-shadow 0.15s;
+      margin-bottom: 18px;
+    }
+    input:focus {
+      border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,0.2);
+    }
+    .remember-row {
+      display: flex; align-items: center; gap: 8px;
+      margin: -6px 0 20px 0;
+      font-size: 0.82rem; color: var(--muted);
+    }
+    .remember-row input[type="checkbox"] {
+      width: 15px; height: 15px; accent-color: var(--accent);
+      cursor: pointer;
+    }
+    .remember-row label {
+      margin: 0; font-size: 0.82rem; font-weight: 500;
+      text-transform: none; letter-spacing: 0;
+      color: var(--muted); cursor: pointer;
+    }
+    .btn {
+      display: block; width: 100%; padding: 12px;
+      border-radius: 8px; font-size: 0.9rem; font-weight: 600;
+      cursor: pointer; border: none; font-family: inherit;
+      transition: background 0.15s;
+    }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover { background: var(--accent-h); }
+    .error-msg {
+      background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.25);
+      border-radius: 8px; padding: 10px 14px; margin-bottom: 18px;
+      font-size: 0.85rem; color: #f87171;
+    }
+    .auth-footer {
+      text-align: center; margin-top: 20px; font-size: 0.82rem; color: var(--muted);
+    }
+    .auth-footer a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    .auth-footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="auth-card">
+    <div class="auth-logo">
+      {% if logo_base64 %}
+        <img src="data:image/png;base64,{{ logo_base64 }}" alt="{{ client_name or 'Logo' }}">
+      {% else %}
+        <span class="auth-logo-text">{{ client_name or "Echo Audit" }}</span>
+      {% endif %}
+    </div>
+
+    <h1>Sign In</h1>
+    <p class="auth-subtitle">Enter your credentials to continue</p>
+
+    {% if error %}
+    <div class="error-msg">{{ error }}</div>
+    {% endif %}
+
+    <form method="POST" action="{{ url_for('login') }}">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" placeholder="you@company.com" required autofocus value="{{ email or '' }}">
+
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" placeholder="Enter your password" required>
+
+      <div class="remember-row">
+        <input type="checkbox" id="remember" name="remember" value="1">
+        <label for="remember">Remember me on this device</label>
+      </div>
+
+      <button type="submit" class="btn btn-primary">Sign In</button>
+    </form>
+
+    <div class="auth-footer">
+      New organization? <a href="{{ url_for('signup') }}">Create an account</a>
+    </div>
+  </div>
+</body>
+</html>

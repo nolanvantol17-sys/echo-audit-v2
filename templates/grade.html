@@ -1,0 +1,1797 @@
+{% extends "base.html" %}
+{% block title %}Grade a Call | {{ client_name or "Echo Audit" }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  /* ── Read-only info block shown in the grade-result panel ── */
+  .result-info {
+    display: flex;
+    gap: 40px;
+    flex-wrap: wrap;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 14px;
+  }
+  .result-info-item { min-width: 140px; }
+  .result-info-label {
+    font-size: 0.74rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  .result-info-value {
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .result-info-value.muted { color: var(--muted); font-weight: 400; }
+
+  /* Editable respondent inside the info block */
+  .resp-view { display: inline-flex; align-items: center; gap: 8px; }
+  .resp-edit-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 6px;
+    cursor: pointer;
+    padding: 2px 6px;
+    font-size: 0.78rem;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .resp-edit-btn:hover { color: var(--text); border-color: var(--border-strong); }
+  .resp-edit-icon { font-size: 0.85rem; }
+  .resp-saved { color: var(--success); font-size: 0.8rem; font-weight: 500; }
+  .resp-editing { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .resp-editing input.field-input {
+    padding: 4px 8px;
+    font-size: 0.95rem;
+    max-width: 200px;
+    min-width: 120px;
+  }
+  .resp-editing .btn { padding: 4px 10px; font-size: 0.82rem; }
+
+  /* ── Live recording UI (tab 2) ───────────────────────── */
+  .record-wrap {
+    padding: 18px 16px;
+    min-height: 200px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+  }
+  .record-btn {
+    min-width: 200px;
+    padding: 12px 22px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+  .record-icon {
+    width: 14px; height: 14px;
+    background: #fff;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .btn-record-stop-alt {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    color: var(--text);
+  }
+  .record-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--danger);
+    font-weight: 500;
+    font-size: 0.88rem;
+  }
+  .record-pulse {
+    width: 10px; height: 10px;
+    background: var(--danger);
+    border-radius: 50%;
+    animation: record-pulse 1.2s infinite;
+  }
+  @keyframes record-pulse {
+    0%, 100% { opacity: 1;   transform: scale(1); }
+    50%      { opacity: 0.35; transform: scale(1.3); }
+  }
+  .record-timer {
+    font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+    font-size: 2.2rem;
+    font-weight: 500;
+    color: var(--text);
+    letter-spacing: 1px;
+  }
+  .record-wrap .app-audio { width: 100%; }
+  .record-wrap.confirmed .btn-record-use {
+    background: var(--success);
+    border-color: var(--success);
+    pointer-events: none;
+  }
+
+  /* ── Property intel card (shown when a location is selected) ── */
+  .intel-card {
+    margin-top: 14px;
+    padding: 14px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .intel-card[hidden] { display: none !important; }
+  .intel-card.empty .intel-empty-msg {
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+  .intel-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 22px;
+    align-items: flex-end;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .intel-stat { min-width: 140px; }
+  .intel-stat-label {
+    font-size: 0.74rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  .intel-stat-value {
+    font-size: 0.96rem;
+    font-weight: 500;
+    color: var(--text);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .intel-stat-meta {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-left: 4px;
+  }
+  .intel-last-row {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.88rem;
+    color: var(--text);
+  }
+  .intel-noanswer-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    background: rgba(245, 158, 11, 0.18);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+  }
+  .intel-brief {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .intel-summary {
+    color: var(--text);
+    font-size: 0.92rem;
+    line-height: 1.5;
+    margin-bottom: 12px;
+  }
+  .intel-bullets-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 720px) {
+    .intel-bullets-grid { grid-template-columns: 1fr; }
+  }
+  .intel-bullet-block .intel-bullet-label {
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .intel-bullet-block.strengths .intel-bullet-label { color: var(--success); }
+  .intel-bullet-block.weaknesses .intel-bullet-label { color: var(--warning); }
+  .intel-bullets-list {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--text);
+    font-size: 0.86rem;
+    line-height: 1.45;
+  }
+  .intel-bullets-list li { margin-bottom: 4px; }
+  .intel-stale {
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 0.76rem;
+    font-style: italic;
+  }
+  .intel-skeleton {
+    height: 14px;
+    background: var(--surface-2);
+    border-radius: 4px;
+    margin: 6px 0;
+    animation: intel-pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes intel-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.55; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-title">Grade a Call</div>
+    <div class="page-subtitle">Upload audio, record live, or pull from the VoIP queue.</div>
+  </div>
+</div>
+
+{# ── Pre-call form ──────────────────────────────────────── #}
+<section id="grade-form-section" class="panel">
+  <form id="grade-form" autocomplete="off">
+    <div class="form-grid">
+      <div class="field">
+        <label class="field-label field-required" for="gf-location">
+          {{ location_label or "Location" }}
+        </label>
+        <select id="gf-location" name="location_id" class="field-select" required>
+          <option value="">Loading…</option>
+        </select>
+        <div id="gf-location-phone" class="muted text-small" style="margin-top:4px;" hidden></div>
+        <div id="gf-location-empty" class="muted text-small" style="margin-top:4px;" hidden></div>
+      </div>
+      <div class="field">
+        <label class="field-label field-required" for="gf-project">Project</label>
+        <select id="gf-project" name="project_id" class="field-select" required disabled>
+          <option value="">Select a location first…</option>
+        </select>
+      </div>
+
+      {# ── Property intel card — populated when a location is picked ── #}
+      <div id="location-intel-card" class="intel-card" hidden style="grid-column:1 / -1;"></div>
+      <div class="field">
+        <label class="field-label" for="gf-caller">Caller</label>
+        <select id="gf-caller" name="caller_user_id" class="field-select">
+          <option value="">—</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="field-label" for="gf-date">Call date</label>
+        <input id="gf-date" name="interaction_date" type="date" class="field-input">
+      </div>
+      <div class="field">
+        <label class="field-label" for="gf-campaign">Campaign</label>
+        <select id="gf-campaign" name="campaign_id" class="field-select">
+          <option value="">—</option>
+        </select>
+      </div>
+    </div>
+
+    {# ── Audio source tabs ────────────────────────────────── #}
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab-btn active" id="tab-upload" role="tab">Upload audio</button>
+      <button type="button" class="tab-btn" id="tab-record" role="tab" hidden>Record live</button>
+      <button type="button" class="tab-btn" id="tab-voip" role="tab" hidden>From VoIP queue</button>
+    </div>
+
+    <div id="panel-upload">
+      <label class="dropzone" id="dropzone" for="audio-file">
+        <div id="dropzone-placeholder">
+          <div>Drop an audio file here or click to browse.</div>
+          <div class="dropzone-meta">
+            Accepts .mp3, .mp4, .m4a, .wav, .aac, .ogg, .flac, .webm
+          </div>
+        </div>
+        <div id="dropzone-filled" hidden>
+          <div class="dropzone-filename" id="dz-filename"></div>
+          <div class="dropzone-meta" id="dz-meta"></div>
+          <button type="button" class="btn btn-ghost btn-sm" id="dz-clear" style="margin-top:8px;">Remove</button>
+        </div>
+      </label>
+      <input id="audio-file" name="audio" type="file"
+             accept=".mp3,.mp4,.m4a,.wav,.aac,.ogg,.flac,.webm" hidden>
+    </div>
+
+    <div id="panel-record" hidden>
+      <div class="record-wrap" id="record-wrap">
+        <div id="record-permission-error" class="section-error" hidden></div>
+
+        <div id="record-idle" class="record-panel">
+          <button type="button" id="btn-record-start" class="btn btn-danger record-btn">
+            <span class="record-icon"></span>
+            Start Recording
+          </button>
+          <div class="muted text-small" style="margin-top:10px; text-align:center;">
+            Records from your device microphone. You'll be asked to grant permission.
+          </div>
+        </div>
+
+        <div id="record-active" class="record-panel" hidden>
+          <div class="record-indicator">
+            <span class="record-pulse"></span>
+            Recording
+          </div>
+          <div id="record-timer" class="record-timer">0:00</div>
+          <button type="button" id="btn-record-stop" class="btn btn-primary record-btn">
+            Stop Recording
+          </button>
+        </div>
+
+        <div id="record-preview" class="record-panel" hidden style="width:100%;max-width:420px;">
+          <audio id="record-audio" class="app-audio" controls></audio>
+          <div id="record-duration" class="muted text-small" style="margin-top:6px;text-align:center;"></div>
+          <div class="hstack-wrap" style="margin-top:12px;justify-content:center;">
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-record-redo">Re-record</button>
+            <button type="button" class="btn btn-primary btn-sm btn-record-use" id="btn-record-use">Use This Recording</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="panel-voip" hidden>
+      <div id="voip-queue-wrap">
+        <div class="skeleton" style="height:16px;margin:10px 0;"></div>
+        <div class="skeleton" style="height:16px;margin:10px 0;"></div>
+        <div class="skeleton" style="height:16px;margin:10px 0;"></div>
+      </div>
+      <input type="hidden" id="voip-queue-id">
+    </div>
+
+    <div class="hstack-wrap" style="margin-top:20px;">
+      <button type="submit" class="btn btn-primary" id="grade-submit">Submit for grading</button>
+      <button type="button" class="btn btn-ghost" id="btn-no-answer">Log no answer</button>
+      <span class="spacer"></span>
+      <span class="text-small muted" id="form-hint"></span>
+    </div>
+  </form>
+</section>
+
+{# ── Clarifying questions screen (Step 2 of the two-step grade flow) ── #}
+<section id="clarifying-section" class="panel" hidden>
+  <div class="panel-title" style="margin-bottom:6px;">A few questions before grading</div>
+  <p class="muted" style="margin-top:0;margin-bottom:18px;">
+    Our AI reviewed the transcript and wants to confirm a few things with you
+    before producing a final score. Answer each question below, then submit.
+  </p>
+  <div id="clarifying-list"></div>
+  <div class="hstack-wrap" style="margin-top:22px;">
+    <button type="button" class="btn btn-primary" id="btn-submit-answers">Submit &amp; Grade</button>
+    <span class="spacer"></span>
+    <span class="text-small muted" id="clarifying-hint"></span>
+  </div>
+</section>
+
+{# ── Grade result panel (hidden until a successful grade) ── #}
+<section id="grade-result-section" hidden></section>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  "use strict";
+  const EA = window.EA;
+
+  // ── State ────────────────────────────────────────────
+  const state = {
+    audioFile:         null,
+    selectedQueueId:   null,
+    projectRubricCache: {},
+    voipConfigured:    false,
+    currentInteraction: null,
+    currentCriteria:   null,
+    callerNameDisplay: "",     // captured at submit time so the result panel can show it
+    locationNameDisplay: "",   // captured at submit time for the result panel
+    allProjects:       [],     // cached project list, filtered client-side by location
+    allLocations:      [],     // cached locations, for phone lookup on change
+
+    // Live recording
+    liveRecordingBlob:    null,
+    liveRecordingMedia:   null,   // MediaRecorder instance
+    liveRecordingStream:  null,   // MediaStream (release on cleanup)
+    liveRecordingStartMs: null,
+    liveRecordingTimerId: null,
+    liveRecordingChunks:  [],
+    liveRecordingMime:    "audio/webm",
+    // Wall-clock call timestamps — captured when the user clicks Record/Stop
+    // for the live-recording flow. Uploads leave these null.
+    callStartTime:        null,    // ISO string at Record click
+    callEndTime:          null,    // ISO string at Stop click
+    callDurationSeconds:  null,    // integer, derived from start/end
+    intelFetchSeq:        0,       // race guard for location intel fetches
+  };
+
+  const $ = function (sel) { return document.querySelector(sel); };
+
+  // ── Nav-away guard ────────────────────────────────────
+  // Exposes window.formIsDirty and window.gradeComplete so base.html can
+  // prompt before sidebar nav or page unload. We consider the form "dirty"
+  // whenever the user has done anything non-trivial: picked a project +
+  // location, selected a file, started a live recording, or the grading
+  // overlay is visible mid-submit.
+  window.gradeComplete = false;
+  window.formIsDirty = function () {
+    // A completed grade showing the result panel is NOT dirty.
+    const resultVisible = !$("#grade-result-section").hidden;
+    if (resultVisible && window.gradeComplete) return false;
+    if (document.getElementById("overlay-host")) return true;  // mid-grade
+    if (state.audioFile) return true;
+    if (state.liveRecordingBlob) return true;
+    if (state.liveRecordingMedia) return true;  // recording in progress
+    const projectId  = ($("#gf-project")  || {}).value || "";
+    const locationId = ($("#gf-location") || {}).value || "";
+    if (projectId && locationId) return true;
+    return false;
+  };
+  window.addEventListener("beforeunload", function (e) {
+    if (window.formIsDirty() && !window.gradeComplete) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  });
+
+  // ── Form bootstrap ────────────────────────────────────
+  async function init() {
+    $("#gf-date").value = new Date().toISOString().slice(0,10);
+
+    // Feature-detect MediaRecorder. If unavailable, the Record Live tab
+    // stays hidden and only Upload + VoIP are shown.
+    if (window.MediaRecorder) {
+      $("#tab-record").hidden = false;
+    }
+
+    wireForm();  // attach handlers BEFORE awaiting loaders so a fast user's first click lands
+    await Promise.all([
+      loadLocations(),
+      loadProjects(),
+      loadCallers(),
+      loadCampaigns(),
+      checkVoip(),
+    ]);
+    if ($("#gf-location").value) onLocationChange();  // re-fire if user picked during the race
+
+    // If we arrived here from a project hub with ?project_id=<id>, pre-select
+    // and lock the project dropdown. Location lock depends on whether the
+    // project is single-location or spans all locations — fetch the summary
+    // to check the project_all_locations flag.
+    const params = new URLSearchParams(window.location.search);
+    const forcedProjectId = params.get("project_id");
+    if (forcedProjectId) await applyLockedProject(forcedProjectId);
+  }
+
+  async function applyLockedProject(projectId) {
+    const p = (state.allProjects || []).find(
+      (pp) => String(pp.project_id) === String(projectId)
+    );
+    if (!p) {
+      $("#form-hint").textContent =
+        "Could not find that project in your account — defaulting to manual selection.";
+      return;
+    }
+
+    // Resolve whether this project is all-locations. The list endpoint
+    // already carries the flag, but fall back to summary if the field is
+    // missing from older caches.
+    let allLocations = !!p.project_all_locations;
+    if (p.project_all_locations === undefined) {
+      try {
+        const sum = await EA.fetchJSON("/api/projects/" + projectId + "/summary");
+        allLocations = !!sum.project_all_locations;
+      } catch (_) { /* non-fatal, treat as single-location */ }
+    }
+
+    const locSel  = $("#gf-location");
+    const projSel = $("#gf-project");
+
+    if (allLocations) {
+      // Reviewer picks the location per call. Location stays enabled; project
+      // dropdown becomes a single locked option so it can't be switched.
+      locSel.disabled = false;
+      locSel.value = "";
+      onLocationChange();
+      // Swap the project <select> into a single-option locked state so only
+      // this project is submittable. We can't just pick it from a filtered
+      // list because renderProjectDropdown re-filters on location changes.
+      projSel.innerHTML =
+        '<option value="' + p.project_id + '" selected>' +
+          EA.esc(p.project_name || '') + '</option>';
+      projSel.disabled = true;
+      state.locationNameDisplay = "";
+      renderLockStrip(p, /*allLocations=*/true);
+      // Add the prompt label above the location dropdown.
+      ensureAllLocationsLabel();
+    } else {
+      // Single-location mode — lock both dropdowns (existing behavior).
+      if (p.location_id != null) {
+        locSel.value = String(p.location_id);
+        onLocationChange();
+        locSel.disabled = true;
+      }
+      projSel.value = String(p.project_id);
+      projSel.disabled = true;
+      state.locationNameDisplay = p.location_name || "";
+      renderLockStrip(p, /*allLocations=*/false);
+    }
+  }
+
+  function renderLockStrip(p, allLocations) {
+    let strip = document.getElementById("project-locked-strip");
+    if (!strip) {
+      strip = document.createElement("div");
+      strip.id = "project-locked-strip";
+      strip.className = "muted text-small";
+      strip.style.cssText =
+        "margin:-8px 0 14px;padding:8px 12px;background:var(--surface-2);" +
+        "border:1px solid var(--border);border-radius:var(--radius);";
+      const formSection = document.getElementById("grade-form-section");
+      formSection.parentNode.insertBefore(strip, formSection);
+    }
+    const locBit = allLocations
+      ? ' · <em>All Locations</em>'
+      : (p.location_name ? ' · ' + EA.esc(p.location_name) : '');
+    strip.innerHTML =
+      '<strong>Grading for:</strong> ' + EA.esc(p.project_name || "") +
+      locBit +
+      ' · <a href="/app/projects">change</a>';
+  }
+
+  function ensureAllLocationsLabel() {
+    if (document.getElementById("all-locations-prompt")) return;
+    const note = document.createElement("div");
+    note.id = "all-locations-prompt";
+    note.className = "muted text-small";
+    note.style.cssText = "margin:0 0 6px 0;";
+    note.textContent = "Select which location you're calling today.";
+    const locField = document.querySelector('#gf-location').closest(".field");
+    if (locField) locField.insertBefore(note, locField.firstChild);
+  }
+
+  async function loadLocations() {
+    const sel = $("#gf-location");
+    const empty = $("#gf-location-empty");
+    try {
+      const locs = await EA.fetchJSON("/api/locations");
+      state.allLocations = locs || [];
+      if (!state.allLocations.length) {
+        sel.innerHTML = '<option value="">—</option>';
+        sel.disabled = true;
+        empty.hidden = false;
+        empty.textContent =
+          "No locations found. Add a location in Settings before grading a call.";
+        return;
+      }
+      sel.innerHTML = '<option value="">Select a location…</option>';
+      state.allLocations.forEach(function (l) {
+        const o = document.createElement("option");
+        o.value = l.location_id;
+        o.textContent = l.location_name;
+        sel.appendChild(o);
+      });
+      empty.hidden = true;
+    } catch (err) {
+      sel.innerHTML = '<option value="">Failed to load locations</option>';
+    }
+  }
+
+  // Store the full project list so the Project dropdown can be re-filtered
+  // client-side whenever the location changes — no extra API call.
+  async function loadProjects() {
+    const sel = $("#gf-project");
+    try {
+      const projects = await EA.fetchJSON("/api/projects");
+      state.allProjects = projects || [];
+      renderProjectDropdown(null);
+    } catch (err) {
+      sel.innerHTML = '<option value="">Failed to load projects</option>';
+    }
+  }
+
+  function renderProjectDropdown(locationId) {
+    const sel = $("#gf-project");
+    const lid = locationId ? String(locationId) : "";
+    if (!lid) {
+      sel.innerHTML = '<option value="">Select a location first…</option>';
+      sel.disabled = true;
+      sel.value = "";
+      return;
+    }
+    const matches = state.allProjects.filter(
+      (p) => String(p.location_id || "") === lid
+    );
+    sel.disabled = false;
+    if (!matches.length) {
+      sel.innerHTML = '<option value="" disabled selected>No projects for this location</option>';
+      sel.disabled = true;
+      return;
+    }
+    sel.innerHTML = '<option value="">Select a project…</option>';
+    matches.forEach(function (p) {
+      const o = document.createElement("option");
+      o.value = p.project_id;
+      o.textContent = p.project_name;
+      o.dataset.rubricGroupId = p.rubric_group_id || "";
+      sel.appendChild(o);
+    });
+  }
+
+  function formatPhone(raw) {
+    const digits = String(raw || "").replace(/\D+/g, "");
+    if (digits.length === 10) {
+      return "(" + digits.slice(0,3) + ") " + digits.slice(3,6) + "-" + digits.slice(6);
+    }
+    if (digits.length === 11 && digits[0] === "1") {
+      return "+1 (" + digits.slice(1,4) + ") " + digits.slice(4,7) + "-" + digits.slice(7);
+    }
+    return String(raw || "").trim();
+  }
+
+  function onLocationChange() {
+    const sel = $("#gf-location");
+    const phoneEl = $("#gf-location-phone");
+    const locId = sel.value;
+    const loc = state.allLocations.find(
+      (l) => String(l.location_id) === String(locId)
+    );
+    const phone = loc && loc.location_phone
+                    ? String(loc.location_phone).trim() : "";
+    if (!locId) {
+      phoneEl.textContent = "";
+      phoneEl.hidden = true;
+    } else if (phone) {
+      phoneEl.innerHTML = "📞 " + EA.esc(formatPhone(phone));
+      phoneEl.hidden = false;
+    } else {
+      phoneEl.textContent = "📞 No phone number on file";
+      phoneEl.hidden = false;
+    }
+    renderProjectDropdown(locId);
+    $("#form-hint").textContent = "";
+    refreshLocationIntel(locId);
+  }
+
+  // ── Location intel card ──────────────────────────────
+  // Fetched when a location is picked. Failure is non-fatal — the form stays
+  // usable. A monotonic seq guards against rapid location changes racing.
+  async function refreshLocationIntel(locationId) {
+    const card = document.getElementById("location-intel-card");
+    if (!card) return;
+    if (!locationId) {
+      card.hidden = true;
+      card.innerHTML = "";
+      return;
+    }
+    const seq = ++state.intelFetchSeq;
+    card.hidden = false;
+    card.classList.remove("empty");
+    card.innerHTML =
+      '<div class="intel-skeleton" style="width:60%;"></div>' +
+      '<div class="intel-skeleton" style="width:40%;"></div>' +
+      '<div class="intel-skeleton" style="width:80%;"></div>';
+    let intel;
+    try {
+      intel = await EA.fetchJSON(
+        "/api/locations/" + encodeURIComponent(locationId) + "/intel"
+      );
+    } catch (err) {
+      if (seq !== state.intelFetchSeq) return;
+      card.classList.add("empty");
+      card.innerHTML =
+        '<div class="intel-empty-msg">Could not load location intel.</div>';
+      return;
+    }
+    if (seq !== state.intelFetchSeq) return;
+    renderLocationIntel(card, intel);
+  }
+
+  function renderLocationIntel(card, intel) {
+    // Distinguish between "intel row exists but truly has zero calls" and
+    // "intel row doesn't exist yet" — the latter just means compute hasn't
+    // run. Saying "No previous calls" in that case falsely implies there's
+    // no history, which is misleading for first-time setup after deploy.
+    if (!intel.computed) {
+      card.classList.add("empty");
+      card.innerHTML =
+        '<div class="intel-empty-msg"><strong>Loading location history…</strong></div>' +
+        '<div class="muted text-small" style="margin-top:4px;">' +
+          'Call history will appear here after your first grade at this location.' +
+        '</div>';
+      return;
+    }
+    if (!intel.li_total_calls && !intel.li_no_answer_count) {
+      card.classList.add("empty");
+      card.innerHTML =
+        '<div class="intel-empty-msg">No previous calls at this location.</div>';
+      return;
+    }
+    card.classList.remove("empty");
+
+    const total      = intel.li_total_calls || 0;
+    const noAns      = intel.li_no_answer_count || 0;
+    const avgRaw     = intel.li_avg_score;
+    const lastTime   = EA.formatCallTime(
+                         intel.li_last_call_time, null,
+                         null);
+    const lastDateD  = intel.li_last_call_date
+                        ? EA.formatDate(intel.li_last_call_date) : null;
+    const noAnsBit   = noAns
+      ? '<span class="intel-stat-meta">' + noAns + ' no answer</span>' : '';
+
+    const avgPill = (avgRaw === null || avgRaw === undefined)
+      ? '<span class="score-pill gray">—</span>'
+      : ('<span class="score-pill ' + EA.scoreClass(avgRaw) + '">' +
+           EA.formatScore(avgRaw) + '</span>');
+
+    const statsHtml =
+      '<div class="intel-stats">' +
+        '<div class="intel-stat">' +
+          '<div class="intel-stat-label">Last call</div>' +
+          '<div class="intel-stat-value">' +
+            (lastDateD ? EA.esc(lastDateD) : '—') +
+            (lastTime !== '—' ? ' <span class="intel-stat-meta">' + EA.esc(lastTime) + '</span>' : '') +
+          '</div>' +
+        '</div>' +
+        '<div class="intel-stat">' +
+          '<div class="intel-stat-label">Avg score</div>' +
+          '<div class="intel-stat-value">' + avgPill + '</div>' +
+        '</div>' +
+        '<div class="intel-stat">' +
+          '<div class="intel-stat-label">Total calls</div>' +
+          '<div class="intel-stat-value">' + total + ' ' + noAnsBit + '</div>' +
+        '</div>' +
+      '</div>';
+
+    let lastRowHtml = '';
+    if (intel.li_last_call_outcome === 'no_answer') {
+      lastRowHtml =
+        '<div class="intel-last-row">' +
+          '<span class="intel-noanswer-badge">Last call: No Answer</span>' +
+          (lastDateD ? '<span class="muted text-small">on ' + EA.esc(lastDateD) + '</span>' : '') +
+        '</div>';
+    } else if (intel.li_last_call_score !== null && intel.li_last_call_score !== undefined) {
+      const cls = EA.scoreClass(intel.li_last_call_score);
+      lastRowHtml =
+        '<div class="intel-last-row">' +
+          '<span class="muted text-small">Last call:</span>' +
+          '<span class="score-pill ' + cls + '">' +
+            EA.formatScore(intel.li_last_call_score) + '</span>' +
+          (lastDateD ? '<span class="muted text-small">on ' + EA.esc(lastDateD) + '</span>' : '') +
+        '</div>';
+    }
+
+    let briefHtml = '';
+    if (intel.li_summary) {
+      const s = bulletsHtml(intel.li_strengths);
+      const w = bulletsHtml(intel.li_weaknesses);
+      briefHtml =
+        '<div class="intel-brief">' +
+          '<div class="intel-summary">' + EA.esc(intel.li_summary) + '</div>' +
+          (s || w
+            ? ('<div class="intel-bullets-grid">' +
+                 (s ? '<div class="intel-bullet-block strengths">' +
+                        '<div class="intel-bullet-label">Strengths</div>' + s +
+                      '</div>' : '') +
+                 (w ? '<div class="intel-bullet-block weaknesses">' +
+                        '<div class="intel-bullet-label">Watch out for</div>' + w +
+                      '</div>' : '') +
+               '</div>')
+            : '') +
+        '</div>';
+    }
+
+    let staleHtml = '';
+    if (intel.li_last_computed_at) {
+      const computed = new Date(intel.li_last_computed_at);
+      const age = (Date.now() - computed.getTime()) / (1000 * 60 * 60 * 24);
+      if (age > 7 && !isNaN(age)) {
+        staleHtml = '<div class="intel-stale">Last updated ' +
+                    EA.esc(EA.formatDate(intel.li_last_computed_at)) + '</div>';
+      }
+    }
+
+    card.innerHTML = statsHtml + lastRowHtml + briefHtml + staleHtml;
+  }
+
+  function bulletsHtml(text) {
+    if (!text) return '';
+    const items = String(text).split(/\n+/)
+      .map((s) => s.replace(/^\s*[•\-*]\s*/, '').trim())
+      .filter(Boolean);
+    if (!items.length) return '';
+    return '<ul class="intel-bullets-list">' +
+      items.map((s) => '<li>' + EA.esc(s) + '</li>').join('') + '</ul>';
+  }
+
+  async function loadCallers() {
+    const sel = $("#gf-caller");
+    try {
+      const team = await EA.fetchJSON("/api/team");
+      const callers = team.filter(function (u) {
+        return (u.role_name === "caller" || !u.role_name);
+      });
+      sel.innerHTML = '<option value="">—</option>';
+      callers.forEach(function (u) {
+        const o = document.createElement("option");
+        o.value = u.user_id;
+        o.textContent = (u.user_first_name || "") + " " + (u.user_last_name || "");
+        sel.appendChild(o);
+      });
+      if (window.__USER_ROLE === "caller" && window.__USER_ID) {
+        sel.value = String(window.__USER_ID);
+      }
+    } catch (err) {
+      sel.innerHTML = '<option value="">Failed to load team</option>';
+    }
+  }
+
+  async function loadCampaigns() {
+    const sel = $("#gf-campaign");
+    try {
+      const campaigns = await EA.fetchJSON("/api/campaigns");
+      sel.innerHTML = '<option value="">—</option>';
+      campaigns.forEach(function (c) {
+        const o = document.createElement("option");
+        o.value = c.campaign_id;
+        o.textContent = c.campaign_name;
+        sel.appendChild(o);
+      });
+    } catch (err) { /* optional */ }
+  }
+
+  async function checkVoip() {
+    try {
+      const cfg = await EA.fetchJSON("/api/voip/config");
+      if (cfg && cfg.credentials_configured && cfg.voip_config_is_active) {
+        state.voipConfigured = true;
+        $("#tab-voip").hidden = false;
+        loadVoipQueue();
+      }
+    } catch (err) { /* VoIP not configured — tab stays hidden. */ }
+  }
+
+  async function loadVoipQueue() {
+    const box = $("#voip-queue-wrap");
+    try {
+      const items = await EA.fetchJSON("/api/voip/queue?status=pending");
+      if (!items || !items.length) {
+        box.innerHTML = '<div class="empty-state">No pending calls in the VoIP queue.</div>';
+        return;
+      }
+      const head =
+        '<table class="history-table">' +
+          '<thead><tr>' +
+            '<th>Date</th><th>Caller #</th><th>Called #</th>' +
+            '<th>Duration</th><th>Provider</th>' +
+          '</tr></thead><tbody>';
+      const body = items.map(function (r) {
+        const dur = r.voip_queue_duration_seconds
+          ? Math.round(r.voip_queue_duration_seconds) + "s" : "—";
+        return (
+          '<tr data-queue-id="' + r.voip_queue_id + '" data-date="' +
+              EA.esc(r.voip_queue_call_date || "") + '">' +
+            '<td>' + EA.esc(EA.formatDate(r.voip_queue_call_date) || "—") + '</td>' +
+            '<td>' + EA.esc(r.voip_queue_caller_number || "—") + '</td>' +
+            '<td>' + EA.esc(r.voip_queue_called_number || "—") + '</td>' +
+            '<td>' + dur + '</td>' +
+            '<td>' + EA.esc(r.voip_queue_provider || "—") + '</td>' +
+          '</tr>'
+        );
+      }).join("");
+      box.innerHTML = head + body + "</tbody></table>";
+      box.querySelectorAll("tr[data-queue-id]").forEach(function (tr) {
+        tr.addEventListener("click", function () {
+          box.querySelectorAll("tr").forEach(function (x) { x.style.background = ""; });
+          tr.style.background = "var(--accent-soft)";
+          state.selectedQueueId = tr.dataset.queueId;
+          $("#voip-queue-id").value = tr.dataset.queueId;
+          if (tr.dataset.date) $("#gf-date").value = tr.dataset.date.slice(0,10);
+        });
+      });
+    } catch (err) {
+      box.innerHTML = '<div class="section-error">' + EA.esc(err.message) + '</div>';
+    }
+  }
+
+  // ── Form wiring ─────────────────────────────────────
+  function wireForm() {
+    // Location change — update phone + re-filter projects
+    $("#gf-location").addEventListener("change", onLocationChange);
+
+    // Tabs
+    $("#tab-upload").addEventListener("click", function () { switchTab("upload"); });
+    $("#tab-record").addEventListener("click", function () { switchTab("record"); });
+    $("#tab-voip")  .addEventListener("click", function () { switchTab("voip"); });
+
+    // Dropzone: <label for="audio-file"> natively forwards clicks to the input —
+    // don't also call fi.click() from JS, that causes Chrome to open-and-immediately-
+    // close the picker because the label forward and the programmatic click both
+    // fire from the same user gesture and cancel each other out.
+    const dz = $("#dropzone");
+    const fi = $("#audio-file");
+    dz.addEventListener("dragover", function (e) {
+      e.preventDefault(); dz.classList.add("drag-over");
+    });
+    dz.addEventListener("dragleave", function () { dz.classList.remove("drag-over"); });
+    dz.addEventListener("drop", function (e) {
+      e.preventDefault();
+      dz.classList.remove("drag-over");
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        setAudioFile(e.dataTransfer.files[0]);
+      }
+    });
+    fi.addEventListener("change", function () {
+      if (fi.files && fi.files[0]) setAudioFile(fi.files[0]);
+    });
+    $("#dz-clear").addEventListener("click", function (e) {
+      e.stopPropagation();
+      clearAudioFile();
+    });
+
+    // Live recording wiring
+    $("#btn-record-start").addEventListener("click", startLiveRecording);
+    $("#btn-record-stop") .addEventListener("click", stopLiveRecording);
+    $("#btn-record-redo") .addEventListener("click", resetLiveRecording);
+    $("#btn-record-use")  .addEventListener("click", confirmLiveRecording);
+
+    // Submit
+    $("#grade-form").addEventListener("submit", onSubmit);
+    $("#btn-no-answer").addEventListener("click", onLogNoAnswer);
+  }
+
+  function switchTab(which) {
+    const upTab = $("#tab-upload"), recTab = $("#tab-record"), voipTab = $("#tab-voip");
+    upTab  .classList.toggle("active", which === "upload");
+    recTab .classList.toggle("active", which === "record");
+    voipTab.classList.toggle("active", which === "voip");
+    $("#panel-upload").hidden = which !== "upload";
+    $("#panel-record").hidden = which !== "record";
+    $("#panel-voip")  .hidden = which !== "voip";
+
+    // Tabs are mutually exclusive — switching clears the OTHER sources.
+    if (which !== "upload") { /* keep upload cleared via its own clear below */ }
+    if (which !== "record") { cleanupLiveRecording(/*reset*/ true); }
+    if (which !== "voip")   {
+      state.selectedQueueId = null;
+      $("#voip-queue-id").value = "";
+    }
+    if (which !== "upload") { clearAudioFile(); }
+  }
+
+  function setAudioFile(file) {
+    // Swapping upload source clears any live recording.
+    cleanupLiveRecording(true);
+    state.audioFile = file;
+    $("#dropzone-placeholder").hidden = true;
+    $("#dropzone-filled").hidden = false;
+    $("#dz-filename").textContent = file.name;
+    $("#dz-meta").textContent = humanSize(file.size) + " · " + (file.type || "audio");
+    $("#dropzone").classList.add("has-file");
+    $("#form-hint").textContent = "";
+  }
+  function clearAudioFile() {
+    state.audioFile = null;
+    $("#audio-file").value = "";
+    $("#dropzone-placeholder").hidden = false;
+    $("#dropzone-filled").hidden = true;
+    $("#dropzone").classList.remove("has-file");
+  }
+  function humanSize(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + " KB";
+    return (bytes/(1024*1024)).toFixed(1) + " MB";
+  }
+
+  // ── Live recording ──────────────────────────────────
+  function formatTimerMs(ms) {
+    const total = Math.floor(ms / 1000);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return m + ":" + (s < 10 ? "0" + s : s);
+  }
+
+  async function startLiveRecording() {
+    $("#record-permission-error").hidden = true;
+    $("#record-permission-error").textContent = "";
+
+    if (!window.MediaRecorder || !navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia) {
+      showRecordError("This browser does not support live recording. " +
+                      "Please use the Upload tab instead.");
+      return;
+    }
+
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      showRecordError(
+        "Microphone access is required to record live. " +
+        "Please allow microphone access in your browser settings."
+      );
+      return;
+    }
+
+    // Pick a mime type MediaRecorder actually supports.
+    const preferred = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/mp4",
+      "audio/ogg;codecs=opus",
+    ];
+    let mime = "";
+    for (const m of preferred) {
+      if (window.MediaRecorder.isTypeSupported && window.MediaRecorder.isTypeSupported(m)) {
+        mime = m; break;
+      }
+    }
+    state.liveRecordingMime = mime || "audio/webm";
+
+    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    state.liveRecordingMedia  = rec;
+    state.liveRecordingStream = stream;
+    state.liveRecordingChunks = [];
+
+    rec.addEventListener("dataavailable", function (e) {
+      if (e.data && e.data.size > 0) state.liveRecordingChunks.push(e.data);
+    });
+    rec.addEventListener("stop", function () {
+      const blob = new Blob(state.liveRecordingChunks,
+                            { type: state.liveRecordingMime });
+      state.liveRecordingBlob = blob;
+      showRecordPreview(blob);
+      // Release the mic
+      if (state.liveRecordingStream) {
+        state.liveRecordingStream.getTracks().forEach(function (t) { t.stop(); });
+        state.liveRecordingStream = null;
+      }
+    });
+
+    // UI → active
+    $("#record-idle").hidden    = true;
+    $("#record-active").hidden  = false;
+    $("#record-preview").hidden = true;
+    $("#record-timer").textContent = "0:00";
+    state.liveRecordingStartMs = Date.now();
+    // Wall-clock timestamp captured when the user clicks Record. Sent with
+    // the form on submit so the server can store the actual call time.
+    state.callStartTime       = new Date().toISOString();
+    state.callEndTime         = null;
+    state.callDurationSeconds = null;
+    state.liveRecordingTimerId = setInterval(function () {
+      $("#record-timer").textContent =
+        formatTimerMs(Date.now() - state.liveRecordingStartMs);
+    }, 250);
+
+    try {
+      rec.start();
+    } catch (err) {
+      showRecordError("Recording failed to start: " + (err.message || err));
+      cleanupLiveRecording(true);
+    }
+  }
+
+  function stopLiveRecording() {
+    const rec = state.liveRecordingMedia;
+    if (rec && rec.state !== "inactive") {
+      try { rec.stop(); } catch (_) { /* ignore */ }
+    }
+    if (state.liveRecordingTimerId) {
+      clearInterval(state.liveRecordingTimerId);
+      state.liveRecordingTimerId = null;
+    }
+    $("#record-active").hidden  = true;
+    // Capture wall-clock end + derive duration from the start stamp.
+    state.callEndTime = new Date().toISOString();
+    if (state.callStartTime) {
+      const ms = new Date(state.callEndTime) - new Date(state.callStartTime);
+      state.callDurationSeconds = Math.max(0, Math.round(ms / 1000));
+    }
+  }
+
+  function showRecordPreview(blob) {
+    const audio = $("#record-audio");
+    const url = URL.createObjectURL(blob);
+    audio.src = url;
+    // Compute duration once metadata is loaded
+    audio.addEventListener("loadedmetadata", function onMeta() {
+      audio.removeEventListener("loadedmetadata", onMeta);
+      const secs = audio.duration;
+      let durLabel = "Duration unknown";
+      if (isFinite(secs) && secs > 0) {
+        const m = Math.floor(secs / 60);
+        const s = Math.floor(secs % 60);
+        durLabel = "Duration: " + m + ":" + (s < 10 ? "0" + s : s) +
+                   " · " + humanSize(blob.size);
+      } else {
+        durLabel = humanSize(blob.size);
+      }
+      $("#record-duration").textContent = durLabel;
+    }, { once: true });
+    $("#record-preview").hidden = false;
+    $("#record-wrap").classList.remove("confirmed");
+  }
+
+  function resetLiveRecording() {
+    // Discard current preview and return to idle. Revoke object URL so we
+    // don't leak memory across re-records.
+    const audio = $("#record-audio");
+    if (audio && audio.src && audio.src.indexOf("blob:") === 0) {
+      try { URL.revokeObjectURL(audio.src); } catch (_) {}
+    }
+    state.liveRecordingBlob = null;
+    if (audio) audio.removeAttribute("src");
+    $("#record-preview").hidden = true;
+    $("#record-active").hidden  = true;
+    $("#record-idle").hidden    = false;
+    $("#record-wrap").classList.remove("confirmed");
+    $("#form-hint").textContent = "";
+  }
+
+  function confirmLiveRecording() {
+    if (!state.liveRecordingBlob) return;
+    $("#record-wrap").classList.add("confirmed");
+    $("#btn-record-use").textContent = "✓ Ready to submit";
+    $("#form-hint").textContent = "Live recording ready — click Submit for grading.";
+  }
+
+  function cleanupLiveRecording(reset) {
+    // Stop any in-flight recording, release mic, clear timer
+    const rec = state.liveRecordingMedia;
+    if (rec && rec.state !== "inactive") {
+      try { rec.stop(); } catch (_) {}
+    }
+    state.liveRecordingMedia = null;
+    if (state.liveRecordingStream) {
+      state.liveRecordingStream.getTracks().forEach(function (t) { t.stop(); });
+      state.liveRecordingStream = null;
+    }
+    if (state.liveRecordingTimerId) {
+      clearInterval(state.liveRecordingTimerId);
+      state.liveRecordingTimerId = null;
+    }
+    if (reset) {
+      const audio = $("#record-audio");
+      if (audio && audio.src && audio.src.indexOf("blob:") === 0) {
+        try { URL.revokeObjectURL(audio.src); } catch (_) {}
+      }
+      state.liveRecordingBlob = null;
+      if (audio) audio.removeAttribute("src");
+      $("#record-idle").hidden = false;
+      $("#record-active").hidden = true;
+      $("#record-preview").hidden = true;
+      $("#record-wrap").classList.remove("confirmed");
+      $("#btn-record-use").textContent = "Use This Recording";
+      $("#record-permission-error").hidden = true;
+      state.callStartTime       = null;
+      state.callEndTime         = null;
+      state.callDurationSeconds = null;
+    }
+  }
+
+  function showRecordError(msg) {
+    const box = $("#record-permission-error");
+    box.textContent = msg;
+    box.hidden = false;
+    cleanupLiveRecording(false);
+    $("#record-idle").hidden    = false;
+    $("#record-active").hidden  = true;
+  }
+
+  // ── Submit grading ──────────────────────────────────
+  async function onSubmit(e) {
+    e.preventDefault();
+
+    const locationId = $("#gf-location").value;
+    if (!locationId) {
+      $("#form-hint").textContent = "Pick a location first.";
+      return;
+    }
+    const projectId = $("#gf-project").value;
+    if (!projectId) {
+      $("#form-hint").textContent = "Pick a project first.";
+      return;
+    }
+    const activeTab = $("#tab-voip").classList.contains("active") ? "voip"
+                    : $("#tab-record").classList.contains("active") ? "record"
+                    : "upload";
+
+    if (activeTab === "upload" && !state.audioFile) {
+      $("#form-hint").textContent = "Choose an audio file.";
+      return;
+    }
+    if (activeTab === "record" && !state.liveRecordingBlob) {
+      $("#form-hint").textContent = "Finish your live recording first — click Use This Recording.";
+      return;
+    }
+    if (activeTab === "voip" && !state.selectedQueueId) {
+      $("#form-hint").textContent = "Pick a queued call.";
+      return;
+    }
+
+    // Capture the caller's + location display names for the result panel
+    const callerSel = $("#gf-caller");
+    const callerOpt = callerSel.options[callerSel.selectedIndex];
+    state.callerNameDisplay = callerOpt ? (callerOpt.text || "").trim() : "";
+    const locSel = $("#gf-location");
+    const locOpt = locSel.options[locSel.selectedIndex];
+    state.locationNameDisplay = locOpt ? (locOpt.text || "").trim() : "";
+
+    const overlay = EA.showOverlay("Uploading audio…");
+    try {
+      if (activeTab === "voip") {
+        overlay.set("Queuing VoIP grade…");
+        await EA.fetchJSON(
+          "/api/voip/queue/" + encodeURIComponent(state.selectedQueueId) + "/grade",
+          { method: "POST" }
+        );
+        overlay.close();
+        EA.toast("Grading started — check Past Grades in a moment.", "info");
+        resetForm();
+        return;
+      }
+
+      // Multipart upload (upload OR live-recording tab)
+      const fd = new FormData();
+      if (activeTab === "record") {
+        fd.append("audio", state.liveRecordingBlob, "live_recording.webm");
+        // Pass through wall-clock timestamps captured when the user clicked
+        // Record / Stop. Uploaded audio leaves these out — server stores NULL
+        // for the call_start/end/duration columns and only stamps uploaded_at.
+        if (state.callStartTime)        fd.append("call_start_time",       state.callStartTime);
+        if (state.callEndTime)          fd.append("call_end_time",         state.callEndTime);
+        if (state.callDurationSeconds != null)
+                                        fd.append("call_duration_seconds", String(state.callDurationSeconds));
+      } else {
+        fd.append("audio", state.audioFile);
+      }
+      fd.append("project_id", projectId);
+      fd.append("location_id", locationId);   // display/logging only — backend ignores
+      const callerId = $("#gf-caller").value;
+      if (callerId) fd.append("caller_user_id", callerId);
+      const callDate = $("#gf-date").value;
+      if (callDate) fd.append("interaction_date", callDate);
+
+      // Three-step flow — pace the overlay messages through the server's
+      // phases: upload → transcribe → ask clarifying questions.
+      const pulse = [
+        [ 1500, "Transcribing call…" ],
+        [ 8000, "Preparing questions…" ],
+        [ 20000, "Almost there…" ],
+      ];
+      const timers = pulse.map(function (p) {
+        return setTimeout(function () { overlay.set(p[1]); }, p[0]);
+      });
+
+      const result = await EA.fetchJSON("/api/grade", {
+        method: "POST",
+        body: fd,
+        headers: {},  // let browser set the multipart boundary
+      });
+      timers.forEach(clearTimeout);
+
+      state.currentInteraction = result;
+
+      // Branch:
+      //   awaiting_clarification=true  → server saved transcript + CQs, wants answers
+      //   otherwise                    → auto-graded (no CQs needed); result is final
+      if (result.awaiting_clarification) {
+        overlay.close();
+        renderClarifyingScreen(result.interaction_id, result.clarifying_questions || []);
+      } else {
+        overlay.close();
+        renderGradeResult(result);
+      }
+    } catch (err) {
+      overlay.close();
+      $("#form-hint").textContent = "";
+      const retry = await EA.confirmDialog({
+        title: "Grading failed",
+        body:  err.message || "Something went wrong grading that call.",
+        okLabel: "Retry",
+        cancelLabel: "Dismiss",
+        variant: "primary",
+      });
+      if (retry) onSubmit(e);
+    }
+  }
+
+  // ── Result panel rendering ─────────────────────────
+  function normalizeRespondent(name) {
+    if (name === null || name === undefined) return "Not detected";
+    const s = String(name).trim();
+    if (!s) return "Not detected";
+    const lower = s.toLowerCase();
+    if (lower === "unknown" || lower === "name not provided") return "Not detected";
+    return s;
+  }
+
+  function renderGradeResult(result, opts) {
+    opts = opts || {};
+    const interactionId = result.interaction_id;
+    const section = $("#grade-result-section");
+    const hero = scoreHero(result.total_score);
+    const flagsHtml = (result.flags || "")
+      ? '<div class="flag-banner">' + EA.esc(result.flags) + '</div>' : "";
+
+    // ── Caller + Respondent (detected) info block ──
+    // The API historically returns `responder_name`; prefer `respondent_name`
+    // if present for forward compatibility.
+    const respRaw = (result.respondent_name != null)
+                      ? result.respondent_name : result.responder_name;
+    const respDisplay = normalizeRespondent(respRaw);
+    const respIsDetected = (respDisplay !== "Not detected");
+    const callerDisplay = (state.callerNameDisplay && state.callerNameDisplay !== "—")
+                          ? state.callerNameDisplay : "—";
+    const locDisplay = (state.locationNameDisplay || "").trim() || "—";
+
+    // Respondent is editable: the name Claude detected may be wrong or missing,
+    // and a reviewer needs to be able to correct it so leaderboards/reports
+    // attribute the call to the right person.
+    const respValueHtml =
+      '<div class="resp-view" id="resp-view">' +
+        '<span id="resp-text" class="' + (respIsDetected ? "" : "muted") + '">' +
+          EA.esc(respDisplay) +
+        '</span>' +
+        '<button type="button" class="resp-edit-btn" id="resp-edit-btn" ' +
+                'title="Edit respondent name">' +
+          '<span class="resp-edit-icon">✎</span>Edit' +
+        '</button>' +
+        '<span class="resp-saved" id="resp-saved" hidden>Saved ✓</span>' +
+      '</div>';
+
+    const infoHtml =
+      '<div class="result-info">' +
+        '<div class="result-info-item">' +
+          '<div class="result-info-label">{{ location_label or "Location" }}</div>' +
+          '<div class="result-info-value' + (locDisplay === "—" ? " muted" : "") + '">' +
+            EA.esc(locDisplay) +
+          '</div>' +
+        '</div>' +
+        '<div class="result-info-item">' +
+          '<div class="result-info-label">Caller</div>' +
+          '<div class="result-info-value' + (callerDisplay === "—" ? " muted" : "") + '">' +
+            EA.esc(callerDisplay) +
+          '</div>' +
+        '</div>' +
+        '<div class="result-info-item">' +
+          '<div class="result-info-label">Respondent (detected)</div>' +
+          '<div class="result-info-value" id="resp-info-value">' +
+            respValueHtml +
+          '</div>' +
+        '</div>' +
+      '</div>';
+
+    const rubricHtml = renderRubricRows(result);
+    const strengthsHtml = bulletize(result.strengths, "strengths-list");
+    const weaknessesHtml = bulletize(result.weaknesses, "weaknesses-list");
+
+    const overallHtml = result.overall_assessment
+      ? '<p style="margin-top:10px;line-height:1.55;">' +
+          EA.esc(result.overall_assessment) + '</p>' : '';
+
+    // Clarifying questions are now a pre-grade screen, not embedded in the
+    // result panel. Leaving the slot empty keeps the layout below consistent.
+    const cqHtml = "";
+
+    const transcriptHtml = result.transcript
+      ? '<details class="collapsible" id="transcript-panel">' +
+          '<summary>Transcript</summary>' +
+          '<div class="collapsible-body"><div class="transcript-body">' +
+            EA.esc(result.transcript) +
+          '</div></div>' +
+        '</details>' : '';
+
+    const audioHtml = (
+      '<div style="margin-top:14px;">' +
+        '<audio class="app-audio" controls preload="none" ' +
+               'src="/api/interactions/' + interactionId + '/audio"></audio>' +
+      '</div>'
+    );
+
+    section.innerHTML =
+      hero +
+      flagsHtml +
+      infoHtml +
+      '<div class="panel" style="margin-bottom:14px;">' +
+        '<div class="panel-title">Rubric Scores</div>' +
+        rubricHtml +
+      '</div>' +
+      '<div class="dash-grid">' +
+        '<div class="panel">' +
+          '<div class="panel-title">Strengths</div>' + strengthsHtml +
+        '</div>' +
+        '<div class="panel">' +
+          '<div class="panel-title">Weaknesses</div>' + weaknessesHtml +
+        '</div>' +
+      '</div>' +
+      (overallHtml ? '<div class="panel" style="margin-top:14px;">' +
+         '<div class="panel-title">Overall Assessment</div>' + overallHtml +
+       '</div>' : '') +
+      cqHtml +
+      (transcriptHtml ? '<div style="margin-top:14px;">' + transcriptHtml + '</div>' : '') +
+      audioHtml +
+      '<div class="hstack-wrap" style="margin-top:22px;">' +
+        '<button type="button" class="btn btn-primary" id="btn-grade-another">Grade another call</button>' +
+        '<a href="/app/history/' + interactionId + '" class="btn btn-ghost">View in History</a>' +
+      '</div>';
+
+    section.hidden = false;
+    $("#grade-form-section").hidden = true;
+    const cs = document.getElementById("clarifying-section");
+    if (cs) { cs.hidden = true; }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+
+    window.gradeComplete = true;
+    if (!opts.silent) EA.toast("Grade complete — score saved.", "success");
+
+    wireResultPanel(interactionId);
+  }
+
+  function scoreHero(total) {
+    const cls = EA.scoreClass(total);
+    return (
+      '<div class="score-hero">' +
+        '<div class="score-hero-value" style="color:' + EA.scoreColor(total) + ';">' +
+          EA.formatScore(total) +
+        '</div>' +
+        '<div class="score-hero-meta">' +
+          '<span class="score-hero-label">Total score</span>' +
+          '<span class="muted text-small">out of 10</span>' +
+        '</div>' +
+        '<span class="score-pill ' + cls + '">' +
+          (cls === "good" ? "Strong" : cls === "warn" ? "OK" : cls === "bad" ? "Needs work" : "Pending") +
+        '</span>' +
+      '</div>'
+    );
+  }
+
+  function renderRubricRows(result) {
+    const scores = result.scores || {};
+    const expl   = result.explanations || {};
+    const names  = Object.keys(scores);
+    if (!names.length) return '<div class="empty-state">No rubric scores.</div>';
+    return names.map(function (name) {
+      const val = scores[name];
+      const scoreText = (val === "Yes" || val === "No" || val === "Pending")
+        ? val : EA.formatScore(val);
+      const scoreCls = val === "Yes" ? "yes" : val === "No" ? "no" : "";
+      const e = expl[name] || "";
+      return (
+        '<div class="rubric-row">' +
+          '<div class="rubric-name">' + EA.esc(name) + '</div>' +
+          '<div class="rubric-score ' + scoreCls + '">' + EA.esc(scoreText) + '</div>' +
+          (e ? '<div class="rubric-explanation">' + EA.esc(e) + '</div>' : '') +
+        '</div>'
+      );
+    }).join("");
+  }
+
+  function bulletize(text, className) {
+    if (!text) return '<div class="muted text-small">—</div>';
+    const items = String(text).split(/\n+/)
+      .map(function (s) { return s.replace(/^\s*[•\-*]\s*/, "").trim(); })
+      .filter(Boolean);
+    if (!items.length) return '<div class="muted text-small">—</div>';
+    return '<ul class="bullet-list ' + className + '">' +
+      items.map(function (s) { return '<li>' + EA.esc(s) + '</li>'; }).join("") +
+      '</ul>';
+  }
+
+  function renderCqRow(q, i) {
+    const fmt = q.format || q.cq_response_format || "yes_no";
+    let input = "";
+    if (fmt === "yes_no") {
+      input =
+        '<button type="button" class="cq-yesno-btn" data-value="Yes">Yes</button>' +
+        '<button type="button" class="cq-yesno-btn" data-value="No">No</button>';
+    } else if (fmt === "scale_1_10") {
+      input =
+        '<input type="range" min="1" max="10" value="5" class="cq-slider">' +
+        '<span class="cq-slider-value">5</span>';
+    } else if (fmt === "multiple_choice") {
+      const opts = (q.options || []).map(function (o, j) {
+        return (
+          '<label class="cq-radio">' +
+            '<input type="radio" name="cq-' + i + '" value="' + EA.esc(o) + '">' +
+            EA.esc(o) +
+          '</label>'
+        );
+      }).join("");
+      input = opts || '<span class="muted">No options provided.</span>';
+    }
+    const question = q.question || q.cq_text || "";
+    const reason = q.reason || q.cq_ai_reason || "";
+    return (
+      '<div class="cq-row" data-idx="' + i + '" data-fmt="' + fmt +
+           '" data-question="' + EA.esc(question) + '">' +
+        '<div class="cq-question">' + EA.esc(question) + '</div>' +
+        (reason ? '<div class="cq-reason">' + EA.esc(reason) + '</div>' : '') +
+        '<div class="cq-answer">' + input + '</div>' +
+      '</div>'
+    );
+  }
+
+  function renderClarifyingScreen(interactionId, cqs) {
+    // cqs should be non-empty — the server auto-grades when there are no
+    // questions, so we shouldn't end up here with zero. Guard anyway.
+    if (!cqs || !cqs.length) {
+      submitAnswersAndGrade(interactionId, {});
+      return;
+    }
+    const section = document.getElementById("clarifying-section");
+    const list    = document.getElementById("clarifying-list");
+    list.innerHTML = cqs.map(renderCqRow).join("");
+
+    $("#grade-form-section").hidden = true;
+    $("#grade-result-section").hidden = true;
+    section.hidden = false;
+    document.getElementById("clarifying-hint").textContent = "";
+    wireClarifyingInputs();
+
+    const submitBtn = document.getElementById("btn-submit-answers");
+    submitBtn.onclick = function () {
+      const answers = collectClarifyingAnswers();
+      if (answers === null) {
+        document.getElementById("clarifying-hint").textContent =
+          "Answer every question before submitting.";
+        return;
+      }
+      submitAnswersAndGrade(interactionId, answers);
+    };
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function wireClarifyingInputs() {
+    document.querySelectorAll("#clarifying-list .cq-row").forEach(function (row) {
+      const fmt = row.dataset.fmt;
+      if (fmt === "yes_no") {
+        row.querySelectorAll(".cq-yesno-btn").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            row.querySelectorAll(".cq-yesno-btn").forEach(function (b) {
+              b.classList.toggle("selected", b === btn);
+            });
+            row.dataset.value = btn.dataset.value;
+          });
+        });
+      } else if (fmt === "scale_1_10") {
+        const slider = row.querySelector(".cq-slider");
+        const out    = row.querySelector(".cq-slider-value");
+        slider.addEventListener("input", function () {
+          out.textContent = slider.value;
+          row.dataset.value = slider.value;
+        });
+        row.dataset.value = "5";
+      } else if (fmt === "multiple_choice") {
+        row.querySelectorAll('input[type="radio"]').forEach(function (r) {
+          r.addEventListener("change", function () { row.dataset.value = r.value; });
+        });
+      }
+    });
+  }
+
+  function collectClarifyingAnswers() {
+    const answers = {};
+    let missing = false;
+    document.querySelectorAll("#clarifying-list .cq-row").forEach(function (row) {
+      const val = row.dataset.value;
+      if (val === undefined || val === "") missing = true;
+      else answers[row.dataset.question] = val;
+    });
+    return missing ? null : answers;
+  }
+
+  async function submitAnswersAndGrade(interactionId, answers) {
+    const overlay = EA.showOverlay("Grading call…");
+    try {
+      const result = await EA.fetchJSON(
+        "/api/interactions/" + encodeURIComponent(interactionId) + "/regrade",
+        { method: "POST", body: { context_answers: answers || {} } }
+      );
+      overlay.close();
+      renderGradeResult(result);
+    } catch (err) {
+      overlay.close();
+      EA.toast(err.message || "Grading failed", "error");
+    }
+  }
+
+  // ── Respondent inline edit ─────────────────────────
+  //
+  // The detected respondent name may be wrong (mis-transcription) or missing
+  // ("Not detected"). Reviewers edit inline, we PUT to the respondent route,
+  // and the server upserts + re-links. On success we show a brief "Saved ✓"
+  // indicator and return to read-only view.
+  function wireRespondentEdit(interactionId) {
+    const editBtn = document.getElementById("resp-edit-btn");
+    if (!editBtn) return;
+    editBtn.addEventListener("click", function () {
+      const textEl = document.getElementById("resp-text");
+      const currentText = textEl ? textEl.textContent : "";
+      const initialValue = (currentText && currentText !== "Not detected") ? currentText : "";
+      enterRespondentEditMode(interactionId, initialValue);
+    });
+  }
+
+  function enterRespondentEditMode(interactionId, initialValue) {
+    const container = document.getElementById("resp-info-value");
+    if (!container) return;
+    const val = EA.esc(initialValue || "");
+    container.innerHTML =
+      '<div class="resp-editing">' +
+        '<input type="text" class="field-input" id="resp-edit-input" ' +
+               'value="' + val + '" placeholder="Respondent name" maxlength="120" />' +
+        '<button type="button" class="btn btn-primary" id="resp-save-btn">Save</button>' +
+        '<button type="button" class="btn btn-ghost"   id="resp-cancel-btn">Cancel</button>' +
+      '</div>';
+    const input = document.getElementById("resp-edit-input");
+    input.focus();
+    input.select();
+
+    document.getElementById("resp-save-btn").addEventListener("click", function () {
+      saveRespondent(interactionId, input.value);
+    });
+    document.getElementById("resp-cancel-btn").addEventListener("click", function () {
+      revertRespondentView(initialValue);
+    });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); saveRespondent(interactionId, input.value); }
+      if (e.key === "Escape") { e.preventDefault(); revertRespondentView(initialValue); }
+    });
+  }
+
+  function revertRespondentView(value) {
+    const container = document.getElementById("resp-info-value");
+    if (!container) return;
+    const display = normalizeRespondent(value);
+    const isDetected = (display !== "Not detected");
+    container.innerHTML =
+      '<div class="resp-view" id="resp-view">' +
+        '<span id="resp-text" class="' + (isDetected ? "" : "muted") + '">' +
+          EA.esc(display) +
+        '</span>' +
+        '<button type="button" class="resp-edit-btn" id="resp-edit-btn" ' +
+                'title="Edit respondent name">' +
+          '<span class="resp-edit-icon">✎</span>Edit' +
+        '</button>' +
+        '<span class="resp-saved" id="resp-saved" hidden>Saved ✓</span>' +
+      '</div>';
+    // Re-wire: the edit button was replaced.
+    const interactionId = state.currentInteractionId;
+    if (interactionId) wireRespondentEdit(interactionId);
+  }
+
+  async function saveRespondent(interactionId, rawValue) {
+    const name = (rawValue || "").trim();
+    if (!name) {
+      EA.toast("Enter a name before saving.", "error");
+      return;
+    }
+    const saveBtn = document.getElementById("resp-save-btn");
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving…"; }
+    try {
+      const res = await EA.fetchJSON(
+        "/api/interactions/" + encodeURIComponent(interactionId) + "/respondent",
+        { method: "PUT", body: { respondent_name: name } }
+      );
+      revertRespondentView(res.respondent_name || name);
+      const savedEl = document.getElementById("resp-saved");
+      if (savedEl) {
+        savedEl.hidden = false;
+        setTimeout(function () { if (savedEl) savedEl.hidden = true; }, 1800);
+      }
+      EA.toast("Respondent saved.", "success");
+    } catch (err) {
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "Save"; }
+      EA.toast(err.message || "Could not save respondent", "error");
+    }
+  }
+
+  function wireResultPanel(interactionId) {
+    state.currentInteractionId = interactionId;
+    $("#btn-grade-another").addEventListener("click", resetForm);
+    wireRespondentEdit(interactionId);
+  }
+
+  function resetForm() {
+    window.gradeComplete = false;
+    $("#grade-result-section").hidden = true;
+    $("#grade-result-section").innerHTML = "";
+    const cs = document.getElementById("clarifying-section");
+    if (cs) {
+      cs.hidden = true;
+      document.getElementById("clarifying-list").innerHTML = "";
+      document.getElementById("clarifying-hint").textContent = "";
+    }
+    $("#grade-form-section").hidden = false;
+    $("#grade-form").reset();
+    clearAudioFile();
+    cleanupLiveRecording(true);
+    state.selectedQueueId = null;
+    state.currentInteraction = null;
+    state.callerNameDisplay = "";
+    state.locationNameDisplay = "";
+    $("#gf-date").value = new Date().toISOString().slice(0,10);
+    $("#form-hint").textContent = "";
+    // Reset the location-driven project dropdown to its "pick a location" state
+    $("#gf-location-phone").textContent = "";
+    $("#gf-location-phone").hidden = true;
+    renderProjectDropdown(null);
+    const intel = document.getElementById("location-intel-card");
+    if (intel) { intel.hidden = true; intel.innerHTML = ""; }
+    switchTab("upload");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  // ── No-answer flow ─────────────────────────────────
+  async function onLogNoAnswer() {
+    const projectId = $("#gf-project").value;
+    const callDate = $("#gf-date").value || new Date().toISOString().slice(0,10);
+    if (!projectId) {
+      EA.toast("Pick a project first.", "error");
+      return;
+    }
+
+    const body = document.createElement("div");
+    body.innerHTML =
+      '<div class="field"><label class="field-label">Project</label>' +
+        '<div>' + EA.esc($("#gf-project").options[$("#gf-project").selectedIndex].text) + '</div>' +
+      '</div>' +
+      '<div class="field"><label class="field-label">Call date</label>' +
+        '<input type="date" id="na-date" class="field-input" value="' + callDate + '">' +
+      '</div>';
+
+    const ok = await EA.confirmDialog({
+      title: "Log a no-answer call",
+      body:  body,
+      okLabel: "Log no answer",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+
+    const chosenDate = (document.getElementById("na-date") || {}).value || callDate;
+
+    try {
+      const res = await EA.fetchJSON("/api/interactions/no-answer", {
+        method: "POST",
+        body: {
+          project_id: parseInt(projectId, 10),
+          interaction_date: chosenDate,
+          caller_user_id: $("#gf-caller").value || null,
+        },
+      });
+      EA.toast("No-answer logged (#" + res.interaction_id + ").", "success");
+      resetForm();
+    } catch (err) {
+      EA.toast(err.message || "Failed to log no answer", "error");
+    }
+  }
+
+  window.__USER_ROLE = "{{ user_role or '' }}";
+  window.__USER_ID   = {{ user_id or 'null' }};
+
+  window.addEventListener("beforeunload", function () {
+    cleanupLiveRecording(true);
+    const h = document.getElementById("overlay-host");
+    if (h) h.remove();
+  });
+
+  document.addEventListener("DOMContentLoaded", init);
+})();
+</script>
+{% endblock %}

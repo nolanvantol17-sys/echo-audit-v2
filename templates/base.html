@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}{{ client_name or "Echo Audit" }}{% endblock %}</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <style>
+    /* ── Project breadcrumb (persistent context bar) ───────── */
+    .project-breadcrumb {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 22px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.88rem;
+    }
+    .project-breadcrumb a {
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .project-breadcrumb a:hover { text-decoration: underline; }
+    .project-breadcrumb .exit-project-btn {
+      background: transparent;
+      border: 1px solid var(--border-strong);
+      color: var(--muted);
+      border-radius: var(--radius-sm);
+      padding: 4px 10px;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    .project-breadcrumb .exit-project-btn:hover {
+      color: var(--text);
+      border-color: var(--text);
+    }
+  </style>
+  {% block extra_css %}{% endblock %}
+</head>
+<body>
+
+{# ── Impersonation banner — populated at runtime from GET /api/me.
+     Hidden by default; base.html inline script toggles it on.
+     Persistent across every page per FE-5 spec. #}
+<div id="impersonation-banner" class="impersonation-banner" hidden>
+  <span class="impersonation-dot"></span>
+  <span class="impersonation-text">
+    You are impersonating <strong id="imp-user"></strong> at <strong id="imp-org"></strong>.
+  </span>
+  <button type="button" id="imp-stop" class="impersonation-stop">Click to stop</button>
+</div>
+
+{#
+  Per-request view of the URL path so nav highlighting checks are terse.
+  `request.path` is e.g. "/app", "/app/grade", "/app/history/42". We treat
+  `/app` as the dashboard path ("is-dashboard"); everything else matches
+  by prefix so detail pages (/app/history/<id>) stay highlighted under the
+  parent section.
+#}
+{% set _p = request.path %}
+{% set is_dashboard = (_p == '/app') %}
+{% set is_projects  = _p.startswith('/app/projects') or _p.startswith('/app/grade') %}
+{% set is_history   = _p.startswith('/app/history') %}
+{% set is_reports   = _p.startswith('/app/reports') %}
+{% set is_team      = _p.startswith('/app/team') %}
+{% set is_settings  = _p.startswith('/app/settings') %}
+{% set is_voip      = _p.startswith('/app/voip') %}
+{% set is_platform  = _p.startswith('/app/platform') %}
+
+<div class="app-shell">
+
+  {# ── Sidebar ────────────────────────────────────────────── #}
+  <aside class="sidebar">
+    <a href="{{ url_for('app_home') }}" class="sidebar-brand">
+      {% if logo_base64 %}
+        <img src="data:image/png;base64,{{ logo_base64 }}" alt="{{ client_name or 'Logo' }}">
+      {% endif %}
+      <span class="sidebar-brand-text">{{ client_name or "Echo Audit" }}</span>
+    </a>
+
+    <nav class="sidebar-nav">
+      <a href="{{ url_for('app_home') }}"
+         class="nav-link {% if is_dashboard %}active{% endif %}">
+        <span class="nav-icon">◆</span> Dashboard
+      </a>
+      <a href="{{ url_for('projects_page') }}"
+         class="nav-link {% if is_projects %}active{% endif %}">
+        <span class="nav-icon">▶</span> Projects
+      </a>
+      <a href="{{ url_for('history_page') }}"
+         class="nav-link {% if is_history %}active{% endif %}">
+        <span class="nav-icon">≡</span> Past Grades
+      </a>
+      <a href="{{ url_for('reports_page') }}"
+         class="nav-link {% if is_reports %}active{% endif %}">
+        <span class="nav-icon">◇</span> Performance Reports
+      </a>
+
+      {% if user_role in ('manager', 'admin', 'super_admin') %}
+      <div class="sidebar-section-label">Manage</div>
+      <a href="{{ url_for('team_page') }}"
+         class="nav-link {% if is_team %}active{% endif %}">
+        <span class="nav-icon">◉</span> Team
+      </a>
+      {% endif %}
+
+      {% if user_role in ('admin', 'super_admin') %}
+      <a href="{{ url_for('settings_page') }}"
+         class="nav-link {% if is_settings %}active{% endif %}">
+        <span class="nav-icon">⚙</span> Settings
+      </a>
+      <a href="{{ url_for('voip_page') }}"
+         class="nav-link {% if is_voip %}active{% endif %}">
+        <span class="nav-icon">☎</span> VoIP
+      </a>
+      {% endif %}
+
+      {% if user_role == 'super_admin' %}
+      <div class="sidebar-section-label">Super Admin</div>
+      <a href="{{ url_for('platform_page') }}"
+         class="nav-link {% if is_platform %}active{% endif %}">
+        <span class="nav-icon">★</span> Platform
+      </a>
+      {% endif %}
+    </nav>
+  </aside>
+
+  {# ── Top bar ────────────────────────────────────────────── #}
+  <header class="topbar">
+    <div class="topbar-left">
+      {% if user_role == 'super_admin' and all_orgs %}
+        <select id="org-switcher" class="org-switcher"
+                aria-label="Switch organization">
+          <option value="" {% if not active_org_id %}selected{% endif %}>Select Organization</option>
+          {% for org in all_orgs %}
+            <option value="{{ org.company_id }}"
+              {% if org.company_id == active_org_id %}selected{% endif %}>
+              {{ org.company_name }}
+            </option>
+          {% endfor %}
+        </select>
+      {% elif active_org_name %}
+        <span class="org-name">{{ active_org_name }}</span>
+      {% endif %}
+    </div>
+
+    <div class="topbar-right">
+      {% if user_name %}
+        <span class="user-name">{{ user_name }}</span>
+      {% endif %}
+      <form method="POST" action="{{ url_for('logout') }}" style="margin:0;">
+        <button type="submit" class="logout-btn">Log out</button>
+      </form>
+    </div>
+  </header>
+
+  {# ── Project breadcrumb (persistent context bar) ──────── #}
+  {# Populated at runtime from sessionStorage. Hidden by default; base.html
+     inline script toggles it on when on /app/grade, /app/history, or
+     /app/reports with an activeProject set in sessionStorage. #}
+  <div id="project-breadcrumb" class="project-breadcrumb" hidden>
+    <div>
+      <span class="muted">Project:</span>
+      <a id="project-breadcrumb-link" href="#"></a>
+    </div>
+    <button type="button" id="project-breadcrumb-exit" class="exit-project-btn">
+      × Exit Project
+    </button>
+  </div>
+
+  {# ── Main content ──────────────────────────────────────── #}
+  <main class="main">
+    {# Flash messages — dismissible banners above the page content #}
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-stack">
+          {% for category, msg in messages %}
+            <div class="flash-msg {{ category }}">
+              <span>{{ msg }}</span>
+              <button type="button" class="flash-dismiss" aria-label="Dismiss">&times;</button>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+</div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+<script>
+  // ── Persistent project breadcrumb ────────────────────────
+  // Stores the last-entered project in sessionStorage so the user sees the
+  // context across /app/grade, /app/history, /app/reports. Clears itself when
+  // the user navigates to an unrelated top-level destination.
+  (function () {
+    const CONTEXT_PAGES = ["/app/grade", "/app/history", "/app/reports"];
+    // Prefix match; the project hub page (/app/projects/<id>) does not get the
+    // breadcrumb, but it does SET the context so subsequent navigations to
+    // grade/history/reports inherit it.
+    const path = window.location.pathname;
+    const isContextPage = CONTEXT_PAGES.some((p) =>
+      path === p || path.startsWith(p + "/") || path.startsWith(p + "?")
+    );
+    const isProjectHub = /^\/app\/projects\/\d+/.test(path);
+    const isProjectList = (path === "/app/projects" || path === "/app/projects/");
+    // Pages where we clear the project context entirely:
+    //   /app (dashboard), /app/team, /app/settings, /app/voip, /app/platform,
+    //   /app/projects (project list)
+    const isClearPage =
+      path === "/app" ||
+      path.startsWith("/app/team") ||
+      path.startsWith("/app/settings") ||
+      path.startsWith("/app/voip") ||
+      path.startsWith("/app/platform") ||
+      isProjectList;
+
+    if (isClearPage) {
+      sessionStorage.removeItem("activeProject");
+    }
+
+    document.addEventListener("DOMContentLoaded", async function () {
+      // When on a context page, opportunistically populate activeProject
+      // from ?project_id=<id> in the URL so entering from outside the hub
+      // (eg. a direct link) still gets context.
+      if (isContextPage) {
+        const qpId = new URLSearchParams(window.location.search).get("project_id");
+        if (qpId) {
+          let active = null;
+          try { active = JSON.parse(sessionStorage.getItem("activeProject") || "null"); }
+          catch (_) { active = null; }
+          if (!active || String(active.project_id) !== String(qpId)) {
+            try {
+              const projects = await window.EA.fetchJSON("/api/projects");
+              const p = (projects || []).find(x => String(x.project_id) === String(qpId));
+              if (p) {
+                sessionStorage.setItem("activeProject", JSON.stringify({
+                  project_id: p.project_id,
+                  project_name: p.project_name,
+                }));
+              }
+            } catch (_) { /* non-fatal */ }
+          }
+        }
+      }
+
+      // Render the breadcrumb — only on context pages, only when set.
+      const bar = document.getElementById("project-breadcrumb");
+      if (!bar) return;
+      if (!isContextPage) return;
+      let active = null;
+      try { active = JSON.parse(sessionStorage.getItem("activeProject") || "null"); }
+      catch (_) { active = null; }
+      if (!active || !active.project_id) return;
+
+      const link = document.getElementById("project-breadcrumb-link");
+      link.textContent = active.project_name || "Project";
+      link.href = "/app/projects/" + encodeURIComponent(active.project_id);
+      bar.hidden = false;
+
+      document.getElementById("project-breadcrumb-exit").addEventListener("click", function () {
+        sessionStorage.removeItem("activeProject");
+        // Strip ?project_id from the URL before reloading so we return to the
+        // global view rather than re-inheriting the context.
+        const url = new URL(window.location.href);
+        url.searchParams.delete("project_id");
+        window.location.href = url.pathname + (url.search || "");
+      });
+    });
+  })();
+
+  // ── Grade form nav-away guard ────────────────────────────
+  // When the user is mid-grade on /app/grade, intercept sidebar nav clicks and
+  // confirm before leaving. The grade page itself sets window.formIsDirty and
+  // window.gradeComplete — if the page hasn't wired those, we don't intercept.
+  (function () {
+    if (window.location.pathname !== "/app/grade") return;
+    document.addEventListener("DOMContentLoaded", function () {
+      const sidebarLinks = document.querySelectorAll(".sidebar-nav a");
+      sidebarLinks.forEach(function (a) {
+        a.addEventListener("click", async function (e) {
+          if (typeof window.formIsDirty !== "function") return;
+          if (!window.formIsDirty()) return;
+          if (window.gradeComplete) return;
+          e.preventDefault();
+          const href = a.getAttribute("href");
+          const ok = await window.EA.confirmDialog({
+            title: "Leave this page?",
+            body: "You have an unsubmitted grade. Are you sure you want to leave? Your recording will be lost.",
+            okLabel: "Leave",
+            cancelLabel: "Stay",
+            variant: "danger",
+          });
+          if (ok) window.location.href = href;
+        });
+      });
+    });
+  })();
+
+  // Impersonation banner — check on every page load.
+  // A super_admin carrying impersonating_user_id in their session sees the
+  // banner everywhere; clicking "stop" clears it and returns to /app/platform.
+  (function () {
+    document.addEventListener("DOMContentLoaded", async function () {
+      const banner = document.getElementById("impersonation-banner");
+      if (!banner) return;
+      try {
+        const me = await window.EA.fetchJSON("/api/me");
+        if (!me || !me.impersonating) return;
+        document.getElementById("imp-user").textContent =
+          me.impersonated_user_name || "user";
+        document.getElementById("imp-org").textContent =
+          me.impersonated_org_name || "organization";
+        banner.hidden = false;
+        document.body.classList.add("has-impersonation-banner");
+        document.getElementById("imp-stop").addEventListener("click", async function () {
+          try {
+            await window.EA.fetchJSON("/api/platform/users/impersonate/stop",
+                                      { method: "POST" });
+          } catch (_) { /* best effort */ }
+          window.location.href = "/app/platform";
+        });
+      } catch (_) { /* silent — /api/me always available when authed */ }
+    });
+  })();
+</script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>
