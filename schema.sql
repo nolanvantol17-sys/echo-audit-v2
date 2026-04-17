@@ -899,9 +899,12 @@ CREATE TABLE transcription_hints (
     th_created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     th_updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    CONSTRAINT uq_transcription_hints_term UNIQUE (company_id, th_term),
     CONSTRAINT chk_th_term_length CHECK (char_length(th_term) BETWEEN 5 AND 50)
 );
+
+-- Uniqueness applies only to active rows so a soft-deleted term can be re-added.
+CREATE UNIQUE INDEX uq_transcription_hints_term_active
+    ON transcription_hints (company_id, th_term) WHERE th_deleted_at IS NULL;
 
 CREATE INDEX idx_transcription_hints_company_id
     ON transcription_hints (company_id) WHERE th_deleted_at IS NULL;
