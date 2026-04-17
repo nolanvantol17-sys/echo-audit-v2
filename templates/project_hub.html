@@ -17,9 +17,50 @@
     justify-content: space-between;
     align-items: flex-start;
     gap: 16px;
-    margin-bottom: 22px;
+    margin-bottom: 18px;
   }
-  .hub-subtitle { color: var(--muted); font-size: 0.9rem; margin-top: 4px; }
+
+  /* Breadcrumb sits above the title; one line, muted, light weight. */
+  .hub-crumbs {
+    color: var(--muted);
+    font-size: 0.85rem;
+    line-height: 1.3;
+    margin-bottom: 6px;
+  }
+  .hub-crumbs a {
+    color: var(--muted);
+    text-decoration: none;
+    border-bottom: 1px dotted transparent;
+  }
+  .hub-crumbs a:hover {
+    color: var(--text);
+    border-bottom-color: var(--border);
+  }
+  .hub-crumbs .crumb-sep {
+    margin: 0 6px;
+    color: var(--muted);
+    opacity: 0.6;
+  }
+  .hub-crumbs .crumb-current { color: var(--muted); }
+
+  /* Labeled metadata under the title — three stacked rows. */
+  .hub-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 8px;
+    font-size: 0.85rem;
+    line-height: 1.35;
+  }
+  .hub-meta .meta-label {
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-right: 6px;
+  }
+  .hub-meta .meta-value { color: var(--text); }
 
   .hub-stats {
     display: grid;
@@ -144,10 +185,12 @@
 {% block content %}
 <a href="/app/projects" class="hub-back">← Projects</a>
 
+<div id="hub-crumbs" class="hub-crumbs"></div>
+
 <div class="hub-header">
-  <div>
+  <div style="min-width:0;">
     <div class="page-title" id="hub-title">Loading…</div>
-    <div class="hub-subtitle" id="hub-subtitle"></div>
+    <div id="hub-meta" class="hub-meta"></div>
   </div>
   <div class="settings-wrap">
     <button type="button" class="btn btn-ghost" id="btn-project-settings"
@@ -322,12 +365,10 @@
   }
 
   function renderSummary(s) {
-    $("#hub-title").textContent = s.project_name || "Untitled";
-    const range = (s.project_start_date ? EA.formatDate(s.project_start_date) : "—") +
-                  " → " +
-                  (s.project_end_date   ? EA.formatDate(s.project_end_date)   : "ongoing");
-    $("#hub-subtitle").textContent =
-      [s.location_name, s.campaign_name, range].filter(Boolean).join(" · ");
+    const projectName = s.project_name || "Untitled";
+    $("#hub-title").textContent = projectName;
+    renderBreadcrumb(s, projectName);
+    renderMeta(s);
 
     $("#stat-calls").textContent = (s.call_count != null) ? s.call_count : "—";
     const avg = s.avg_score;
@@ -340,6 +381,58 @@
 
     renderRecentCalls(s.recent_calls || []);
     renderTopAgents(s.top_agents || []);
+  }
+
+  // Breadcrumb: Location › Campaign › Project (project = plain text).
+  // "All Locations" projects render the location segment as plain text since
+  // no single location page applies. Settings is the only existing surface
+  // for individual locations/campaigns, so both clickable segments deep-link
+  // there until dedicated detail pages exist.
+  function renderBreadcrumb(s, projectName) {
+    const sep = '<span class="crumb-sep">›</span>';
+    const parts = [];
+
+    const locName = s.location_name || "—";
+    const isAllLocations = !!s.project_all_locations;
+    if (isAllLocations || !s.location_id) {
+      parts.push('<span class="crumb-current">' + EA.esc(locName) + '</span>');
+    } else {
+      parts.push('<a href="/app/settings">' + EA.esc(locName) + '</a>');
+    }
+
+    if (s.campaign_id && s.campaign_name) {
+      parts.push('<a href="/app/settings">' + EA.esc(s.campaign_name) + '</a>');
+    } else if (s.campaign_name) {
+      parts.push('<span class="crumb-current">' + EA.esc(s.campaign_name) + '</span>');
+    }
+
+    parts.push('<span class="crumb-current">' + EA.esc(projectName) + '</span>');
+    $("#hub-crumbs").innerHTML = parts.join(sep);
+  }
+
+  function renderMeta(s) {
+    const locName  = s.location_name  || "—";
+    const campName = s.campaign_name  || "—";
+    const start    = s.project_start_date ? EA.formatDate(s.project_start_date) : null;
+    const end      = s.project_end_date   ? EA.formatDate(s.project_end_date)   : null;
+
+    let activeLabel, activeValue;
+    if (start && end) {
+      activeLabel = "Active";
+      activeValue = start + " – " + end;
+    } else {
+      activeLabel = "Active since";
+      activeValue = start || "—";
+    }
+
+    const row = (label, value) =>
+      '<div><span class="meta-label">' + EA.esc(label) + ':</span>' +
+      '<span class="meta-value">' + EA.esc(value) + '</span></div>';
+
+    $("#hub-meta").innerHTML =
+      row("Location",   locName) +
+      row("Campaign",   campName) +
+      row(activeLabel,  activeValue);
   }
 
   function renderRecentCalls(calls) {
