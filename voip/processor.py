@@ -34,6 +34,7 @@ from typing import Optional
 
 import grader
 from db import IS_POSTGRES, get_conn, q
+from helpers import load_active_hints
 from voip.credentials import decrypt_credentials
 
 logger = logging.getLogger(__name__)
@@ -504,9 +505,14 @@ def _process(voip_queue_id: int) -> None:
             project["project_id"], queue_row["voip_queue_call_date"],
         )
 
-        # Transcribe
+        # Transcribe (with per-tenant custom vocabulary)
+        hints = load_active_hints(company_id)
         try:
-            transcript = grader.transcribe(tmp.name)
+            transcript = grader.transcribe(tmp.name, keyterms_prompt=hints)
+        except grader.EmptyTranscriptError:
+            _set_interaction_status(interaction_id, STATUS_SUBMITTED)
+            _mark_failed(voip_queue_id, "Transcription returned no audible content.")
+            return
         except Exception as e:
             _set_interaction_status(interaction_id, STATUS_SUBMITTED)
             _mark_failed(voip_queue_id, f"Transcription failed: {e}")

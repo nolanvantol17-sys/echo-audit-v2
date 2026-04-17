@@ -49,6 +49,18 @@ logger = logging.getLogger(__name__)
 
 AUDIO_EXTENSIONS = {".mp3", ".mp4", ".m4a", ".wav", ".aac", ".ogg", ".flac", ".webm"}
 
+# Per-tenant transcription-hints limits. These are the single source of truth
+# referenced by the API, the template, and validation.
+KEYTERMS_PROMPT_MAX_TERMS = 200
+KEYTERM_MIN_LENGTH = 5
+KEYTERM_MAX_LENGTH = 50
+
+
+class EmptyTranscriptError(RuntimeError):
+    """Raised when transcription returns no usable text. Callers should surface
+    a clear message rather than silently producing a graded interaction with
+    empty content."""
+
 # Default rubric used when caller does not provide one. Kept as legacy V1
 # structure so a graded call still produces useful output even with no
 # rubric_group attached.
@@ -109,9 +121,28 @@ def build_rubric_prompt(criteria: list) -> str:
 # ── Transcription ──────────────────────────────────────────────
 
 
-def transcribe(audio_path) -> str:
-    """Transcribe an audio file via AssemblyAI. Returns speaker-labeled text."""
-    config = aai.TranscriptionConfig(speaker_labels=True, speech_models=["universal-2"])
+def transcribe(audio_path, keyterms_prompt: list | None = None) -> str:
+    """Transcribe an audio file. Returns speaker-labeled text.
+
+    keyterms_prompt: optional per-tenant custom vocabulary (list of strings,
+    each 5-50 chars). Improves recognition of business-specific names/terms.
+    Raises EmptyTranscriptError if the result is empty/whitespace-only so
+    callers can surface a clear failure instead of producing an empty graded
+    interaction.
+    """
+    config_kwargs = {
+        "speaker_labels": True,
+        "speech_models": ["universal-2"],
+        "punctuate": True,
+        "format_text": True,
+        "disfluencies": False,
+    }
+    cleaned_terms = [t for t in (keyterms_prompt or []) if t and t.strip()]
+    if cleaned_terms:
+        config_kwargs["keyterms_prompt"] = cleaned_terms
+        logger.info("transcribe: applying %d keyterms_prompt entries", len(cleaned_terms))
+
+    config = aai.TranscriptionConfig(**config_kwargs)
     transcriber = aai.Transcriber()
     transcript = transcriber.transcribe(str(audio_path), config=config)
 
@@ -124,9 +155,14 @@ def transcribe(audio_path) -> str:
             mm = u.start // 60000
             ss = (u.start % 60000) // 1000
             lines.append(f"[{mm}:{ss:02d}] Speaker {u.speaker}: {u.text}")
-        return "\n".join(lines)
+        result = "\n".join(lines)
+    else:
+        result = transcript.text or ""
 
-    return transcript.text or ""
+    if not result.strip():
+        raise EmptyTranscriptError("Transcription returned no audible content.")
+
+    return result
 
 
 # ── Prompt helpers shared across both Claude calls ─────────────

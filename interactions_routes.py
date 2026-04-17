@@ -34,6 +34,7 @@ from helpers import (
     check_rate_limit,
     get_effective_company_id,
     increment_usage,
+    load_active_hints,
 )
 from intel import compute_location_intel_async
 from performance_reports import update_performance_report_async
@@ -935,8 +936,18 @@ def submit_grade():
         finally:
             conn.close()
 
+        hints = load_active_hints(company_id)
         try:
-            transcript = grader.transcribe(tmp.name)
+            transcript = grader.transcribe(tmp.name, keyterms_prompt=hints)
+        except grader.EmptyTranscriptError:
+            logger.warning("Empty transcript for interaction %s", interaction_id)
+            conn = get_conn()
+            try:
+                _update_interaction_status(conn, interaction_id, STATUS_SUBMITTED)
+            finally:
+                conn.close()
+            return _err("Transcription returned no audible content. "
+                        "Please verify the audio file is not silent and try again.", 502)
         except Exception:
             logger.exception("Transcription failed for interaction %s", interaction_id)
             conn = get_conn()

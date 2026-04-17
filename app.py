@@ -136,7 +136,17 @@ def _register_context_processors(app):
             "all_orgs":            None,
             "location_label":      "Location",
             "property_list_label": "Locations",
+            "keyterms_prompt_max_terms": 200,
+            "keyterm_min_length":  5,
+            "keyterm_max_length":  50,
         }
+        try:
+            import grader as _grader
+            ctx["keyterms_prompt_max_terms"] = _grader.KEYTERMS_PROMPT_MAX_TERMS
+            ctx["keyterm_min_length"] = _grader.KEYTERM_MIN_LENGTH
+            ctx["keyterm_max_length"] = _grader.KEYTERM_MAX_LENGTH
+        except Exception:
+            pass
         if not current_user.is_authenticated:
             return ctx
 

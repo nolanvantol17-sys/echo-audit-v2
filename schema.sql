@@ -878,3 +878,36 @@ BEGIN NEW.li_updated_at = NOW(); RETURN NEW; END;
 $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_location_intel_updated_at BEFORE UPDATE ON location_intel
     FOR EACH ROW EXECUTE FUNCTION set_location_intel_updated_at();
+
+
+-- ================================================================
+-- 27. transcription_hints  (per-company custom vocabulary)
+-- ================================================================
+-- Words/phrases the transcription engine should listen for. Sent as
+-- keyterms_prompt on every transcription request for the owning company.
+-- Per-term length is enforced 5-50 chars; case-insensitive uniqueness is
+-- enforced in app code (matching the respondents idiom). The 200-term cap
+-- is enforced at the API layer using grader.KEYTERMS_PROMPT_MAX_TERMS.
+CREATE TABLE transcription_hints (
+    transcription_hint_id   SERIAL PRIMARY KEY,
+    company_id              INTEGER NOT NULL
+                                REFERENCES companies (company_id) ON DELETE CASCADE,
+    th_term                 TEXT NOT NULL,
+    status_id               INTEGER NOT NULL DEFAULT 1
+                                REFERENCES statuses (status_id) ON DELETE RESTRICT,
+    th_deleted_at           TIMESTAMPTZ,
+    th_created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    th_updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT uq_transcription_hints_term UNIQUE (company_id, th_term),
+    CONSTRAINT chk_th_term_length CHECK (char_length(th_term) BETWEEN 5 AND 50)
+);
+
+CREATE INDEX idx_transcription_hints_company_id
+    ON transcription_hints (company_id) WHERE th_deleted_at IS NULL;
+
+CREATE OR REPLACE FUNCTION set_th_updated_at() RETURNS TRIGGER AS $$
+BEGIN NEW.th_updated_at = NOW(); RETURN NEW; END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_transcription_hints_updated_at BEFORE UPDATE ON transcription_hints
+    FOR EACH ROW EXECUTE FUNCTION set_th_updated_at();

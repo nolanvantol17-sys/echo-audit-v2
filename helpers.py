@@ -115,6 +115,28 @@ def check_rate_limit(company_id, service):
         conn.close()
 
 
+def load_active_hints(company_id):
+    """Return active transcription_hints terms for a company, ordered by term.
+
+    Returns [] when company_id is None or no terms exist. Excludes soft-deleted
+    rows and inactive (status_id != 1) rows. Used by the transcribe() callers
+    to populate keyterms_prompt on the AAI request.
+    """
+    if not company_id:
+        return []
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            q("""SELECT th_term FROM transcription_hints
+                 WHERE company_id = ? AND status_id = 1 AND th_deleted_at IS NULL
+                 ORDER BY th_term"""),
+            (company_id,),
+        ).fetchall()
+        return [r["th_term"] for r in rows]
+    finally:
+        conn.close()
+
+
 def increment_usage(company_id, service):
     """Increment both hourly and daily counters. No-op when company_id is None."""
     if not company_id:
