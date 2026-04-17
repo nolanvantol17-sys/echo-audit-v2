@@ -1,12 +1,12 @@
 """
 dashboard_routes.py — Echo Audit V2 Phase 4 dashboard + chart routes.
 
-Both routes scope to the current company through the project chain:
+All routes scope to the current company through the project chain:
     interaction → project → projects.company_id.
 
 Month-scoping uses the current calendar month in UTC. Dashboard chart route
-supports three view_by modes: date (per-interaction line points), project
-(bar averages), respondent (bar averages).
+supports view_by modes: date (line), project / respondent / caller / location
+/ campaign (bar averages).
 """
 
 from datetime import date, datetime, timedelta
@@ -76,6 +76,29 @@ def _scalar(row, key, fallback=0):
         except Exception:
             val = fallback
     return fallback if val is None else val
+
+
+def _parse_id_list(raw):
+    """Parse a comma-separated id list query param into a list of ints.
+    Returns [] if no value or all values are non-numeric."""
+    if not raw:
+        return []
+    out = []
+    for piece in str(raw).split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        try:
+            out.append(int(piece))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _in_clause(n):
+    """Return a parenthesized placeholder list for IN (?, ?, ...) of length n.
+    Caller must guarantee n >= 1."""
+    return "(" + ",".join(["?"] * n) + ")"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -225,12 +248,92 @@ def get_dashboard():
 
 
 # ═══════════════════════════════════════════════════════════════
+# GET /api/dashboard/filters
+# ═══════════════════════════════════════════════════════════════
+
+
+@dashboard_bp.route("/dashboard/filters", methods=["GET"])
+@login_required
+def get_filters():
+    """Returns the dropdown options for the dashboard widget.
+
+    Each list contains only entities that have actually appeared on at least
+    one non-deleted interaction in the company (or in the given project, if
+    project_id is provided). Campaigns include their location_id so the UI
+    can narrow the campaign list when locations are selected.
+    """
+    company_id, err = _require_company()
+    if err: return err
+
+    project_id = request.args.get("project_id")
+
+    base_filters = ["p.company_id = ?", "i.interaction_deleted_at IS NULL"]
+    base_params = [company_id]
+    if project_id:
+        base_filters.append("i.project_id = ?")
+        base_params.append(project_id)
+    where = " AND ".join(base_filters)
+
+    conn = get_conn()
+    try:
+        # locations: distinct locations reachable via project → campaign → location
+        cur = conn.execute(
+            q(f"""SELECT DISTINCT l.location_id, l.location_name
+                  FROM interactions i
+                  JOIN projects  p ON p.project_id  = i.project_id
+                  JOIN campaigns c ON c.campaign_id = p.campaign_id
+                  JOIN locations l ON l.location_id = c.location_id
+                  WHERE {where}
+                    AND l.location_deleted_at IS NULL
+                  ORDER BY l.location_name ASC"""),
+            base_params,
+        )
+        locations = _rows(cur)
+
+        # callers: distinct respondent users
+        cur = conn.execute(
+            q(f"""SELECT DISTINCT
+                      u.user_id,
+                      TRIM(u.user_first_name || ' ' || u.user_last_name) AS user_name
+                  FROM interactions i
+                  JOIN projects p ON p.project_id = i.project_id
+                  JOIN users    u ON u.user_id    = i.respondent_user_id
+                  WHERE {where}
+                    AND i.respondent_user_id IS NOT NULL
+                  ORDER BY user_name ASC"""),
+            base_params,
+        )
+        callers = _rows(cur)
+
+        # campaigns: distinct campaigns reachable via project → campaign
+        cur = conn.execute(
+            q(f"""SELECT DISTINCT
+                      c.campaign_id, c.campaign_name, c.location_id
+                  FROM interactions i
+                  JOIN projects  p ON p.project_id  = i.project_id
+                  JOIN campaigns c ON c.campaign_id = p.campaign_id
+                  WHERE {where}
+                  ORDER BY c.campaign_name ASC"""),
+            base_params,
+        )
+        campaigns = _rows(cur)
+
+        return jsonify({
+            "locations": locations,
+            "callers":   callers,
+            "campaigns": campaigns,
+        })
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════
 # GET /api/dashboard/chart
 # ═══════════════════════════════════════════════════════════════
 
 
 _ALLOWED_METRICS = {"interaction_overall_score"}
-_ALLOWED_VIEW_BY = {"date", "project", "respondent"}
+_ALLOWED_VIEW_BY = {"date", "project", "respondent", "caller", "location", "campaign"}
 
 
 @dashboard_bp.route("/dashboard/chart", methods=["GET"])
@@ -246,13 +349,33 @@ def get_chart():
     view_by = request.args.get("view_by", "date")
     if view_by not in _ALLOWED_VIEW_BY:
         return _err(f"view_by must be one of: {', '.join(_ALLOWED_VIEW_BY)}", 400)
+    # "respondent" is the legacy alias for "caller"; normalise so we have one
+    # downstream branch.
+    if view_by == "respondent":
+        view_by = "caller"
 
     date_from = request.args.get("date_from")
     date_to = request.args.get("date_to")
     project_id = request.args.get("project_id")
-    respondent_user_id = request.args.get("respondent_user_id")
-    location_id = request.args.get("location_id")
-    campaign_id = request.args.get("campaign_id")
+
+    # Multi-value filters: accept CSV ids (location_ids, caller_ids,
+    # campaign_ids). For backward compat, also accept the singular variants
+    # used by older callers.
+    location_ids = _parse_id_list(request.args.get("location_ids"))
+    caller_ids   = _parse_id_list(request.args.get("caller_ids"))
+    if not caller_ids:
+        caller_ids = _parse_id_list(request.args.get("respondent_user_ids"))
+    campaign_ids = _parse_id_list(request.args.get("campaign_ids"))
+
+    legacy_loc = request.args.get("location_id")
+    if legacy_loc and not location_ids:
+        location_ids = _parse_id_list(legacy_loc)
+    legacy_camp = request.args.get("campaign_id")
+    if legacy_camp and not campaign_ids:
+        campaign_ids = _parse_id_list(legacy_camp)
+    legacy_resp = request.args.get("respondent_user_id")
+    if legacy_resp and not caller_ids:
+        caller_ids = _parse_id_list(legacy_resp)
 
     filters = [
         "p.company_id = ?",
@@ -271,22 +394,27 @@ def get_chart():
     if project_id:
         filters.append("i.project_id = ?")
         params.append(project_id)
-    if respondent_user_id:
-        filters.append("i.respondent_user_id = ?")
-        params.append(respondent_user_id)
+    if caller_ids:
+        filters.append(f"i.respondent_user_id IN {_in_clause(len(caller_ids))}")
+        params.extend(caller_ids)
 
-    # Location / campaign filters walk the project → campaigns → locations
-    # chain. Only join campaigns when we need to — avoids excluding projects
-    # with NULL campaign_id on unfiltered requests.
+    # Decide whether we need joins to campaigns / locations. Required if any
+    # location/campaign filter is set, OR the view_by groups by them.
+    needs_campaigns = bool(campaign_ids or location_ids) or view_by in ("location", "campaign")
+    needs_locations = bool(location_ids) or view_by == "location"
+
     campaigns_join = ""
-    if campaign_id or location_id:
+    locations_join = ""
+    if needs_campaigns:
         campaigns_join = "JOIN campaigns c ON c.campaign_id = p.campaign_id"
-        if campaign_id:
-            filters.append("c.campaign_id = ?")
-            params.append(campaign_id)
-        if location_id:
-            filters.append("c.location_id = ?")
-            params.append(location_id)
+        if campaign_ids:
+            filters.append(f"c.campaign_id IN {_in_clause(len(campaign_ids))}")
+            params.extend(campaign_ids)
+    if needs_locations:
+        locations_join = "JOIN locations l ON l.location_id = c.location_id"
+        if location_ids:
+            filters.append(f"c.location_id IN {_in_clause(len(location_ids))}")
+            params.extend(location_ids)
 
     where_clause = " AND ".join(filters)
 
@@ -303,6 +431,7 @@ def get_chart():
                 FROM interactions i
                 JOIN projects p ON p.project_id = i.project_id
                 {campaigns_join}
+                {locations_join}
                 LEFT JOIN users u ON u.user_id = i.respondent_user_id
                 WHERE {where_clause}
                 ORDER BY i.interaction_date ASC, i.interaction_id ASC
@@ -342,6 +471,7 @@ def get_chart():
                 FROM interactions i
                 JOIN projects p ON p.project_id = i.project_id
                 {campaigns_join}
+                {locations_join}
                 WHERE {where_clause}
                 GROUP BY p.project_id, p.project_name
                 ORDER BY avg_score DESC
@@ -366,20 +496,91 @@ def get_chart():
                 "points":   points,
             })
 
-        # view_by == "respondent"
+        if view_by == "caller":
+            sql = f"""
+                SELECT
+                    i.respondent_user_id,
+                    (u.user_first_name || ' ' || u.user_last_name) AS respondent_name,
+                    AVG(i.{metric}) AS avg_score,
+                    COUNT(*) AS call_count
+                FROM interactions i
+                JOIN projects p ON p.project_id = i.project_id
+                {campaigns_join}
+                {locations_join}
+                JOIN users u    ON u.user_id    = i.respondent_user_id
+                WHERE {where_clause}
+                  AND i.respondent_user_id IS NOT NULL
+                GROUP BY i.respondent_user_id, respondent_name
+                ORDER BY avg_score DESC
+            """
+            cur = conn.execute(q(sql), params)
+            labels, data, points = [], [], []
+            for row in _rows(cur):
+                avg = row["avg_score"]
+                avg = round(float(avg), 2) if avg is not None else None
+                labels.append(row["respondent_name"])
+                data.append(avg)
+                points.append({
+                    "respondent_user_id": row["respondent_user_id"],
+                    "respondent_name":    row["respondent_name"],
+                    "avg_score":          avg,
+                    "call_count":         row["call_count"],
+                })
+            return jsonify({
+                "type":     "bar",
+                "labels":   labels,
+                "datasets": [{"label": "Avg Score", "data": data}],
+                "points":   points,
+            })
+
+        if view_by == "location":
+            sql = f"""
+                SELECT
+                    l.location_id,
+                    l.location_name,
+                    AVG(i.{metric}) AS avg_score,
+                    COUNT(*) AS call_count
+                FROM interactions i
+                JOIN projects p ON p.project_id = i.project_id
+                {campaigns_join}
+                {locations_join}
+                WHERE {where_clause}
+                GROUP BY l.location_id, l.location_name
+                ORDER BY avg_score DESC
+            """
+            cur = conn.execute(q(sql), params)
+            labels, data, points = [], [], []
+            for row in _rows(cur):
+                avg = row["avg_score"]
+                avg = round(float(avg), 2) if avg is not None else None
+                labels.append(row["location_name"])
+                data.append(avg)
+                points.append({
+                    "location_id":   row["location_id"],
+                    "location_name": row["location_name"],
+                    "avg_score":     avg,
+                    "call_count":    row["call_count"],
+                })
+            return jsonify({
+                "type":     "bar",
+                "labels":   labels,
+                "datasets": [{"label": "Avg Score", "data": data}],
+                "points":   points,
+            })
+
+        # view_by == "campaign"
         sql = f"""
             SELECT
-                i.respondent_user_id,
-                (u.user_first_name || ' ' || u.user_last_name) AS respondent_name,
+                c.campaign_id,
+                c.campaign_name,
                 AVG(i.{metric}) AS avg_score,
                 COUNT(*) AS call_count
             FROM interactions i
             JOIN projects p ON p.project_id = i.project_id
             {campaigns_join}
-            JOIN users u    ON u.user_id    = i.respondent_user_id
+            {locations_join}
             WHERE {where_clause}
-              AND i.respondent_user_id IS NOT NULL
-            GROUP BY i.respondent_user_id, respondent_name
+            GROUP BY c.campaign_id, c.campaign_name
             ORDER BY avg_score DESC
         """
         cur = conn.execute(q(sql), params)
@@ -387,13 +588,13 @@ def get_chart():
         for row in _rows(cur):
             avg = row["avg_score"]
             avg = round(float(avg), 2) if avg is not None else None
-            labels.append(row["respondent_name"])
+            labels.append(row["campaign_name"])
             data.append(avg)
             points.append({
-                "respondent_user_id": row["respondent_user_id"],
-                "respondent_name":    row["respondent_name"],
-                "avg_score":          avg,
-                "call_count":         row["call_count"],
+                "campaign_id":   row["campaign_id"],
+                "campaign_name": row["campaign_name"],
+                "avg_score":     avg,
+                "call_count":    row["call_count"],
             })
         return jsonify({
             "type":     "bar",
