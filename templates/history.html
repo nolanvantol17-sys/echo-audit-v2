@@ -1,6 +1,31 @@
 {% extends "base.html" %}
 {% block title %}Past Grades | {{ client_name or "Echo Audit" }}{% endblock %}
 
+{% block extra_css %}
+<style>
+.history-table th,
+.history-table td {
+    padding: 5px 10px;
+    font-size: 0.78rem;
+}
+.history-table th {
+    font-size: 0.66rem;
+}
+.history-table .score-pill {
+    font-size: 0.7rem;
+    padding: 1px 7px;
+}
+.history-table .status-pill {
+    font-size: 0.62rem;
+    padding: 2px 7px;
+}
+.history-table .btn-sm {
+    padding: 3px 8px;
+    font-size: 0.72rem;
+}
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="page-header">
   <div>

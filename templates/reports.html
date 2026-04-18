@@ -11,17 +11,25 @@
 .report-resp-row:hover {
     background: var(--surface-2);
 }
-.report-location {
-    padding-top: 6px;
-    padding-bottom: 6px;
+/* Specificity note: `details.X` ties with `details.collapsible` (0,1,1) so
+   source order wins. Plain `.report-location` lost to the global rule. */
+details.report-location {
+    padding-top: 4px;
+    padding-bottom: 4px;
+    margin-bottom: 6px;
 }
-.report-location[open] {
+details.report-location[open] {
     padding-top: 14px;
     padding-bottom: 14px;
+    margin-bottom: 10px;
 }
-.report-location > summary {
+details.report-location > summary {
     gap: 16px;
     justify-content: flex-start;
+    font-size: 0.8rem;
+}
+details.report-location > summary::after {
+    font-size: 0.85rem;
 }
 .report-loc-name {
     flex: 1;
@@ -32,11 +40,12 @@
 }
 .report-loc-meta {
     flex-shrink: 0;
+    font-size: 0.74rem;
 }
-.report-location > summary > .score-pill {
+details.report-location > summary > .score-pill {
     flex-shrink: 0;
-    font-size: 0.85rem;
-    padding: 3px 12px;
+    font-size: 0.72rem;
+    padding: 2px 9px;
 }
 </style>
 {% endblock %}
