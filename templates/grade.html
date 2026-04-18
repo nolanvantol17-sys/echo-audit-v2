@@ -356,6 +356,12 @@
 
     <div class="hstack-wrap" style="margin-top:20px;">
       <button type="submit" class="btn btn-primary" id="grade-submit">Submit for grading</button>
+      {# Note: this button is transitively gated by the project dropdown,
+         which is disabled until a location is picked (renderProjectDropdown
+         in the script block). If the project→location dependency changes,
+         this gating must be made explicit on the button itself, otherwise
+         onLogNoAnswer() can fire without a location_id and the backend
+         will 400. #}
       <button type="button" class="btn btn-ghost" id="btn-no-answer">Log no answer</button>
       <span class="spacer"></span>
       <span class="text-small muted" id="form-hint"></span>
@@ -1261,7 +1267,7 @@
         fd.append("audio", state.audioFile);
       }
       fd.append("project_id", projectId);
-      fd.append("location_id", locationId);   // display/logging only — backend ignores
+      fd.append("location_id", locationId);
       const callerId = $("#gf-caller").value;
       if (callerId) fd.append("caller_user_id", callerId);
       const callDate = $("#gf-date").value;
@@ -1741,9 +1747,14 @@
   // ── No-answer flow ─────────────────────────────────
   async function onLogNoAnswer() {
     const projectId = $("#gf-project").value;
+    const locationId = parseInt($("#gf-location").value, 10) || null;
     const callDate = $("#gf-date").value || new Date().toISOString().slice(0,10);
     if (!projectId) {
       EA.toast("Pick a project first.", "error");
+      return;
+    }
+    if (!locationId) {
+      EA.toast("Pick a location first.", "error");
       return;
     }
 
@@ -1771,6 +1782,7 @@
         method: "POST",
         body: {
           project_id: parseInt(projectId, 10),
+          location_id: locationId,
           interaction_date: chosenDate,
           caller_user_id: $("#gf-caller").value || null,
         },

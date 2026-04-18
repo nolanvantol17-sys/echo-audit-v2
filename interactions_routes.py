@@ -380,6 +380,7 @@ def _build_criteria_from_request_rubric(rubric):
 
 def _insert_interaction_row(conn, *, project_id, caller_user_id, respondent_user_id,
                             interaction_date, status_id,
+                            location_id=None,
                             call_start_time=None, call_end_time=None,
                             call_duration_seconds=None,
                             set_uploaded_at=False):
@@ -388,19 +389,24 @@ def _insert_interaction_row(conn, *, project_id, caller_user_id, respondent_user
     Live recordings pass call_start/end/duration; uploads leave them None.
     set_uploaded_at=True stamps interaction_uploaded_at = NOW() — the grade
     submission path sets it; the no-answer log path does not.
+    location_id is the property the call was placed to; callers that have it
+    (live grade, no-answer) should pass it so it's the source-of-truth for
+    downstream respondent upserts and report routing.
     """
     if IS_POSTGRES:
         cur = conn.execute(
             """INSERT INTO interactions
                    (project_id, caller_user_id, respondent_user_id,
+                    interaction_location_id,
                     interaction_date, interaction_submitted_at, status_id,
                     interaction_call_start_time, interaction_call_end_time,
                     interaction_call_duration_seconds,
                     interaction_uploaded_at)
-               VALUES (%s, %s, %s, %s, NOW(), %s, %s, %s, %s,
+               VALUES (%s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s,
                        CASE WHEN %s THEN NOW() ELSE NULL END)
                RETURNING interaction_id""",
             (project_id, caller_user_id, respondent_user_id,
+             location_id,
              interaction_date, status_id,
              call_start_time, call_end_time, call_duration_seconds,
              bool(set_uploaded_at)),
@@ -409,13 +415,15 @@ def _insert_interaction_row(conn, *, project_id, caller_user_id, respondent_user
     conn.execute(
         """INSERT INTO interactions
                (project_id, caller_user_id, respondent_user_id,
+                interaction_location_id,
                 interaction_date, interaction_submitted_at, status_id,
                 interaction_call_start_time, interaction_call_end_time,
                 interaction_call_duration_seconds,
                 interaction_uploaded_at)
-           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?,
+           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?,
                    CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END)""",
         (project_id, caller_user_id, respondent_user_id,
+         location_id,
          interaction_date, status_id,
          call_start_time, call_end_time, call_duration_seconds,
          1 if set_uploaded_at else 0),
@@ -698,13 +706,20 @@ class _GradingAPIError(Exception):
 def _grade_and_persist(*, interaction_id, company_id, project_id,
                        respondent_user_id, transcript, context_answers,
                        criteria, script_text, context_text, grade_target,
-                       is_initial_grade):
+                       is_initial_grade, location_id=None):
     """Run grade_with_claude and commit the results.
 
     If is_initial_grade is True we don't bump interaction_regrade_count —
     this is the first grade on a freshly-transcribed interaction. If False
     we're reusing the same endpoint to re-grade an already-graded call,
     and we bookkeep the regrade counter + original_score.
+
+    location_id is the caller-supplied source-of-truth (from the UI on
+    /api/grade, or read off interaction.interaction_location_id on regrade).
+    When None we fall back to _project_location_id(project_id) for legacy
+    rows or tenants where the project chain still resolves to a single
+    location. This determines which (company_id, location_id, name) bucket
+    the respondent gets upserted into.
 
     Returns a dict shaped like the grade response (interaction_id, scores,
     flags, total_score, respondent_*, transcript). Raises _GradingAPIError
@@ -775,9 +790,12 @@ def _grade_and_persist(*, interaction_id, company_id, project_id,
                 (original, interaction_id),
             )
 
-        location_id = _project_location_id(conn, project_id)
+        # Source-of-truth: caller-supplied location_id (from the UI form on
+        # /api/grade, or read off interaction.interaction_location_id on
+        # regrade). Fall back to the project chain only for legacy rows.
+        effective_location_id = location_id or _project_location_id(conn, project_id)
         respondent_id, canonical = _upsert_respondent(
-            conn, company_id, location_id, respondent_name_final,
+            conn, company_id, effective_location_id, respondent_name_final,
         )
         if respondent_id is not None:
             _link_interaction_respondent(conn, interaction_id, respondent_id)
@@ -796,7 +814,8 @@ def _grade_and_persist(*, interaction_id, company_id, project_id,
         ENTITY_INTERACTION, interaction_id,
         metadata={"project_id": project_id, "total_score": total_score,
                   "final_status_id": STATUS_GRADED,
-                  "has_context_answers": bool(context_answers)},
+                  "has_context_answers": bool(context_answers),
+                  "location_id": effective_location_id},
     )
     update_performance_report_async(
         interaction_id, company_id,
@@ -848,6 +867,18 @@ def submit_grade():
     respondent_user_id = request.form.get("respondent_user_id") or None
     interaction_date   = _parse_date(request.form.get("interaction_date"), date.today())
 
+    # location_id is required. The UI marks the location select required,
+    # so a missing or non-integer value means a bypassed UI or a stale
+    # browser. Reject loudly rather than silently writing a NULL row.
+    # (Cross-tenant ownership check happens below, inside the conn block,
+    # next to _get_project_in_company.)
+    try:
+        location_id = int(request.form.get("location_id") or 0)
+    except (TypeError, ValueError):
+        return _err("Invalid location_id", 400)
+    if not location_id:
+        return _err("Missing location_id", 400)
+
     # Live-recording timestamps. All three are optional (uploads omit them).
     call_start_time       = (request.form.get("call_start_time") or "").strip() or None
     call_end_time         = (request.form.get("call_end_time")   or "").strip() or None
@@ -879,6 +910,18 @@ def submit_grade():
         if not project:
             return _err("Project not found", 404)
 
+        # Verify location ownership (same tenant-guard pattern). Cheap PK
+        # lookup; deliberately separate from the project check so we can
+        # return a precise error message.
+        loc_row = conn.execute(
+            q("""SELECT 1 FROM locations
+                 WHERE location_id = ? AND company_id = ?
+                   AND location_deleted_at IS NULL"""),
+            (location_id, company_id),
+        ).fetchone()
+        if not loc_row:
+            return _err("Invalid location_id for this company", 400)
+
         # Resolve criteria: client-supplied wins over project rubric_group
         script_text = None
         context_text = None
@@ -906,6 +949,7 @@ def submit_grade():
             project_id=project_id,
             caller_user_id=caller_user_id,
             respondent_user_id=respondent_user_id,
+            location_id=location_id,
             interaction_date=interaction_date,
             status_id=STATUS_SUBMITTED,
             call_start_time=call_start_time,
@@ -1015,6 +1059,7 @@ def submit_grade():
                     company_id=company_id,
                     project_id=project_id,
                     respondent_user_id=respondent_user_id,
+                    location_id=location_id,
                     transcript=transcript,
                     context_answers={},
                     criteria=criteria,
@@ -1064,6 +1109,16 @@ def log_no_answer():
     if not project_id:
         return _err("Missing project_id", 400)
 
+    # location_id is required. The UI sends it from the location dropdown;
+    # absence means a bypassed UI or a stale browser. Reject loudly so we
+    # never write a no-answer row that's invisible to per-property reports.
+    try:
+        location_id = int(body.get("location_id") or 0)
+    except (TypeError, ValueError):
+        return _err("Invalid location_id", 400)
+    if not location_id:
+        return _err("Missing location_id", 400)
+
     caller_user_id = body.get("caller_user_id") or None
     interaction_date = _parse_date(body.get("interaction_date"), date.today())
 
@@ -1071,18 +1126,29 @@ def log_no_answer():
     try:
         if not _get_project_in_company(conn, project_id, company_id):
             return _err("Project not found", 404)
+        # Verify location ownership (same tenant-guard pattern as submit_grade).
+        loc_row = conn.execute(
+            q("""SELECT 1 FROM locations
+                 WHERE location_id = ? AND company_id = ?
+                   AND location_deleted_at IS NULL"""),
+            (location_id, company_id),
+        ).fetchone()
+        if not loc_row:
+            return _err("Invalid location_id for this company", 400)
         interaction_id = _insert_interaction_row(
             conn,
             project_id=project_id,
             caller_user_id=caller_user_id,
             respondent_user_id=None,
+            location_id=location_id,
             interaction_date=interaction_date,
             status_id=STATUS_NO_ANSWER,
         )
         write_audit_log(
             current_user.user_id, ACTION_SUBMITTED, ENTITY_INTERACTION,
             interaction_id,
-            metadata={"project_id": project_id, "no_answer": True},
+            metadata={"project_id": project_id, "no_answer": True,
+                      "location_id": location_id},
             conn=conn,
         )
         conn.commit()
@@ -1273,7 +1339,11 @@ def update_interaction_respondent(interaction_id):
         if not interaction or interaction["interaction_deleted_at"] is not None:
             return _err("Interaction not found", 404)
 
-        location_id = _project_location_id(conn, interaction["project_id"])
+        # Source-of-truth: the location stamped on the interaction row at
+        # creation time. Fall back to the project chain only for legacy rows
+        # that predate the interaction_location_id column.
+        location_id = (interaction["interaction_location_id"]
+                       or _project_location_id(conn, interaction["project_id"]))
         respondent_id, canonical = _upsert_respondent(
             conn, company_id, location_id, name,
         )
@@ -1349,6 +1419,10 @@ def regrade_with_answers(interaction_id):
         transcript = interaction["interaction_transcript"]
         project_id = interaction["project_id"]
         respondent_user_id = interaction["respondent_user_id"]
+        # Source-of-truth: the location stamped on the interaction row at
+        # creation time. _grade_and_persist's "or _project_location_id"
+        # fallback handles legacy rows that predate the column.
+        location_id = interaction["interaction_location_id"]
         # "First grade" path = status is awaiting-clarification or earlier.
         # "Real regrade" path = status is already GRADED.
         is_initial_grade = interaction["status_id"] != STATUS_GRADED
@@ -1366,6 +1440,7 @@ def regrade_with_answers(interaction_id):
             company_id=company_id,
             project_id=project_id,
             respondent_user_id=respondent_user_id,
+            location_id=location_id,
             transcript=transcript,
             context_answers=context_answers,
             criteria=criteria,
@@ -1476,9 +1551,12 @@ def regrade_with_context(interaction_id):
             flags=flags,
             reviewer_context=combined_context,
         )
-        location_id = _project_location_id(conn, interaction["project_id"])
+        # Source-of-truth: the location stamped on the interaction row at
+        # creation time. Fall back to the project chain only for legacy rows.
+        effective_location_id = (interaction["interaction_location_id"]
+                                 or _project_location_id(conn, interaction["project_id"]))
         new_rid, canonical = _upsert_respondent(
-            conn, company_id, location_id, respondent_name_final,
+            conn, company_id, effective_location_id, respondent_name_final,
         )
         _link_interaction_respondent(conn, interaction_id, new_rid)
         respondent_id = new_rid
@@ -1496,7 +1574,8 @@ def regrade_with_context(interaction_id):
             current_user.user_id, ACTION_REGRADED, ENTITY_INTERACTION,
             interaction_id,
             metadata={"mode": "reviewer_context", "total_score": total_score,
-                      "final_status_id": final_status},
+                      "final_status_id": final_status,
+                      "location_id": effective_location_id},
             conn=conn,
         )
         conn.commit()
