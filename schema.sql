@@ -462,12 +462,18 @@ CREATE TRIGGER trg_respondents_updated_at BEFORE UPDATE ON respondents
 -- ================================================================
 -- 15. interactions
 -- ================================================================
--- location_id and campaign_id both removed. Tenant/location scope
--- now derived through: interaction → project → campaign → location.
+-- Tenant scope is derived through interaction → project → campaign,
+-- but the *target property* of a call is captured directly on the
+-- interaction via interaction_location_id. That column is populated
+-- from the caller's UI selection at row creation (both answered and
+-- no-answer paths) — not derived — because projects.campaign_id can
+-- be NULL (legacy/migrated tenants), in which case the derivation
+-- chain yields no location at all.
 -- ================================================================
 CREATE TABLE interactions (
     interaction_id                    SERIAL PRIMARY KEY,
     project_id                        INTEGER REFERENCES projects (project_id) ON DELETE SET NULL,
+    interaction_location_id           INTEGER REFERENCES locations (location_id) ON DELETE SET NULL,
     caller_user_id                    INTEGER REFERENCES users (user_id) ON DELETE SET NULL,
     respondent_user_id                INTEGER REFERENCES users (user_id) ON DELETE SET NULL,
     respondent_id                     INTEGER REFERENCES respondents (respondent_id) ON DELETE SET NULL,
@@ -516,6 +522,8 @@ CREATE INDEX idx_interactions_status_id           ON interactions (status_id)
 CREATE INDEX idx_interactions_caller_user_id      ON interactions (caller_user_id);
 CREATE INDEX idx_interactions_respondent_user_id  ON interactions (respondent_user_id);
 CREATE INDEX idx_interactions_respondent_id       ON interactions (respondent_id);
+CREATE INDEX idx_interactions_location_id         ON interactions (interaction_location_id)
+    WHERE interaction_deleted_at IS NULL AND interaction_location_id IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION set_interaction_updated_at() RETURNS TRIGGER AS $$
 BEGIN NEW.interaction_updated_at = NOW(); RETURN NEW; END;
