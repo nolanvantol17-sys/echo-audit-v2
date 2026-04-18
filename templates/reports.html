@@ -11,6 +11,25 @@
 .report-resp-row:hover {
     background: var(--surface-2);
 }
+.report-location > summary {
+    gap: 16px;
+    justify-content: flex-start;
+}
+.report-loc-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.report-loc-meta {
+    flex-shrink: 0;
+}
+.report-location > summary > .score-pill {
+    flex-shrink: 0;
+    font-size: 0.85rem;
+    padding: 3px 12px;
+}
 </style>
 {% endblock %}
 
@@ -124,14 +143,17 @@
         );
       }).join("");
 
+      const avgCls = (avg === null || avg === undefined) ? 'gray' : EA.scoreClass(avg);
+      const avgText = (avg === null || avg === undefined) ? '—' : EA.formatScore(avg);
       return (
-        '<details class="collapsible report-location" open>' +
+        '<details class="collapsible report-location">' +
           '<summary>' +
-            EA.esc(loc) +
-            ' <span class="muted text-small" style="margin-left:10px;">' +
+            '<span class="report-loc-name">' + EA.esc(loc) + '</span>' +
+            '<span class="report-loc-meta muted text-small">' +
               rows.length + ' respondent' + (rows.length === 1 ? '' : 's') +
-              ' · ' + totalCalls + ' calls · avg ' + EA.formatScore(avg) +
+              ' · ' + totalCalls + ' call' + (totalCalls === 1 ? '' : 's') +
             '</span>' +
+            '<span class="score-pill ' + avgCls + '">' + avgText + '</span>' +
           '</summary>' +
           '<div class="collapsible-body">' + respondentRows + '</div>' +
         '</details>'
