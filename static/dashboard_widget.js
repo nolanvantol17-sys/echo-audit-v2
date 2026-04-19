@@ -390,8 +390,31 @@
                                  : "Score";
   }
 
-  function buildLineCfg(data) {
+  // Canvas can't interpret "var(--name)" — resolve once per render via
+  // getComputedStyle and cache per-name. Returns the original string if it
+  // isn't a CSS var reference (e.g. already a hex/rgba), and a muted gray
+  // fallback if the lookup returns empty.
+  function makeColorResolver() {
+    const cache = new Map();
+    const root = document.documentElement;
+    return function resolve(val) {
+      if (!val) return "#94a3b8";
+      const m = /^var\((--[^)]+)\)$/.exec(String(val).trim());
+      if (!m) return val;
+      const key = m[1];
+      if (cache.has(key)) return cache.get(key);
+      const resolved = getComputedStyle(root).getPropertyValue(key).trim() || "#94a3b8";
+      cache.set(key, resolved);
+      return resolved;
+    };
+  }
+
+  function buildLineCfg(data, resolve) {
     const dataset = (data.datasets && data.datasets[0]) || { data: [] };
+    const vals = (data.points && data.points.length)
+      ? data.points.map((p) => (p ? p.score : null))
+      : (dataset.data || []);
+    const pointColors = vals.map((v) => resolve(EA.scoreColor(v)));
     return {
       type: "line",
       data: {
@@ -402,37 +425,61 @@
           borderColor: "#2563eb",
           backgroundColor: "rgba(37,99,235,0.15)",
           borderWidth: 2,
-          pointRadius: 3,
-          pointHoverRadius: 5,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          pointBackgroundColor: pointColors,
+          pointBorderColor: pointColors,
           tension: 0.25,
           fill: true,
         }],
       },
-      options: chartCommonOptions(),
+      options: chartCommonOptions({ viewBy: "date" }),
       plugins: [thresholdLinePlugin()],
     };
   }
 
-  function buildBarCfg(data) {
+  function buildBarCfg(data, resolve) {
     const dataset = (data.datasets && data.datasets[0]) || { data: [] };
+    const vals = dataset.data || [];
+    const barColors = vals.map((v) => resolve(EA.scoreColor(v)));
     return {
       type: "bar",
       data: {
         labels: data.labels,
         datasets: [{
           label: "Avg Score",
-          data: dataset.data || [],
-          backgroundColor: "rgba(37,99,235,0.55)",
-          borderColor: "#2563eb",
+          data: vals,
+          backgroundColor: barColors,
+          borderColor: barColors,
           borderWidth: 1,
         }],
       },
-      options: chartCommonOptions(),
+      options: chartCommonOptions({ viewBy: "aggregate" }),
       plugins: [thresholdLinePlugin()],
     };
   }
 
-  function chartCommonOptions() {
+  function chartCommonOptions(opts) {
+    opts = opts || {};
+    const isDate = opts.viewBy === "date";
+    const plugins = { legend: { labels: { color: "#f1f5f9" } } };
+    if (isDate) {
+      // Date-view tooltip reads the matched row from chart.$points (stashed
+      // in renderChart). Aggregate views leave defaults untouched.
+      plugins.tooltip = {
+        callbacks: {
+          label(ctx) {
+            const pts = ctx.chart && ctx.chart.$points;
+            const p = pts && pts[ctx.dataIndex];
+            if (!p) return ctx.formattedValue;
+            const resp  = p.respondent_name || "—";
+            const date  = p.date || ctx.label || "";
+            const score = EA.formatScore(p.score);
+            return resp + " · " + date + " · " + score;
+          },
+        },
+      };
+    }
     return {
       responsive: true,
       maintainAspectRatio: false,
@@ -448,7 +495,7 @@
           grid:  { color: "rgba(255,255,255,0.05)" },
         },
       },
-      plugins: { legend: { labels: { color: "#f1f5f9" } } },
+      plugins: plugins,
     };
   }
 
@@ -625,8 +672,26 @@
 
     function renderChart(data) {
       if (chart) { chart.destroy(); chart = null; }
-      const cfg = (data.type === "bar") ? buildBarCfg(data) : buildLineCfg(data);
+      const resolve = makeColorResolver();
+      const isDateView = data.type !== "bar";
+      const cfg = isDateView ? buildLineCfg(data, resolve) : buildBarCfg(data, resolve);
+
+      if (isDateView) {
+        cfg.options.onClick = function (evt, activeEls, ch) {
+          if (!activeEls || !activeEls.length) return;
+          const p = ch.$points && ch.$points[activeEls[0].index];
+          if (p && p.interaction_id && EA.InteractionPanel) {
+            EA.InteractionPanel.open(p.interaction_id);
+          }
+        };
+        cfg.options.onHover = function (evt, activeEls, ch) {
+          if (!ch || !ch.canvas) return;
+          ch.canvas.style.cursor = (activeEls && activeEls.length) ? "pointer" : "default";
+        };
+      }
+
       chart = new Chart(canvasEl, cfg);
+      chart.$points = data.points || [];
       showCanvas();
     }
 
