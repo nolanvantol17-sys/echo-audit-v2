@@ -34,6 +34,7 @@
   "use strict";
   const EA = window.EA;
   const INTERACTION_ID = {{ interaction_id|int }};
+  const CAN_REGRADE = {{ 'true' if user_role in ('manager','admin','super_admin') else 'false' }};
 
   const $ = function (s) { return document.querySelector(s); };
 
@@ -46,7 +47,7 @@
     try {
       const data = await EA.fetchJSON("/api/interactions/" + INTERACTION_ID);
       current = data;
-      EA.InteractionView.render($("#detail-wrap"), current, { readOnly: false });
+      EA.InteractionView.render($("#detail-wrap"), current, { readOnly: false, canRegrade: CAN_REGRADE });
       $("#detail-actions").hidden = false;
       wireActions();
     } catch (err) {
@@ -111,7 +112,7 @@
       // Refetch so we get the normalized DB view (joined names, etc.).
       const refreshed = await EA.fetchJSON("/api/interactions/" + INTERACTION_ID);
       current = refreshed;
-      EA.InteractionView.render($("#detail-wrap"), current, { readOnly: false });
+      EA.InteractionView.render($("#detail-wrap"), current, { readOnly: false, canRegrade: CAN_REGRADE });
       wireActions();
 
       // Show a prominent before-and-after banner at the top.

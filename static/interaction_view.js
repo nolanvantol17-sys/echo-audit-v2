@@ -5,10 +5,15 @@
      - host: DOM element whose innerHTML will be replaced
      - data: payload from GET /api/interactions/<id>
      - opts:
-         readOnly — when true, hide the reviewer-context regrade collapsible
-                    (panel mode; the standalone page is the escape hatch).
-                    Server-side route decorators are the real permission gate;
-                    this flag just selects panel-mode-vs-page-mode UI.
+         readOnly   — when true, hide the reviewer-context regrade collapsible
+                      (panel mode; the standalone page is the escape hatch).
+                      Selects panel-mode-vs-page-mode UI.
+         canRegrade — when true (and !readOnly), render the reviewer-context
+                      regrade affordance. This is a UI gate only; the submit
+                      endpoint (/api/interactions/<id>/regrade-with-context)
+                      is independently role-gated server-side. Pass the
+                      result of a Jinja-time role check on the page that
+                      hosts the render call. Default false.
 
    Pure rendering — no event wiring. Callers attach handlers by querying the
    host after render (e.g. document.getElementById('btn-context-regrade')).
@@ -21,6 +26,7 @@
   function render(host, data, opts) {
     opts = opts || {};
     const readOnly = !!opts.readOnly;
+    const canRegrade = !!opts.canRegrade;
     const d = data;
     const interactionId = d.interaction_id;
 
@@ -114,7 +120,7 @@
         '</div>'
       : '';
 
-    const contextPanelHtml = !readOnly ? renderContextPanel(d) : '';
+    const contextPanelHtml = (!readOnly && canRegrade) ? renderContextPanel(d) : '';
 
     host.innerHTML =
       regradedBanner +
