@@ -1285,3 +1285,107 @@ tr.row-flagged td { background: rgba(239,68,68,0.06); }
   border-radius: var(--radius-sm);
   margin-top: 6px;
 }
+
+/* ── Side panel (interaction detail slide-in) ──────────────────
+   Sidecar pattern: desktop leaves underlying page scrollable; mobile
+   covers full screen. backdrop is a positioning shell + click-out
+   target only — pointer-events: none means clicks pass through to
+   the page, which is what we want on desktop. The .side-panel inside
+   re-enables pointer-events for itself. On .show we flip the backdrop
+   to pointer-events: auto so backdrop-click-to-close works. */
+.side-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 240;                       /* below modals (260), above overlays (200) */
+  pointer-events: none;
+  background: transparent;            /* sidecar — no dim on desktop */
+}
+.side-panel-backdrop.show {
+  pointer-events: auto;
+}
+
+.side-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(640px, 100vw);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 24px rgba(0,0,0,0.35);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  /* 220ms must match the setTimeout in interaction_panel.js close().
+     If you change one, change the other or the panel will yank out
+     mid-slide. */
+  transition: transform 220ms ease;
+  pointer-events: auto;
+}
+.side-panel-backdrop.show .side-panel {
+  transform: translateX(0);
+}
+
+.side-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.side-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;                       /* let title truncate, keep actions visible */
+}
+.side-panel-heading {
+  font-weight: 600;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.side-panel-score {
+  font-size: 0.85rem;
+}
+.side-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.side-panel-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
+.side-panel-close:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.side-panel-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px 16px 24px;
+}
+
+@media (max-width: 960px) {
+  /* Full-screen takeover on narrow viewports — body scroll lock kicks in
+     here too (see lockBodyScrollIfMobile in interaction_panel.js). */
+  .side-panel {
+    width: 100vw;
+    border-left: none;
+  }
+  .side-panel-backdrop {
+    background: rgba(0,0,0,0.55);     /* dim the page on mobile */
+  }
+}

@@ -310,7 +310,7 @@
     wrap.querySelectorAll("tr[data-iid]").forEach(function (tr) {
       tr.addEventListener("click", function (e) {
         if (e.target.closest(".row-action")) return;   // action clicks handled separately
-        window.location.href = "/app/history/" + tr.dataset.iid;
+        EA.InteractionPanel.open(tr.dataset.iid);
       });
     });
     wrap.querySelectorAll(".action-delete").forEach(function (btn) {
