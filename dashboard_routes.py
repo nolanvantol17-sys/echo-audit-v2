@@ -276,13 +276,14 @@ def get_filters():
 
     conn = get_conn()
     try:
-        # locations: distinct locations reachable via project → campaign → location
+        # locations: distinct locations directly attached to each interaction.
+        # Uses i.interaction_location_id (the authoritative column) so we don't
+        # drop rows when projects.campaign_id IS NULL (project_all_locations case).
         cur = conn.execute(
             q(f"""SELECT DISTINCT l.location_id, l.location_name
                   FROM interactions i
                   JOIN projects  p ON p.project_id  = i.project_id
-                  JOIN campaigns c ON c.campaign_id = p.campaign_id
-                  JOIN locations l ON l.location_id = c.location_id
+                  JOIN locations l ON l.location_id = i.interaction_location_id
                   WHERE {where}
                     AND l.location_deleted_at IS NULL
                   ORDER BY l.location_name ASC"""),
@@ -290,16 +291,16 @@ def get_filters():
         )
         locations = _rows(cur)
 
-        # callers: distinct respondent users
+        # callers: distinct caller users
         cur = conn.execute(
             q(f"""SELECT DISTINCT
                       u.user_id,
                       TRIM(u.user_first_name || ' ' || u.user_last_name) AS user_name
                   FROM interactions i
                   JOIN projects p ON p.project_id = i.project_id
-                  JOIN users    u ON u.user_id    = i.respondent_user_id
+                  JOIN users    u ON u.user_id    = i.caller_user_id
                   WHERE {where}
-                    AND i.respondent_user_id IS NOT NULL
+                    AND i.caller_user_id IS NOT NULL
                   ORDER BY user_name ASC"""),
             base_params,
         )
@@ -395,7 +396,7 @@ def get_chart():
         filters.append("i.project_id = ?")
         params.append(project_id)
     if caller_ids:
-        filters.append(f"i.respondent_user_id IN {_in_clause(len(caller_ids))}")
+        filters.append(f"i.caller_user_id IN {_in_clause(len(caller_ids))}")
         params.extend(caller_ids)
 
     # Decide whether we need joins to campaigns / locations. Required if any
