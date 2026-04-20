@@ -560,7 +560,6 @@ COMPANY_SETTING_KEYS = (
     "respondent_label",
     "campaign_label",
     "project_label",
-    "grading_auto_save",
     "show_transcript",
 )
 
@@ -572,7 +571,6 @@ _COMPANY_SETTING_DEFAULTS = {
     "respondent_label":    "Respondent",
     "campaign_label":      "Campaign",
     "project_label":       "Project",
-    "grading_auto_save":   "true",
     "show_transcript":     "true",
 }
 

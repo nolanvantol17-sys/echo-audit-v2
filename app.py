@@ -345,6 +345,13 @@ def register_routes(app):
         success = None
         forced = bool(current_user.must_change_password)
 
+        # Settings → Account is the canonical change-password surface. This page
+        # is now reserved for the forced-rotation flow (admin reset, expired
+        # temp password). A non-forced GET means the user navigated here from
+        # a stale link or bookmark — bounce them to the unified UI.
+        if request.method == "GET" and not forced:
+            return redirect("/app/settings#account")
+
         if request.method == "POST":
             current_password = request.form.get("current_password") or ""
             new_password     = request.form.get("new_password") or ""

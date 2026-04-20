@@ -54,16 +54,6 @@
     <div class="section-desc">Behavioral toggles that affect the grading flow.</div>
     <div class="toggle-row">
       <div>
-        <div class="toggle-label">Auto-save grades</div>
-        <div class="toggle-hint">Automatically save grade results as they finish.</div>
-      </div>
-      <label class="toggle-sw">
-        <input type="checkbox" id="tg-grading_auto_save" data-key="grading_auto_save">
-        <span class="slider"></span>
-      </label>
-    </div>
-    <div class="toggle-row">
-      <div>
         <div class="toggle-label">Show transcript in interaction detail</div>
         <div class="toggle-hint">When off, the transcript panel stays collapsed by default.</div>
       </div>
@@ -169,21 +159,20 @@
 </details>
 
 {# ── Projects ─────────────────────────────────────── #}
+{# Project create/edit/delete lives on the dedicated Projects page; settings #}
+{# only links there to keep one canonical surface. #}
 <details class="collapsible settings-section">
   <summary>Projects</summary>
   <div class="collapsible-body">
-    <div class="hstack-wrap" style="margin-bottom:10px;">
-      <span class="spacer"></span>
-      <button type="button" class="btn btn-primary btn-sm" id="btn-add-project">Add project</button>
-    </div>
-    <div id="projects-wrap">
-      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+    <div class="section-desc">
+      Projects are managed on their own page.
+      <a href="/app/projects">Manage projects →</a>
     </div>
   </div>
 </details>
 
 {# ── Account ───────────────────────────────────────── #}
-<details class="collapsible settings-section" open>
+<details id="account" class="collapsible settings-section" open>
   <summary>Account</summary>
   <div class="collapsible-body">
     <div class="section-desc">Your own profile and password.</div>
@@ -254,7 +243,7 @@
   }
 
   // Shared caches so child dropdowns don't each refetch.
-  const cache = { locations: [], campaigns: [], rubricGroups: [], projects: [], hints: [] };
+  const cache = { locations: [], campaigns: [], rubricGroups: [], hints: [] };
 
   // Single source of truth for transcription-hint limits (server-injected).
   const KEYTERMS_MAX_TERMS  = {{ keyterms_prompt_max_terms }};
@@ -277,7 +266,6 @@
       loadLocations(),
       loadCampaigns(),
       loadRubricGroups(),
-      loadProjects(),
       loadAccount(),
       loadHints(),
     ]);
@@ -297,7 +285,7 @@
         if (el) el.value = (s[k] != null ? s[k] : "");
       });
       // Toggle switches read "true"/"false" strings.
-      ["grading_auto_save","show_transcript"].forEach((k) => {
+      ["show_transcript"].forEach((k) => {
         const el = document.getElementById("tg-" + k);
         if (el) el.checked = String(s[k] || "").toLowerCase() === "true";
       });
@@ -337,7 +325,7 @@
 
   // Toggles post immediately to /api/settings/<key> — no save button.
   function wireToggles() {
-    ["grading_auto_save","show_transcript"].forEach((k) => {
+    ["show_transcript"].forEach((k) => {
       const el = document.getElementById("tg-" + k);
       if (!el) return;
       el.addEventListener("change", async () => {
@@ -390,7 +378,6 @@
           '<td>' + EA.esc(l.location_name) + '</td>' +
           '<td>' + EA.esc(l.location_phone || "—") + '</td>' +
           '<td>' + EA.esc(EA.formatDate(l.location_engagement_date) || "—") + '</td>' +
-          '<td><span class="status-pill">' + EA.esc(l.status_name || "—") + '</span></td>' +
           '<td style="text-align:right;">' +
             '<button type="button" class="btn btn-ghost btn-sm loc-edit" data-id="' + l.location_id + '">Edit</button>' +
             '<button type="button" class="btn btn-ghost btn-sm loc-delete" data-id="' + l.location_id + '">Delete</button>' +
@@ -399,7 +386,7 @@
       )).join("");
       wrap.innerHTML =
         '<table class="history-table"><thead><tr>' +
-          '<th>Name</th><th>Phone</th><th>First contact date</th><th>Status</th><th></th>' +
+          '<th>Name</th><th>Phone</th><th>First contact date</th><th></th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
     }
     $("#btn-add-location").onclick = onAddLocation;
@@ -919,7 +906,6 @@
           '<td>' + EA.esc(rg.rg_name) + '</td>' +
           '<td>' + EA.esc(rg.location_name || "—") + '</td>' +
           '<td>' + EA.esc(gradeTargetLabel(rg.rg_grade_target)) + '</td>' +
-          '<td><span class="status-pill">' + EA.esc(rg.status_name || "—") + '</span></td>' +
           '<td style="text-align:right;">' +
             '<button type="button" class="btn btn-ghost btn-sm rg-items" data-id="' + rg.rubric_group_id + '">Manage items</button>' +
             '<button type="button" class="btn btn-ghost btn-sm rg-edit" data-id="' + rg.rubric_group_id + '">Edit</button>' +
@@ -927,12 +913,12 @@
           '</td>' +
         '</tr>' +
         '<tr class="rg-items-row" data-parent="' + rg.rubric_group_id + '" hidden>' +
-          '<td colspan="5" style="padding-left:28px;background:var(--surface-2);"></td>' +
+          '<td colspan="4" style="padding-left:28px;background:var(--surface-2);"></td>' +
         '</tr>'
       )).join("");
       wrap.innerHTML =
         '<table class="history-table"><thead><tr>' +
-          '<th>Name</th><th>Location</th><th>Who we\'re grading</th><th>Status</th><th></th>' +
+          '<th>Name</th><th>Location</th><th>Who we\'re grading</th><th></th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
     }
     $("#btn-add-rubric-group").onclick = onAddRubricGroup;
@@ -1289,161 +1275,6 @@
       overlay.close();
       EA.toast(err.message || "Generation failed", "error");
     }
-  }
-
-  // ── Projects ──────────────────────────────────
-  async function loadProjects() {
-    try {
-      cache.projects = await EA.fetchJSON("/api/projects");
-    } catch (err) {
-      cache.projects = [];
-      EA.showError("#projects-wrap", err.message || "Failed to load projects.");
-      return;
-    }
-    renderProjects();
-  }
-
-  function renderProjects() {
-    const wrap = $("#projects-wrap");
-    if (!cache.projects.length) {
-      wrap.innerHTML = '<div class="empty-state">No projects yet.</div>';
-    } else {
-      const rows = cache.projects.map((p) => (
-        '<tr data-id="' + p.project_id + '">' +
-          '<td>' + EA.esc(p.project_name) + '</td>' +
-          '<td>' + EA.esc(p.campaign_name || "—") + '</td>' +
-          '<td>' + EA.esc(rubricGroupName(p.rubric_group_id)) + '</td>' +
-          '<td>' + EA.esc(EA.formatDate(p.project_start_date) || "—") + '</td>' +
-          '<td>' + EA.esc(EA.formatDate(p.project_end_date) || "—") + '</td>' +
-          '<td><span class="status-pill">' + EA.esc(p.status_name || "—") + '</span></td>' +
-          '<td style="text-align:right;">' +
-            '<button type="button" class="btn btn-ghost btn-sm proj-edit" data-id="' + p.project_id + '">Edit</button>' +
-            '<button type="button" class="btn btn-ghost btn-sm proj-delete" data-id="' + p.project_id + '">Delete</button>' +
-          '</td>' +
-        '</tr>'
-      )).join("");
-      wrap.innerHTML =
-        '<table class="history-table"><thead><tr>' +
-          '<th>Name</th><th>Campaign</th><th>Rubric</th><th>Start</th><th>End</th><th>Status</th><th></th>' +
-        '</tr></thead><tbody>' + rows + '</tbody></table>';
-    }
-    $("#btn-add-project").onclick = onAddProject;
-    wrap.querySelectorAll(".proj-edit").forEach((b) => b.onclick = () => onEditProject(b.dataset.id));
-    wrap.querySelectorAll(".proj-delete").forEach((b) => b.onclick = () => onDeleteProject(b.dataset.id));
-  }
-
-  function rubricGroupName(id) {
-    const rg = cache.rubricGroups.find((x) => String(x.rubric_group_id) === String(id));
-    return rg ? rg.rg_name : "—";
-  }
-
-  async function onAddProject() {
-    if (!cache.rubricGroups.length) return EA.toast("Create a rubric first.", "error");
-    const data = await EA.formDialog({
-      title:"Add project",
-      fields: [
-        { name:"project_name", label:"Name", required:true },
-        { name:"rubric_group_id", label:"Rubric", type:"select", required:true,
-          options: cache.rubricGroups.map((r) => ({value:r.rubric_group_id, label:r.rg_name})) },
-        { name:"campaign_id", label:"Campaign", type:"select",
-          options: [{value:"", label:"—"}].concat(cache.campaigns.map((c) => ({value:c.campaign_id, label:c.campaign_name}))) },
-        { name:"project_start_date", label:"Start date", type:"date", required:true,
-          value: new Date().toISOString().slice(0,10) },
-        { name:"project_end_date", label:"End date (optional)", type:"date" },
-      ],
-      okLabel:"Create",
-    });
-    if (!data) return;
-    try {
-      await EA.fetchJSON("/api/projects", {
-        method:"POST",
-        body: {
-          project_name: data.project_name,
-          rubric_group_id: parseInt(data.rubric_group_id, 10),
-          campaign_id: data.campaign_id ? parseInt(data.campaign_id, 10) : null,
-          project_start_date: data.project_start_date,
-          project_end_date:   data.project_end_date || null,
-        },
-      });
-      await loadProjects();
-      EA.toast("Project added.", "success");
-    } catch (err) { EA.toast(err.message || "Create failed", "error"); }
-  }
-
-  async function onEditProject(id) {
-    const p = cache.projects.find((x) => String(x.project_id) === String(id));
-    if (!p) return;
-    const data = await EA.formDialog({
-      title:"Edit project",
-      fields: [
-        { name:"project_name", label:"Name", required:true, value: p.project_name },
-        { name:"rubric_group_id", label:"Rubric", type:"select", required:true,
-          options: cache.rubricGroups.map((r) => ({value:r.rubric_group_id, label:r.rg_name})),
-          value: p.rubric_group_id },
-        { name:"campaign_id", label:"Campaign", type:"select",
-          options: [{value:"", label:"—"}].concat(cache.campaigns.map((c) => ({value:c.campaign_id, label:c.campaign_name}))),
-          value: p.campaign_id || "" },
-        { name:"project_start_date", label:"Start date", type:"date", required:true,
-          value: p.project_start_date ? String(p.project_start_date).slice(0,10) : "" },
-        { name:"project_end_date", label:"End date", type:"date",
-          value: p.project_end_date ? String(p.project_end_date).slice(0,10) : "" },
-      ],
-    });
-    if (!data) return;
-    try {
-      await EA.fetchJSON("/api/projects/" + encodeURIComponent(id), {
-        method:"PUT",
-        body: {
-          project_name: data.project_name,
-          rubric_group_id: parseInt(data.rubric_group_id, 10),
-          campaign_id: data.campaign_id ? parseInt(data.campaign_id, 10) : null,
-          project_start_date: data.project_start_date,
-          project_end_date:   data.project_end_date || null,
-        },
-      });
-      await loadProjects();
-      EA.toast("Project saved.", "success");
-    } catch (err) { EA.toast(err.message || "Save failed", "error"); }
-  }
-
-  async function onDeleteProject(id) {
-    let impact;
-    try {
-      impact = await EA.fetchJSON("/api/projects/" + encodeURIComponent(id) + "/deletion-impact");
-    } catch (err) {
-      EA.toast("Couldn't check deletion impact. Try again.", "error");
-      return;
-    }
-    const graded = (impact.counts && impact.counts.graded_interactions) || 0;
-    const name = impact.name || "this project";
-
-    let ok;
-    if (graded > 0) {
-      ok = await EA.strongConfirmDialog({
-        title: "Delete project?",
-        intro: '"' + name + '" has ' + graded + " graded interaction" +
-               (graded === 1 ? "" : "s") +
-               ". Deleting the project hides " + (graded === 1 ? "it" : "them") +
-               " and removes " + (graded === 1 ? "it" : "them") + " from this project's reports.",
-        requiredPhrase: name,
-        promptLabel: "Type the project name to confirm:",
-        okLabel: "Delete",
-        variant: "danger",
-      });
-    } else {
-      ok = await EA.confirmDialog({
-        title: "Delete project?",
-        body:  '"' + name + '" has no graded interactions. This removes it from the list.',
-        okLabel: "Delete",
-        variant: "danger",
-      });
-    }
-    if (!ok) return;
-    try {
-      await EA.fetchJSON("/api/projects/" + encodeURIComponent(id), { method:"DELETE" });
-      await loadProjects();
-      EA.toast("Project deleted.", "success");
-    } catch (err) { EA.toast(err.message || "Delete failed", "error"); }
   }
 
   // ── Account ───────────────────────────────

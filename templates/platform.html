@@ -238,7 +238,7 @@
           '<td>' + EA.esc(EA.formatDate(o.company_created_at)) + '</td>' +
           '<td style="text-align:right; white-space:nowrap;">' +
             '<button type="button" class="btn btn-ghost btn-sm org-view" data-id="' + o.company_id + '">View</button> ' +
-            '<button type="button" class="btn btn-ghost btn-sm org-switch" data-id="' + o.company_id + '">Switch To</button> ' +
+            '<button type="button" class="btn btn-ghost btn-sm org-switch" data-id="' + o.company_id + '">View as this org</button> ' +
             toggleBtn + ' ' + deleteBtn +
           '</td>' +
         '</tr>' +
@@ -326,9 +326,9 @@
 
   async function switchToOrg(oid) {
     const ok = await EA.confirmDialog({
-      title: "Switch organization?",
+      title: "View as this organization?",
       body:  "The app will reload scoped to this organization.",
-      okLabel: "Switch",
+      okLabel: "View",
     });
     if (!ok) return;
     try {
@@ -501,7 +501,7 @@
           '<td>' + EA.esc(EA.formatDate(u.user_created_at)) + '</td>' +
           '<td style="text-align:right; white-space:nowrap;">' +
             '<button type="button" class="btn btn-ghost btn-sm user-reset" data-uid="' + u.user_id + '">Reset Password</button> ' +
-            '<button type="button" class="btn btn-ghost btn-sm user-imp" data-uid="' + u.user_id + '" data-name="' + EA.esc(name) + '">Impersonate</button>' +
+            '<button type="button" class="btn btn-ghost btn-sm user-imp" data-uid="' + u.user_id + '" data-name="' + EA.esc(name) + '">Log in as this user</button>' +
           '</td>' +
         '</tr>'
       );
@@ -556,10 +556,10 @@
 
   async function impersonate(uid, name) {
     const ok = await EA.confirmDialog({
-      title: "Impersonate " + (name || "user") + "?",
+      title: "Log in as " + (name || "user") + "?",
       body:  "You will view the app as this user. A red banner will persist on every page until you stop. " +
              "Your audit trail will record this action.",
-      okLabel: "Impersonate",
+      okLabel: "Log in",
       variant: "danger",
     });
     if (!ok) return;

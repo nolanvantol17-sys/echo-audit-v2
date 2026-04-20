@@ -271,7 +271,6 @@
 <section class="rubric-section">
   <div class="rubric-section-header">
     <div class="panel-title">Rubric</div>
-    <a href="#" class="btn btn-ghost btn-sm" id="btn-edit-rubric" hidden>Edit rubric</a>
   </div>
   <div id="rubric-readonly" class="rubric-readonly-list">
     <div class="skeleton" style="height:52px;"></div>
@@ -325,9 +324,11 @@
       btn.setAttribute("aria-expanded", "false");
     });
     $("#btn-settings-edit").addEventListener("click", function () {
-      // Edit lives on the Projects list page — redirect and pop the wizard
-      // there. Keeps all the wizard logic in one place.
-      window.location.href = "/app/projects?edit=" + PROJECT_ID;
+      // The wizard isn't yet a shared component — it lives on the Projects
+      // list page. We deep-link with ?edit=<id>&return=hub so projects.html
+      // pops the wizard for this project and, on save or cancel, returns the
+      // user back to this hub instead of dumping them on the list.
+      window.location.href = "/app/projects?edit=" + PROJECT_ID + "&return=hub";
     });
     const delBtn = document.getElementById("btn-settings-delete");
     if (delBtn) delBtn.addEventListener("click", confirmAndDeleteProject);
@@ -383,29 +384,16 @@
     renderTopAgents(s.top_agents || []);
   }
 
-  // Breadcrumb: Location › Campaign › Project (project = plain text).
-  // "All Locations" projects render the location segment as plain text since
-  // no single location page applies. Settings is the only existing surface
-  // for individual locations/campaigns, so both clickable segments deep-link
-  // there until dedicated detail pages exist.
+  // Breadcrumb: Location › Campaign › Project. Location and Campaign render
+  // as plain text. Dedicated detail pages are a future hook point.
   function renderBreadcrumb(s, projectName) {
     const sep = '<span class="crumb-sep">›</span>';
     const parts = [];
-
     const locName = s.location_name || "—";
-    const isAllLocations = !!s.project_all_locations;
-    if (isAllLocations || !s.location_id) {
-      parts.push('<span class="crumb-current">' + EA.esc(locName) + '</span>');
-    } else {
-      parts.push('<a href="/app/settings">' + EA.esc(locName) + '</a>');
-    }
-
-    if (s.campaign_id && s.campaign_name) {
-      parts.push('<a href="/app/settings">' + EA.esc(s.campaign_name) + '</a>');
-    } else if (s.campaign_name) {
+    parts.push('<span class="crumb-current">' + EA.esc(locName) + '</span>');
+    if (s.campaign_name) {
       parts.push('<span class="crumb-current">' + EA.esc(s.campaign_name) + '</span>');
     }
-
     parts.push('<span class="crumb-current">' + EA.esc(projectName) + '</span>');
     $("#hub-crumbs").innerHTML = parts.join(sep);
   }

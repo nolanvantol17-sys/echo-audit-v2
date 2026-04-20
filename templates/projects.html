@@ -507,6 +507,7 @@
       open:           false,
       step:           1,
       editingProjectId: null,      // null = create, number = edit
+      returnToHub:    false,       // set when entered via ?return=hub
       rubricTab:      "ai",
       rubricItems:    [],          // [{name,score_type,weight,scoring_guidance}]
       rubricName:     "",
@@ -528,11 +529,23 @@
   const ALL_LOCATIONS_SENTINEL = "all";
 
   // ── Boot ─────────────────────────────────────────
+  // The wizard isn't yet a shared component — markup + JS live inline here.
+  // Project Hub deep-links into us via /app/projects?edit=<id>&return=hub when
+  // the user clicks Edit. We pop the wizard for that project and, on save or
+  // cancel, redirect back to the hub so the round-trip is complete. When the
+  // wizard grows a third consumer, extract it instead of adding more flags.
   async function init() {
     $("#btn-new-project").addEventListener("click", openWizard);
     const emptyBtn = $("#btn-new-project-empty");
     if (emptyBtn) emptyBtn.addEventListener("click", openWizard);
     await loadProjects();
+    const params = new URLSearchParams(window.location.search);
+    const editId = parseInt(params.get("edit") || "", 10);
+    if (editId) {
+      const wantHubReturn = params.get("return") === "hub";
+      await openWizardForEdit(editId);
+      state.wizard.returnToHub = wantHubReturn;
+    }
   }
 
   async function loadProjects() {
@@ -720,6 +733,7 @@
   function resetWizardState() {
     Object.assign(state.wizard, {
       open: false, step: 1, editingProjectId: null,
+      returnToHub: false,
       rubricTab: "ai", rubricItems: [], rubricName: "",
       isGenerating: false, currentStream: null,
       gradeTarget: "respondent",
@@ -764,7 +778,13 @@
       cancelLabel: "Keep editing",
       variant: "danger",
     });
-    if (ok) closeWizard();
+    if (!ok) return;
+    // Symmetric with save: if the user came in from the project hub via
+    // ?return=hub, cancel should bounce them back too — leaving them on the
+    // Projects list would break the round-trip.
+    const hubId = state.wizard.returnToHub ? state.wizard.editingProjectId : null;
+    closeWizard();
+    if (hubId) window.location.href = "/app/projects/" + hubId;
   }
 
   function showStep(step) {
@@ -1190,6 +1210,10 @@
           },
         });
         EA.toast("Project updated", "success");
+        if (w.returnToHub) {
+          window.location.href = "/app/projects/" + w.editingProjectId;
+          return;
+        }
       } else {
         const items = w.rubricItems
           .map(function (it) {
