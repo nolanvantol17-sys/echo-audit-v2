@@ -6,12 +6,22 @@ Kept as a standalone module to avoid circular imports between the
 main app file and the blueprints.
 """
 
+import secrets
 from datetime import datetime
 
 from flask import session
 from flask_login import current_user
 
 from db import get_conn, q, IS_POSTGRES
+
+
+def generate_temp_password():
+    """Return a ~12-char URL-safe random temporary password.
+
+    Used by all server-side flows that create a user or reset a password
+    (team add-member, platform create-org, super-admin password reset).
+    """
+    return secrets.token_urlsafe(9)[:12]
 
 
 def get_effective_company_id():

@@ -156,19 +156,11 @@
   }
 
   // ── Add member ───────────────────────────────────────
-  function randomTempPassword() {
-    const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-    let out = "";
-    for (let i = 0; i < 12; i++) out += chars[Math.floor(Math.random() * chars.length)];
-    return out;
-  }
-
   async function onAddMember() {
     if (!departments.length) {
       EA.toast("Create a department first.", "error");
       return;
     }
-    const temp = randomTempPassword();
     const data = await EA.formDialog({
       title: "Add team member",
       fields: [
@@ -179,8 +171,6 @@
           options: ROLE_OPTIONS, value:"caller" },
         { name:"department_id", label:"Department", type:"select", required:true,
           options: departments.map((d) => ({value:d.department_id, label:d.department_name})) },
-        { name:"password", label:"Temporary password", value: temp, readOnly:true,
-          help:"The member will be forced to change this on first login." },
       ],
       okLabel: "Add member",
     });
@@ -193,7 +183,6 @@
         user_email:      data.user_email,
         role_name:       data.role_name,
         department_id:   parseInt(data.department_id, 10),
-        password:        data.password || temp,
       };
       const created = await EA.fetchJSON("/api/team", { method:"POST", body: payload });
       // Prepend to tbody without reload
@@ -201,7 +190,7 @@
       if (tbody) tbody.insertAdjacentHTML("afterbegin", renderRow(created));
       else await loadTeam();
       wireRowActions();
-      showTempPassword(payload.user_email, payload.password);
+      showTempPassword(payload.user_email, created.temp_password);
       EA.toast("Member added.", "success");
     } catch (err) {
       EA.toast(err.message || "Could not add member", "error");
@@ -210,21 +199,29 @@
 
   function showTempPassword(email, pw) {
     const slot = $("#temp-pw-slot");
-    slot.innerHTML =
-      '<div class="temp-pw-banner">' +
-        '<span>Temporary password for <strong>' + EA.esc(email) + '</strong>:</span>' +
-        '<span class="temp-pw-value">' + EA.esc(pw) + '</span>' +
-        '<button type="button" class="inline-copy-btn" data-pw="' + EA.esc(pw) + '">Copy</button>' +
-        '<span class="spacer"></span>' +
-        '<button type="button" class="flash-dismiss" aria-label="Dismiss">×</button>' +
-      '</div>';
-    slot.querySelector(".inline-copy-btn").addEventListener("click", (e) => {
-      navigator.clipboard.writeText(e.target.dataset.pw).then(
-        () => EA.toast("Copied.", "info"),
-        () => EA.toast("Copy failed — select the text manually.", "error"),
-      );
-    });
-    slot.querySelector(".flash-dismiss").addEventListener("click", () => { slot.innerHTML = ""; });
+    slot.innerHTML = "";
+    const banner = document.createElement("div");
+    banner.className = "temp-pw-banner";
+
+    const intro = document.createElement("span");
+    intro.innerHTML = "Temporary password for <strong>" + EA.esc(email) + "</strong>:";
+    banner.appendChild(intro);
+
+    banner.appendChild(EA.revealOncePassword(pw));
+
+    const spacer = document.createElement("span");
+    spacer.className = "spacer";
+    banner.appendChild(spacer);
+
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.className = "flash-dismiss";
+    dismiss.setAttribute("aria-label", "Dismiss");
+    dismiss.textContent = "\u00d7";
+    dismiss.addEventListener("click", function () { slot.innerHTML = ""; });
+    banner.appendChild(dismiss);
+
+    slot.appendChild(banner);
   }
 
   // ── Edit member ───────────────────────────────────

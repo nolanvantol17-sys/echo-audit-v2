@@ -398,7 +398,6 @@
   }
 
   async function onCreateOrg() {
-    const temp = randomTempPassword();
     // Load industries for the select
     let industries = [];
     try { industries = await EA.fetchJSON("/api/industries"); } catch (_) { industries = []; }
@@ -412,8 +411,6 @@
         { name:"admin_first_name", label:"Admin First Name", required:true },
         { name:"admin_last_name",  label:"Admin Last Name",  required:true },
         { name:"admin_email",      label:"Admin Email", type:"email", required:true },
-        { name:"admin_password",   label:"Admin Temporary Password", value: temp, readOnly:true,
-          help:"The admin will be forced to change this on first login." },
       ],
       okLabel: "Create",
     });
@@ -427,10 +424,9 @@
           admin_first_name: data.admin_first_name,
           admin_last_name:  data.admin_last_name,
           admin_email:      data.admin_email,
-          admin_password:   data.admin_password || temp,
         },
       });
-      showTempPasswordBanner(data.admin_email, created.temp_password || data.admin_password || temp);
+      showTempPasswordBanner(data.admin_email, created.temp_password);
       EA.toast("Organization created.", "success");
       await loadOrgs();
     } catch (err) {
@@ -440,28 +436,29 @@
 
   function showTempPasswordBanner(email, pw) {
     const slot = $("#new-org-banner-slot");
-    slot.innerHTML =
-      '<div class="temp-pw-banner">' +
-        '<span>Temporary password for <strong>' + EA.esc(email) + '</strong>:</span>' +
-        '<span class="temp-pw-value">' + EA.esc(pw) + '</span>' +
-        '<button type="button" class="inline-copy-btn" data-pw="' + EA.esc(pw) + '">Copy</button>' +
-        '<span class="spacer"></span>' +
-        '<button type="button" class="flash-dismiss" aria-label="Dismiss">×</button>' +
-      '</div>';
-    slot.querySelector(".inline-copy-btn").addEventListener("click", (e) => {
-      navigator.clipboard.writeText(e.target.dataset.pw).then(
-        () => EA.toast("Copied.", "info"),
-        () => EA.toast("Copy failed.", "error"),
-      );
-    });
-    slot.querySelector(".flash-dismiss").addEventListener("click", () => { slot.innerHTML = ""; });
-  }
+    slot.innerHTML = "";
+    const banner = document.createElement("div");
+    banner.className = "temp-pw-banner";
 
-  function randomTempPassword() {
-    const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-    let out = "";
-    for (let i = 0; i < 12; i++) out += chars[Math.floor(Math.random() * chars.length)];
-    return out;
+    const intro = document.createElement("span");
+    intro.innerHTML = "Temporary password for <strong>" + EA.esc(email) + "</strong>:";
+    banner.appendChild(intro);
+
+    banner.appendChild(EA.revealOncePassword(pw));
+
+    const spacer = document.createElement("span");
+    spacer.className = "spacer";
+    banner.appendChild(spacer);
+
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.className = "flash-dismiss";
+    dismiss.setAttribute("aria-label", "Dismiss");
+    dismiss.textContent = "\u00d7";
+    dismiss.addEventListener("click", function () { slot.innerHTML = ""; });
+    banner.appendChild(dismiss);
+
+    slot.appendChild(banner);
   }
 
   // ══════════════════ USERS ══════════════════
@@ -540,19 +537,12 @@
                                       "/reset-password", { method: "POST" });
       const pw = resp.temp_password || "";
       const host = document.createElement("div");
-      host.innerHTML =
-        '<div class="muted" style="margin-bottom:8px;">Temporary password:</div>' +
-        '<div class="temp-pw-value" style="margin-bottom:8px;">' + EA.esc(pw) + '</div>' +
-        '<button type="button" class="btn btn-ghost btn-sm" id="copy-new-pw">Copy</button>';
-      setTimeout(() => {
-        const btn = host.querySelector("#copy-new-pw");
-        if (btn) btn.addEventListener("click", () => {
-          navigator.clipboard.writeText(pw).then(
-            () => EA.toast("Copied.", "info"),
-            () => EA.toast("Copy failed.", "error"),
-          );
-        });
-      }, 0);
+      const intro = document.createElement("div");
+      intro.className = "muted";
+      intro.style.marginBottom = "8px";
+      intro.textContent = "Temporary password:";
+      host.appendChild(intro);
+      host.appendChild(EA.revealOncePassword(pw));
       await EA.confirmDialog({
         title: "Password reset",
         body: host,

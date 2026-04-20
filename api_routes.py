@@ -22,7 +22,7 @@ from audit_log import (
 )
 from auth import role_required
 from db import get_conn, q, IS_POSTGRES
-from helpers import get_effective_company_id
+from helpers import generate_temp_password, get_effective_company_id
 
 logger = logging.getLogger(__name__)
 
@@ -1439,8 +1439,13 @@ def create_team_member():
     if err: return err
 
     body = _body()
+    if "password" in body:
+        return _err(
+            "Password is now server-generated. Remove the password field from your request.",
+            400,
+        )
     err = _require(body, "user_email", "user_first_name", "user_last_name",
-                   "role_name", "password", "department_id")
+                   "role_name", "department_id")
     if err:
         return _err(err, 400)
 
@@ -1456,10 +1461,12 @@ def create_team_member():
     finally:
         conn.close()
 
+    temp_password = generate_temp_password()
+
     try:
         new_user_id = auth.create_user(
             email=body["user_email"],
-            password=body["password"],
+            password=temp_password,
             role_name=body["role_name"],
             first_name=body["user_first_name"],
             last_name=body["user_last_name"],
@@ -1495,7 +1502,9 @@ def create_team_member():
     try:
         cur = conn.execute(q(_TEAM_SELECT + " WHERE u.user_id = ?"), (new_user_id,))
         row = cur.fetchone()
-        return jsonify(_row_to_dict(row)), 201
+        payload = _row_to_dict(row) or {}
+        payload["temp_password"] = temp_password
+        return jsonify(payload), 201
     finally:
         conn.close()
 

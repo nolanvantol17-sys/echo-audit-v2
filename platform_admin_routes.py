@@ -12,7 +12,6 @@ routes live here.
 
 import json
 import logging
-import secrets
 from datetime import date, datetime, timedelta
 
 from flask import Blueprint, jsonify, request, session
@@ -26,6 +25,7 @@ from audit_log import (
 )
 from auth import role_required
 from db import IS_POSTGRES, get_conn, q, seed_company_defaults
+from helpers import generate_temp_password
 
 logger = logging.getLogger(__name__)
 
@@ -108,15 +108,18 @@ def list_orgs():
 @role_required("super_admin")
 def create_org_with_admin():
     body = _body()
+    if "admin_password" in body or "password" in body:
+        return _err(
+            "Password is now server-generated. Remove the password field from your request.",
+            400,
+        )
     required = ("company_name", "industry_id", "admin_email",
-                "admin_first_name", "admin_last_name", "admin_password")
+                "admin_first_name", "admin_last_name")
     missing = [f for f in required if not body.get(f)]
     if missing:
         return _err(f"Missing required fields: {', '.join(missing)}", 400)
 
-    admin_password = body["admin_password"]
-    if len(admin_password) < 8:
-        return _err("admin_password must be at least 8 characters", 400)
+    admin_password = generate_temp_password()
 
     # Use the email pre-check so we can fail fast before creating a company.
     if auth.email_exists(body["admin_email"]):
@@ -523,7 +526,7 @@ def reset_user_password(user_id):
     finally:
         conn.close()
 
-    temp_password = secrets.token_urlsafe(9)[:12]  # ~12-char URL-safe random
+    temp_password = generate_temp_password()
     password_hash = generate_password_hash(temp_password, method=PASSWORD_METHOD)
 
     conn = get_conn()

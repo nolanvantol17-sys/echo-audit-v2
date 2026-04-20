@@ -1117,8 +1117,15 @@ audio.app-audio {
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   font-size: 0.86rem;
+}
+.temp-pw-reveal {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .temp-pw-value {
   font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
@@ -1126,6 +1133,23 @@ audio.app-audio {
   padding: 4px 8px;
   border-radius: 6px;
   color: var(--text);
+}
+.temp-pw-value.temp-pw-masked {
+  letter-spacing: 0.18em;
+  color: var(--muted);
+}
+.temp-pw-value.temp-pw-revealed {
+  color: var(--text);
+  font-weight: 600;
+}
+.temp-pw-countdown {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.temp-pw-warn {
+  font-size: 0.78rem;
+  color: var(--warning);
 }
 .inline-copy-btn {
   background: var(--surface-2);
@@ -1137,6 +1161,11 @@ audio.app-audio {
   cursor: pointer;
 }
 .inline-copy-btn:hover { border-color: var(--accent); }
+.inline-copy-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  border-color: var(--border);
+}
 
 /* ── FE-5: Impersonation banner ─────────────────────────── */
 .impersonation-banner {

@@ -457,6 +457,142 @@
     });
   }
 
+  // ── Clipboard + reveal-once password widget ──────────────────
+  // copyToClipboard(text, opts):
+  //   Writes `text` to the system clipboard. Returns a Promise<bool>.
+  //   opts.successToast (string|null): toast text to show on success
+  //                                    (pass null for no toast).
+  //   opts.errorToast   (string|null): toast text to show on failure
+  //                                    (pass null for no toast).
+  function copyToClipboard(text, opts) {
+    opts = opts || {};
+    const successToast = (opts.successToast === undefined) ? "Copied." : opts.successToast;
+    const errorToast   = (opts.errorToast   === undefined) ? "Copy failed" : opts.errorToast;
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      if (errorToast) toast(errorToast, "error");
+      return Promise.resolve(false);
+    }
+    return navigator.clipboard.writeText(text).then(
+      function () { if (successToast) toast(successToast, "success"); return true; },
+      function () { if (errorToast)   toast(errorToast,   "error");   return false; }
+    );
+  }
+
+  // revealOncePassword(pw):
+  //   Returns a DOM element that displays a masked password with a
+  //   "Reveal & copy" button. On click: starts a 10s countdown,
+  //   reveals the password, attempts clipboard copy in parallel.
+  //   When the countdown ends the password re-masks and the reveal
+  //   button is permanently disabled (one-shot per widget instance).
+  //   Countdown pauses while the tab/window loses focus so an admin
+  //   alt-tabbing to paste the value doesn't lose visibility.
+  function revealOncePassword(pw) {
+    const REVEAL_MS = 10000;
+    const MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
+
+    const wrap = document.createElement("span");
+    wrap.className = "temp-pw-reveal";
+
+    const value = document.createElement("code");
+    value.className = "temp-pw-value temp-pw-masked";
+    value.textContent = MASK;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "inline-copy-btn";
+    btn.textContent = "Reveal & copy";
+
+    const countdown = document.createElement("span");
+    countdown.className = "temp-pw-countdown";
+    countdown.hidden = true;
+
+    const warn = document.createElement("span");
+    warn.className = "temp-pw-warn";
+    warn.textContent = "Won't be shown again.";
+    warn.hidden = true;
+
+    wrap.appendChild(value);
+    wrap.appendChild(btn);
+    wrap.appendChild(countdown);
+    wrap.appendChild(warn);
+
+    let state = "masked";  // masked → revealed → spent
+    let expiresAt = 0;
+    let remainingWhenHidden = 0;
+    let tickHandle = null;
+
+    function isHidden() {
+      return document.hidden || !document.hasFocus();
+    }
+
+    function tick() {
+      const remaining = Math.max(0, expiresAt - Date.now());
+      countdown.textContent = "(" + Math.ceil(remaining / 1000) + "s)";
+      if (remaining <= 0) finish();
+    }
+
+    function onVisibility() {
+      if (state !== "revealed") return;
+      if (isHidden()) {
+        // Pause: snapshot remaining time, stop ticking.
+        if (tickHandle !== null) {
+          clearInterval(tickHandle);
+          tickHandle = null;
+        }
+        remainingWhenHidden = Math.max(0, expiresAt - Date.now());
+      } else {
+        // Resume: shift the deadline forward by however long we paused.
+        if (remainingWhenHidden > 0) {
+          expiresAt = Date.now() + remainingWhenHidden;
+          remainingWhenHidden = 0;
+        }
+        if (tickHandle === null) {
+          tickHandle = setInterval(tick, 250);
+          tick();
+        }
+      }
+    }
+
+    function finish() {
+      state = "spent";
+      if (tickHandle !== null) {
+        clearInterval(tickHandle);
+        tickHandle = null;
+      }
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("blur",  onVisibility);
+      window.removeEventListener("focus", onVisibility);
+      value.textContent = MASK;
+      value.classList.remove("temp-pw-revealed");
+      value.classList.add("temp-pw-masked");
+      countdown.hidden = true;
+      btn.disabled = true;
+      btn.textContent = "Hidden";
+    }
+
+    btn.addEventListener("click", function () {
+      if (state !== "masked") return;
+      state = "revealed";
+      value.textContent = pw;
+      value.classList.remove("temp-pw-masked");
+      value.classList.add("temp-pw-revealed");
+      btn.disabled = true;
+      countdown.hidden = false;
+      warn.hidden = false;
+      expiresAt = Date.now() + REVEAL_MS;
+      tick();
+      tickHandle = setInterval(tick, 250);
+      document.addEventListener("visibilitychange", onVisibility);
+      window.addEventListener("blur",  onVisibility);
+      window.addEventListener("focus", onVisibility);
+      // Clipboard write runs in parallel; failure leaves the user with
+      // the visible value to copy manually before the countdown ends.
+      copyToClipboard(pw, { successToast: "Copied.", errorToast: null });
+    });
+
+    return wrap;
+  }
+
   // Shared status-id helpers. Name is user-facing copy (with spaces);
   // slug is the CSS-selector form used in `.status-<slug>` class names.
   // Kept as separate functions so copy changes don't break CSS selectors.
@@ -500,6 +636,8 @@
     strongConfirmDialog: strongConfirmDialog,
     formDialog:      formDialog,
     showOverlay:     showOverlay,
+    copyToClipboard: copyToClipboard,
+    revealOncePassword: revealOncePassword,
     statusIdToName:  statusIdToName,
     statusIdToSlug:  statusIdToSlug,
   };
