@@ -195,9 +195,9 @@ def create_rubric_group():
     location_id = body.get("location_id")
 
     if not rg_name or not rg_grade_target or not location_id:
-        return _err("Missing required fields: rg_name, rg_grade_target, location_id", 400)
+        return _err("Rubric name, who we're grading, and location are all required.", 400)
     if rg_grade_target not in _VALID_GRADE_TARGETS:
-        return _err("rg_grade_target must be one of: caller, respondent", 400)
+        return _err("Please choose who you're grading: the person who placed the call or the person who answered the call.", 400)
 
     conn = get_conn()
     try:
@@ -242,13 +242,13 @@ def update_rubric_group(rubric_group_id):
     fields = {k: body[k] for k in allowed if k in body}
 
     if "rg_grade_target" in fields and fields["rg_grade_target"] not in _VALID_GRADE_TARGETS:
-        return _err("rg_grade_target must be one of: caller, respondent", 400)
+        return _err("Please choose who you're grading: the person who placed the call or the person who answered the call.", 400)
 
     conn = get_conn()
     try:
         existing = _get_rubric_group_in_company(conn, rubric_group_id, company_id)
         if not existing:
-            return _err("Rubric group not found", 404)
+            return _err("Rubric not found", 404)
 
         # If location_id is being reassigned, verify the new location also belongs
         # to this company.
@@ -290,7 +290,7 @@ def delete_rubric_group(rubric_group_id):
     conn = get_conn()
     try:
         if not _get_rubric_group_in_company(conn, rubric_group_id, company_id):
-            return _err("Rubric group not found", 404)
+            return _err("Rubric not found", 404)
 
         # Block if any active projects still reference this rubric group.
         cur = conn.execute(
@@ -343,7 +343,7 @@ def list_rubric_items(rubric_group_id):
     conn = get_conn()
     try:
         if not _get_rubric_group_in_company(conn, rubric_group_id, company_id):
-            return _err("Rubric group not found", 404)
+            return _err("Rubric not found", 404)
         cur = conn.execute(
             q("""SELECT * FROM rubric_items
                  WHERE rubric_group_id = ? AND ri_deleted_at IS NULL
@@ -367,16 +367,16 @@ def create_rubric_item(rubric_group_id):
     ri_score_type = (body.get("ri_score_type") or "").strip()
 
     if not ri_name or not ri_score_type:
-        return _err("Missing required fields: ri_name, ri_score_type", 400)
+        return _err("Criterion name and score type are required.", 400)
     if ri_score_type not in _VALID_SCORE_TYPES:
-        return _err(f"ri_score_type must be one of: {', '.join(_VALID_SCORE_TYPES)}", 400)
+        return _err("Score type must be 1–10 scale, Yes/No, or Yes/No/Pending.", 400)
 
     try:
         ri_weight = float(body.get("ri_weight", 1.00))
     except (TypeError, ValueError):
-        return _err("ri_weight must be a number", 400)
+        return _err("Weight must be a number.", 400)
     if ri_weight <= 0:
-        return _err("ri_weight must be greater than 0", 400)
+        return _err("Weight must be greater than 0.", 400)
 
     ri_scoring_guidance = body.get("ri_scoring_guidance") or None
     try:
@@ -387,7 +387,7 @@ def create_rubric_item(rubric_group_id):
     conn = get_conn()
     try:
         if not _get_rubric_group_in_company(conn, rubric_group_id, company_id):
-            return _err("Rubric group not found", 404)
+            return _err("Rubric not found", 404)
         rubric_item_id = _insert_rubric_item(
             conn,
             rubric_group_id=rubric_group_id,
@@ -431,19 +431,19 @@ def update_rubric_item(rubric_group_id, rubric_item_id):
     fields = {k: body[k] for k in allowed if k in body}
 
     if "ri_score_type" in fields and fields["ri_score_type"] not in _VALID_SCORE_TYPES:
-        return _err(f"ri_score_type must be one of: {', '.join(_VALID_SCORE_TYPES)}", 400)
+        return _err("Score type must be 1–10 scale, Yes/No, or Yes/No/Pending.", 400)
     if "ri_weight" in fields:
         try:
             fields["ri_weight"] = float(fields["ri_weight"])
         except (TypeError, ValueError):
-            return _err("ri_weight must be a number", 400)
+            return _err("Weight must be a number.", 400)
         if fields["ri_weight"] <= 0:
-            return _err("ri_weight must be greater than 0", 400)
+            return _err("Weight must be greater than 0.", 400)
 
     conn = get_conn()
     try:
         if not _get_rubric_group_in_company(conn, rubric_group_id, company_id):
-            return _err("Rubric group not found", 404)
+            return _err("Rubric not found", 404)
         if not _get_rubric_item(conn, rubric_item_id, rubric_group_id):
             return _err("Rubric item not found", 404)
 
@@ -482,7 +482,7 @@ def delete_rubric_item(rubric_group_id, rubric_item_id):
     conn = get_conn()
     try:
         if not _get_rubric_group_in_company(conn, rubric_group_id, company_id):
-            return _err("Rubric group not found", 404)
+            return _err("Rubric not found", 404)
         if not _get_rubric_item(conn, rubric_item_id, rubric_group_id):
             return _err("Rubric item not found", 404)
 
@@ -533,7 +533,7 @@ def reorder_rubric_items(rubric_group_id):
     conn = get_conn()
     try:
         if not _get_rubric_group_in_company(conn, rubric_group_id, company_id):
-            return _err("Rubric group not found", 404)
+            return _err("Rubric not found", 404)
 
         # Verify every item belongs to this group before any writes.
         for entry in body:
@@ -588,12 +588,12 @@ def generate_guidance(rubric_group_id, rubric_item_id):
     agent_script = (body.get("agent_script") or "").strip()
 
     if not category_name:
-        return _err("category_name is required", 400)
+        return _err("Category name is required.", 400)
 
     conn = get_conn()
     try:
         if not _get_rubric_group_in_company(conn, rubric_group_id, company_id):
-            return _err("Rubric group not found", 404)
+            return _err("Rubric not found", 404)
         if not _get_rubric_item(conn, rubric_item_id, rubric_group_id):
             return _err("Rubric item not found", 404)
     finally:
@@ -677,12 +677,12 @@ def apply_rubric_template(template_key):
     location_id = body.get("location_id")
     rg_name = (body.get("rg_name") or "").strip()
     if not location_id or not rg_name:
-        return _err("Missing required fields: location_id, rg_name", 400)
+        return _err("Location and rubric name are both required.", 400)
 
     # Default grade_target: respondent, unless template declares otherwise.
     rg_grade_target = (body.get("rg_grade_target") or "respondent").strip()
     if rg_grade_target not in _VALID_GRADE_TARGETS:
-        return _err("rg_grade_target must be one of: caller, respondent", 400)
+        return _err("Please choose who you're grading: the person who placed the call or the person who answered the call.", 400)
 
     conn = get_conn()
     try:

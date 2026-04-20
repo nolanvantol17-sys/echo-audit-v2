@@ -1300,16 +1300,15 @@ def create_project_with_rubric():
 
     grade_target = (body.get("rubric_grade_target") or "respondent").strip()
     if grade_target not in _VALID_GRADE_TARGETS:
-        return _err("rubric_grade_target must be caller or respondent", 400)
+        return _err("Please choose who you're grading: the person who placed the call or the person who answered the call.", 400)
 
     for idx, it in enumerate(items):
         if not isinstance(it, dict) or not (it.get("name") or "").strip():
-            return _err(f"rubric_items[{idx}].name is required", 400)
+            return _err(f"Rubric item #{idx + 1} is missing a name.", 400)
         st = it.get("score_type") or "out_of_10"
         if st not in _VALID_SCORE_TYPES:
             return _err(
-                f"rubric_items[{idx}].score_type must be one of: "
-                f"{', '.join(sorted(_VALID_SCORE_TYPES))}",
+                f"Rubric item #{idx + 1} score type must be 1–10 scale, Yes/No, or Yes/No/Pending.",
                 400,
             )
 

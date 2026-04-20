@@ -672,7 +672,7 @@ def _build_grade_response(interaction_id, grade_result, total_score, flags, tran
     """Shape the response body returned from POST /api/grade and the regrade routes."""
     return {
         "interaction_id":      interaction_id,
-        "responder_name":      grade_result.get("responder_name"),
+        "respondent_name":     grade_result.get("responder_name"),
         "scores":              grade_result.get("scores") or {},
         "confidence":          grade_result.get("confidence") or {},
         "timestamps":          grade_result.get("timestamps") or {},
