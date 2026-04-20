@@ -232,11 +232,6 @@
       case 44: return "no_answer";
       case 45: return "pending";
       default:
-        // Surface unknown statuses during dev so additions to the server-side
-        // status table don't silently render as em-dashes here.
-        if (window.console && console.warn) {
-          console.warn("[InteractionView] unknown status_id:", id);
-        }
         return "—";
     }
   }

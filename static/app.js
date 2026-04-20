@@ -294,6 +294,75 @@
     };
   }
 
+  // ── Strong-confirm dialog ────────────────────────────────
+  // Like confirmDialog, but requires the user to type a phrase that matches
+  // `requiredPhrase` before the destructive action button is enabled. Used
+  // for irreversible operations (e.g. deleting an organization).
+  //
+  // Comparison normalization (applied to BOTH typed input and required phrase
+  // before compare): trim, collapse internal whitespace runs to single spaces,
+  // lowercase. This avoids "you typed 'acme  corp' with two spaces"-style
+  // rejections for what feels like the right answer.
+  function strongConfirmDialog(opts) {
+    opts = opts || {};
+    const title          = opts.title || "Confirm";
+    const intro          = opts.intro || "This cannot be undone.";
+    const requiredPhrase = String(opts.requiredPhrase || "");
+    const promptLabel    = opts.promptLabel || "Type the name to confirm:";
+    const okLabel        = opts.okLabel  || "Delete";
+    const cancelLabel    = opts.cancelLabel || "Cancel";
+    const variant        = opts.variant || "danger";
+
+    const norm = function (s) {
+      return String(s == null ? "" : s).trim().replace(/\s+/g, " ").toLowerCase();
+    };
+    const target = norm(requiredPhrase);
+
+    return new Promise(function (resolve) {
+      document.querySelectorAll(".modal-backdrop").forEach(function (n) { n.remove(); });
+
+      const backdrop = document.createElement("div");
+      backdrop.className = "modal-backdrop";
+      backdrop.innerHTML =
+        '<div class="modal" role="dialog" aria-modal="true">' +
+          '<h3 class="modal-title">' + esc(title) + '</h3>' +
+          '<div class="modal-body">' +
+            '<div class="muted" style="margin-bottom:10px;">' + esc(intro) + '</div>' +
+            '<div class="muted text-small" style="margin-bottom:6px;">' + esc(promptLabel) + '</div>' +
+            '<div style="font-weight:600;margin-bottom:8px;">' + esc(requiredPhrase) + '</div>' +
+            '<input type="text" id="strong-confirm-in" class="field-input" autocomplete="off" autocapitalize="off" spellcheck="false">' +
+          '</div>' +
+          '<div class="modal-actions">' +
+            '<button type="button" class="btn btn-ghost" data-act="cancel">' + esc(cancelLabel) + '</button>' +
+            '<button type="button" class="btn btn-' + variant + '" data-act="ok" disabled>' + esc(okLabel) + '</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(backdrop);
+
+      const input  = backdrop.querySelector("#strong-confirm-in");
+      const okBtn  = backdrop.querySelector('[data-act="ok"]');
+      const matches = function () { return norm(input.value) === target && target !== ""; };
+      input.addEventListener("input", function () { okBtn.disabled = !matches(); });
+
+      const finish = function (result) {
+        backdrop.remove();
+        document.removeEventListener("keydown", onKey);
+        resolve(result);
+      };
+      const onKey = function (e) {
+        if (e.key === "Escape") finish(false);
+        if (e.key === "Enter" && matches()) finish(true);
+      };
+      backdrop.addEventListener("click", function (e) {
+        if (e.target === backdrop) finish(false);
+      });
+      backdrop.querySelector('[data-act="cancel"]').addEventListener("click", function () { finish(false); });
+      okBtn.addEventListener("click", function () { if (matches()) finish(true); });
+      document.addEventListener("keydown", onKey);
+      input.focus();
+    });
+  }
+
   // ── Form modal ────────────────────────────────────────────
   // Renders a form inside a modal. Resolves to a dict of form values on
   // save, or null if the user cancels. Callers pass `fields` as an array of
@@ -402,6 +471,7 @@
     toast:           toast,
     showToast:       toast,
     confirmDialog:   confirmDialog,
+    strongConfirmDialog: strongConfirmDialog,
     formDialog:      formDialog,
     showOverlay:     showOverlay,
   };

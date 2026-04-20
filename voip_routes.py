@@ -434,6 +434,60 @@ def upsert_voip_config():
     return jsonify(_public_config_view(refreshed)), 201 if action == ACTION_CREATED else 200
 
 
+@voip_bp.route("/config", methods=["PATCH"])
+@login_required
+@role_required("admin", "super_admin")
+def patch_voip_config():
+    """Partial update for an existing voip_config row.
+
+    Currently the only supported field is ``voip_config_auto_grade`` — flipping
+    the toggle should not require re-entering the provider's credentials. Other
+    fields (provider, credentials, webhook secret) are intentionally re-routes
+    through POST so the same validation / encryption / fingerprinting path
+    handles them.
+    """
+    company_id, err = _require_company()
+    if err: return err
+
+    body = _body()
+    if "voip_config_auto_grade" not in body:
+        return _err("Nothing to update", 400)
+    auto_grade = bool(body.get("voip_config_auto_grade"))
+
+    conn = get_conn()
+    try:
+        existing = _get_voip_config(conn, company_id, include_inactive=True)
+        if not existing:
+            return _err("VoIP config not found", 404)
+        if IS_POSTGRES:
+            conn.execute(
+                "UPDATE voip_configs SET voip_config_auto_grade = %s "
+                "WHERE company_id = %s",
+                (auto_grade, company_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE voip_configs SET voip_config_auto_grade = ? "
+                "WHERE company_id = ?",
+                (auto_grade, company_id),
+            )
+        _audit(
+            current_user.user_id, ACTION_UPDATED, company_id,
+            metadata={"action": "toggle_auto_grade",
+                      "new_value": auto_grade},
+            conn=conn,
+        )
+        conn.commit()
+        refreshed = _get_voip_config(conn, company_id, include_inactive=True)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return jsonify(_public_config_view(refreshed))
+
+
 @voip_bp.route("/config", methods=["DELETE"])
 @login_required
 @role_required("admin", "super_admin")

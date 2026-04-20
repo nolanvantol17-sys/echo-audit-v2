@@ -1238,6 +1238,10 @@
     const locOpt = locSel.options[locSel.selectedIndex];
     state.locationNameDisplay = locOpt ? (locOpt.text || "").trim() : "";
 
+    const submitBtn = document.getElementById("grade-submit");
+    if (submitBtn && submitBtn.disabled) return;   // already in flight
+    if (submitBtn) submitBtn.disabled = true;
+
     const overlay = EA.showOverlay("Uploading audio…");
     try {
       if (activeTab === "voip") {
@@ -1313,7 +1317,18 @@
         cancelLabel: "Dismiss",
         variant: "primary",
       });
-      if (retry) onSubmit(e);
+      if (retry) {
+        // Re-enable so the recursive call can disable cleanly. Awaiting it
+        // keeps the outer finally from running until the retry is done, which
+        // avoids a re-enable race during the nested submission.
+        if (submitBtn) submitBtn.disabled = false;
+        await onSubmit(e);
+      }
+    } finally {
+      // Cover every exit path: success (form is hidden but button state is
+      // still owned by us), validation-side errors, network errors, server
+      // 4xx/5xx, abort/timeout, anything thrown by render functions.
+      if (submitBtn) submitBtn.disabled = false;
     }
   }
 

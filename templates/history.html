@@ -223,6 +223,7 @@
     if ($("#f-to").value)       qs.set("to_date", $("#f-to").value);
     if ($("#f-status").value)   qs.set("status_id", $("#f-status").value);
     if ($("#f-respondent").value) qs.set("respondent_user_id", $("#f-respondent").value);
+    if ($("#f-score-max").value !== "") qs.set("score_max", $("#f-score-max").value);
     return qs;
   }
 
@@ -236,19 +237,6 @@
     try {
       let rows = await EA.fetchJSON("/api/interactions" + (qs.toString() ? "?" + qs : ""));
       rows = rows || [];
-
-      // Client-side score-max filter (no server-side param for this yet).
-      const maxRaw = $("#f-score-max").value;
-      if (maxRaw !== "") {
-        const max = parseFloat(maxRaw);
-        if (!isNaN(max)) {
-          rows = rows.filter(function (r) {
-            return r.interaction_overall_score !== null
-                && r.interaction_overall_score !== undefined
-                && Number(r.interaction_overall_score) <= max;
-          });
-        }
-      }
 
       state.all = rows;
       state.shown = Math.min(PAGE_SIZE, rows.length);

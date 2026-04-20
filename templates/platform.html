@@ -378,29 +378,15 @@
   }
 
   async function deleteOrg(oid, name) {
-    // Strong-confirm modal — must type the org name.
-    const host = document.createElement("div");
-    host.innerHTML =
-      '<div class="muted" style="margin-bottom:10px;">' +
-        'This cannot be undone. Type the organization name to confirm:' +
-      '</div>' +
-      '<div style="font-weight:600;margin-bottom:6px;">' + EA.esc(name || "") + '</div>' +
-      '<input type="text" id="del-confirm-in" class="field-input" autocomplete="off">';
-
-    // We can't easily enable/disable the OK button in confirmDialog, so
-    // validate on confirm and reject invalid input.
-    const ok = await EA.confirmDialog({
+    const ok = await EA.strongConfirmDialog({
       title: "Delete organization?",
-      body: host,
+      intro: "This cannot be undone. The organization and all its data will be removed.",
+      requiredPhrase: name || "",
+      promptLabel: "Type the organization name to confirm:",
       okLabel: "Delete",
       variant: "danger",
     });
     if (!ok) return;
-    const typed = (host.querySelector("#del-confirm-in") || {}).value || "";
-    if (typed.trim() !== (name || "").trim()) {
-      EA.toast("Name did not match — deletion cancelled.", "error");
-      return;
-    }
     try {
       await EA.fetchJSON("/api/platform/orgs/" + encodeURIComponent(oid),
                          { method: "DELETE" });

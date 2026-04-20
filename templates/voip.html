@@ -288,21 +288,15 @@
       const next = ev.target.checked;
       try {
         await EA.fetchJSON("/api/voip/config", {
-          method: "POST",
-          body: {
-            voip_config_provider: cfg.voip_config_provider,
-            credentials: { _noop: "_noop" },   // rejected; need real creds
-            voip_config_auto_grade: next,
-          },
+          method: "PATCH",
+          body: { voip_config_auto_grade: next },
         });
         $("#auto-grade-label").textContent = next ? "On" : "Off";
         refreshAutoGradeBanner(next);
         EA.toast("Auto-grade " + (next ? "on" : "off") + ".", "success");
       } catch (err) {
-        // Toggle-only path needs credentials too per current backend shape,
-        // so if the shortcut fails fall back to a full credentials modal.
         ev.target.checked = !next;
-        EA.toast("Re-enter credentials to change auto-grade.", "error");
+        EA.toast(err.message || "Could not change auto-grade.", "error");
       }
     });
 
@@ -419,8 +413,54 @@
     return '<span class="status-pill ' + cls + '">' + EA.esc(label) + '</span>';
   }
 
+  function captureAudioState() {
+    // Snapshot the open audio player so the auto-refresh re-render can put
+    // the user back where they were instead of yanking the audio out.
+    if (!openAudioRow) return null;
+    const audio = openAudioRow.querySelector("audio");
+    const qid = openAudioRow.getAttribute("data-audio-for");
+    if (!audio || !qid) return null;
+    return {
+      qid: qid,
+      currentTime: Number(audio.currentTime) || 0,
+      paused: !!audio.paused,
+      muted: !!audio.muted,
+      volume: Number(audio.volume),
+      playbackRate: Number(audio.playbackRate) || 1,
+    };
+  }
+
+  function restoreAudioState(snap) {
+    if (!snap) return;
+    // The row must still exist after the refresh — if it doesn't (status moved
+    // off pending/failed, or the row was filtered out), drop the player.
+    const tr = document.querySelector('tr[data-qid="' + snap.qid + '"]');
+    if (!tr) { openAudioRow = null; return; }
+    toggleAudio(snap.qid);
+    const audio = openAudioRow && openAudioRow.querySelector("audio");
+    if (!audio) return;
+    const apply = function () {
+      try {
+        audio.currentTime = snap.currentTime;
+        audio.muted = snap.muted;
+        if (!isNaN(snap.volume)) audio.volume = snap.volume;
+        audio.playbackRate = snap.playbackRate;
+        // Preserve paused state strictly — if the user paused at 0:23,
+        // they should find it paused at 0:23, not auto-resumed.
+        if (!snap.paused) {
+          const p = audio.play();
+          if (p && typeof p.catch === "function") p.catch(function () {});
+        }
+      } catch (_) { /* best-effort */ }
+    };
+    if (audio.readyState >= 1) apply();
+    else audio.addEventListener("loadedmetadata", apply, { once: true });
+  }
+
   function renderQueue(rows) {
     const wrap = $("#queue-wrap");
+    const audioSnap = captureAudioState();
+
     if (!rows.length) {
       const anyFilter = ($("#q-status").value || $("#q-from").value || $("#q-to").value);
       wrap.innerHTML = '<div class="empty-state">' +
@@ -444,6 +484,7 @@
 
     wireQueueActions();
     openAudioRow = null;
+    restoreAudioState(audioSnap);
   }
 
   function renderQueueRow(r) {

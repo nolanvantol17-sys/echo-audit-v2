@@ -238,7 +238,17 @@
       }
       document.removeEventListener("click", onDocClick, true);
       window.removeEventListener("resize", close);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", onOuterScroll, true);
+    }
+
+    function onOuterScroll(ev) {
+      // Scrolling inside the popover (e.g. through the locations list) bubbles
+      // up to the capture-phase listener but should NOT close the popover.
+      if (popover && ev.target && ev.target.nodeType === 1 &&
+          (ev.target === popover || popover.contains(ev.target))) {
+        return;
+      }
+      close();
     }
 
     function onDocClick(ev) {
@@ -336,7 +346,11 @@
         document.addEventListener("click", onDocClick, true);
       }, 0);
       window.addEventListener("resize", close);
-      window.addEventListener("scroll", close, true);
+      // Capture-phase scroll listener fires for the popover's own internal
+      // scroll too — which would close the dropdown the moment a user tries
+      // to scroll a long location list. Ignore scroll events whose target is
+      // inside the popover; only outer-page scrolls should dismiss.
+      window.addEventListener("scroll", onOuterScroll, true);
     }
 
     button.addEventListener("click", (ev) => {

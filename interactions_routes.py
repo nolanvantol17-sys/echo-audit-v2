@@ -1203,6 +1203,14 @@ def list_interactions():
     if args.get("q"):
         filters.append("LOWER(i.interaction_transcript) LIKE LOWER(?)")
         params.append(f"%{args['q']}%")
+    if args.get("score_max"):
+        try:
+            score_max = float(args["score_max"])
+        except (TypeError, ValueError):
+            return _err("score_max must be numeric", 400)
+        filters.append("i.interaction_overall_score IS NOT NULL")
+        filters.append("i.interaction_overall_score <= ?")
+        params.append(score_max)
 
     where_clause = " AND ".join(filters)
     # Respondent display name priority:
