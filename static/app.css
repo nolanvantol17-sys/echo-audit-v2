@@ -895,6 +895,49 @@ audio.app-audio {
   filter: invert(0.9) hue-rotate(180deg);
 }
 
+/* ── Shared playback controls (EA.AudioPlayer) ───────────── */
+.ea-audio-player {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ea-audio-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 0 2px;
+}
+.ea-audio-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  line-height: 1.2;
+}
+.ea-audio-btn:hover {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+}
+.ea-audio-speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.ea-audio-speed-select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
 /* ── History filters + table ─────────────────────────────── */
 .filters-bar {
   display: grid;

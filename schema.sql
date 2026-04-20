@@ -153,6 +153,13 @@ CREATE TABLE companies (
     status_id               INTEGER NOT NULL DEFAULT 1
                                 REFERENCES statuses (status_id) ON DELETE RESTRICT,
     company_engagement_date DATE,
+    company_setup_dismissed_at TIMESTAMPTZ,
+                                -- Set when an admin dismisses the post-signup
+                                -- setup wizard. Combined with locations/rubrics/
+                                -- projects presence checks, this suppresses the
+                                -- wizard at /app/setup. NULL = never dismissed.
+                                -- See migrations/2026_04_20_add_company_setup_dismissed_at.sql
+                                -- for the production-DB upgrade path.
     company_deleted_at      TIMESTAMPTZ,
     company_created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     company_updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()

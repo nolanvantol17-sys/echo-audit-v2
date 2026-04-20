@@ -165,6 +165,12 @@ _ADDITIVE_MIGRATIONS = [
     "ALTER TABLE interactions ADD COLUMN IF NOT EXISTS interaction_flags TEXT",
     "ALTER TABLE interactions ADD COLUMN IF NOT EXISTS interaction_responder_name TEXT",
 
+    # PR 5 / Phase 2: post-signup setup wizard dismissal flag.
+    # Mirrors migrations/2026_04_20_add_company_setup_dismissed_at.sql so
+    # dev/CI databases pick it up automatically; production gets it from the
+    # one-off migration script applied before the deploy.
+    "ALTER TABLE companies ADD COLUMN IF NOT EXISTS company_setup_dismissed_at TIMESTAMPTZ",
+
     # Phase 5: VoIP integration tables.
     # Full CREATE TABLE IF NOT EXISTS so this also lands on DBs that already
     # ran the pre-Phase-5 schema.sql (sentinel-gated on `statuses` which pre-dates

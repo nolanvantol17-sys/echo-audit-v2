@@ -172,6 +172,11 @@
       '</div>'
     )).join("");
 
+    // Show the Test button for any provider EXCEPT generic_webhook. That
+    // provider has no upstream API to call — the inbound webhook IS the
+    // integration — so a "test connection" button would always be misleading.
+    const showTestBtn = providerKey !== "generic_webhook";
+
     slot.innerHTML =
       '<form id="cred-form" autocomplete="off" style="margin-top:14px;">' +
         '<div class="panel-title" style="font-size:15px;margin-bottom:10px;">' +
@@ -193,13 +198,88 @@
           '<input id="webhook-secret-in" class="field-input" type="text" ' +
                  'placeholder="Leave blank to auto-generate">' +
         '</div>' +
-        '<button type="submit" class="btn btn-primary" id="btn-connect">Connect</button>' +
+        '<div id="test-result-slot"></div>' +
+        '<div class="hstack-wrap" style="gap:10px;">' +
+          (showTestBtn
+            ? '<button type="button" class="btn btn-ghost" id="btn-test-conn">Test connection</button>'
+            : '') +
+          '<button type="submit" class="btn btn-primary" id="btn-connect">Connect</button>' +
+        '</div>' +
       '</form>';
 
     $("#cred-form").addEventListener("submit", (ev) => {
       ev.preventDefault();
       submitCredentials(providerKey);
     });
+    if (showTestBtn) {
+      $("#btn-test-conn").addEventListener("click", () => testConnection(providerKey));
+    }
+  }
+
+  function gatherCredentials(providerKey) {
+    const form = $("#cred-form");
+    const p = providers.find((x) => x.key === providerKey);
+    const creds = {};
+    (p.credentials_fields || []).forEach((fk) => {
+      const inp = form.querySelector('[name="' + CSS.escape(fk) + '"]');
+      creds[fk] = inp ? inp.value.trim() : "";
+    });
+    return creds;
+  }
+
+  async function testConnection(providerKey) {
+    const slot = $("#test-result-slot");
+    const btn  = $("#btn-test-conn");
+    const creds = gatherCredentials(providerKey);
+
+    // Most providers need at least one of their credential fields to do a
+    // meaningful test. The backend also enforces this and returns ok:false
+    // — we still pre-check here so we don't burn a network roundtrip on
+    // an obviously-empty form.
+    const anyFilled = Object.values(creds).some((v) => v && v.length > 0);
+    if (!anyFilled) {
+      slot.innerHTML = renderTestMsg({
+        ok: false, supported: true,
+        message: "Fill in the credential fields above first.",
+      });
+      return;
+    }
+
+    btn.disabled = true;
+    const oldLabel = btn.textContent;
+    btn.textContent = "Testing…";
+    slot.innerHTML = '<div class="muted text-small" style="margin-bottom:10px;">Contacting ' +
+      EA.esc(providerLabel(providerKey)) + '…</div>';
+    try {
+      const resp = await EA.fetchJSON("/api/voip/test-connection", {
+        method: "POST",
+        body: { voip_config_provider: providerKey, credentials: creds },
+      });
+      slot.innerHTML = renderTestMsg(resp || {});
+    } catch (err) {
+      slot.innerHTML = renderTestMsg({
+        ok: false, supported: true,
+        message: err.message || "Connection test failed.",
+      });
+    } finally {
+      btn.disabled = false;
+      btn.textContent = oldLabel;
+    }
+  }
+
+  function renderTestMsg(resp) {
+    const ok = !!resp.ok;
+    const msg = EA.esc(resp.message || (ok ? "Connection OK." : "Connection failed."));
+    const docs = resp.docs_url
+      ? ' <a href="' + EA.esc(resp.docs_url) + '" target="_blank" rel="noopener">' +
+        'Provider docs ↗</a>'
+      : "";
+    const cls = ok ? "status-active" : (resp.supported === false ? "status-pending" : "status-inactive");
+    return (
+      '<div class="status-pill ' + cls + '" style="margin-bottom:10px;display:inline-block;">' +
+        msg + docs +
+      '</div>'
+    );
   }
 
   async function submitCredentials(providerKey) {
@@ -596,10 +676,13 @@
     newTr.setAttribute("data-audio-for", qid);
     newTr.innerHTML =
       '<td colspan="8">' +
-        '<audio controls preload="metadata" style="width:100%;" ' +
-               'src="/api/voip/queue/' + encodeURIComponent(qid) + '/audio"></audio>' +
+        EA.AudioPlayer.html({
+          src: '/api/voip/queue/' + encodeURIComponent(qid) + '/audio',
+          preload: 'metadata',
+        }) +
       '</td>';
     tr.parentNode.insertBefore(newTr, tr.nextSibling);
+    EA.AudioPlayer.attachAll(newTr);
     openAudioRow = newTr;
   }
 })();

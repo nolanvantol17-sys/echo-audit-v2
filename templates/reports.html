@@ -125,7 +125,11 @@ details.report-location > summary > .score-pill {
     const wrap = $("#reports-wrap");
     const keys = Object.keys(groups);
     if (!keys.length) {
-      wrap.innerHTML = '<div class="empty-state">No performance reports yet. They\'re built automatically as calls are graded.</div>';
+      wrap.innerHTML =
+        '<div class="empty-state">' +
+          'No performance reports yet. They\'re built automatically as calls are graded. ' +
+          '<a href="/app/grade" class="text-small" style="margin-left:4px;">Grade your first call →</a>' +
+        '</div>';
       return;
     }
 

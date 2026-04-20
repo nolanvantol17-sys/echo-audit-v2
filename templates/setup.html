@@ -1,0 +1,454 @@
+{% extends "base.html" %}
+{% block title %}Get Started | {{ client_name or "Echo Audit" }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  .setup-shell {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 24px 4px 48px;
+  }
+  .setup-intro {
+    color: var(--muted);
+    font-size: 0.92rem;
+    margin: 6px 0 22px;
+  }
+  .setup-steps {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+  }
+  .setup-step-pill {
+    flex: 1 1 0;
+    min-width: 140px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    color: var(--muted);
+    text-align: center;
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+  .setup-step-pill.active {
+    border-color: var(--accent);
+    color: var(--text);
+    background: var(--surface);
+  }
+  .setup-step-pill.done {
+    color: var(--success);
+    border-color: rgba(52,199,89,0.4);
+  }
+  .setup-step-pill .pill-label {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+  }
+  .setup-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 22px 24px;
+  }
+  .setup-card-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .setup-card-sub {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 18px;
+  }
+  .setup-form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+  .setup-form-row label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .setup-form-row input,
+  .setup-form-row select {
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+  }
+  .setup-form-row input:focus,
+  .setup-form-row select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(37,99,235,0.2);
+  }
+  .setup-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 18px;
+  }
+  .setup-actions .spacer { flex: 1; }
+  .setup-skip {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font: inherit;
+    cursor: pointer;
+    padding: 6px 8px;
+  }
+  .setup-skip:hover { color: var(--text); text-decoration: underline; }
+  .setup-error {
+    color: var(--danger);
+    font-size: 0.85rem;
+    margin-top: 8px;
+    display: none;
+  }
+  .setup-error.show { display: block; }
+  .setup-template-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .setup-template {
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: border-color 0.12s, background 0.12s;
+  }
+  .setup-template:hover { border-color: var(--border-strong); }
+  .setup-template.selected {
+    border-color: var(--accent);
+    background: var(--surface);
+  }
+  .setup-template-name { font-weight: 600; font-size: 0.92rem; }
+  .setup-template-meta { color: var(--muted); font-size: 0.78rem; margin-top: 2px; }
+  .setup-done {
+    text-align: center;
+    padding: 30px 10px;
+  }
+  .setup-done-emoji { font-size: 2rem; margin-bottom: 6px; }
+  .setup-done-title { font-weight: 700; font-size: 1.1rem; margin-bottom: 6px; }
+  .setup-done-sub { color: var(--muted); margin-bottom: 18px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="setup-shell">
+  <div class="page-title">Get started</div>
+  <div class="setup-intro">
+    Three quick steps and you're ready to grade your first call. You can change anything later in Settings.
+  </div>
+
+  <div class="setup-steps" id="setup-steps">
+    <div class="setup-step-pill" data-step="1"><span class="pill-label">Step 1</span>Add a location</div>
+    <div class="setup-step-pill" data-step="2"><span class="pill-label">Step 2</span>Pick a rubric</div>
+    <div class="setup-step-pill" data-step="3"><span class="pill-label">Step 3</span>Create a project</div>
+  </div>
+
+  {# ── Step 1: Location ─────────────────────────────── #}
+  <div class="setup-card" id="setup-card-1">
+    <div class="setup-card-title">Add your first location</div>
+    <div class="setup-card-sub">
+      Locations are the offices, properties, or branches whose calls you'll grade.
+    </div>
+    <div class="setup-form-row">
+      <label for="setup-loc-name">Location name</label>
+      <input type="text" id="setup-loc-name" placeholder="e.g. Downtown Office" autocomplete="off">
+    </div>
+    <div class="setup-form-row">
+      <label for="setup-loc-phone">Phone (optional)</label>
+      <input type="text" id="setup-loc-phone" placeholder="(555) 123-4567" autocomplete="off">
+    </div>
+    <div class="setup-error" id="setup-err-1"></div>
+    <div class="setup-actions">
+      <button type="button" class="setup-skip" id="setup-skip-1">Skip setup</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-primary" id="setup-next-1">Continue</button>
+    </div>
+  </div>
+
+  {# ── Step 2: Rubric ───────────────────────────────── #}
+  <div class="setup-card" id="setup-card-2" hidden>
+    <div class="setup-card-title">Pick a rubric template</div>
+    <div class="setup-card-sub">
+      Each template ships a balanced set of scoring criteria you can edit later.
+    </div>
+    <div class="setup-template-list" id="setup-template-list">
+      <div class="muted text-small">Loading templates…</div>
+    </div>
+    <div class="setup-form-row">
+      <label for="setup-rubric-name">Rubric name</label>
+      <input type="text" id="setup-rubric-name" placeholder="e.g. Downtown Office — Customer Service" autocomplete="off">
+    </div>
+    <div class="setup-error" id="setup-err-2"></div>
+    <div class="setup-actions">
+      <button type="button" class="setup-skip" id="setup-skip-2">Skip setup</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-ghost" id="setup-back-2">Back</button>
+      <button type="button" class="btn btn-primary" id="setup-next-2">Continue</button>
+    </div>
+  </div>
+
+  {# ── Step 3: Project ──────────────────────────────── #}
+  <div class="setup-card" id="setup-card-3" hidden>
+    <div class="setup-card-title">Create your first project</div>
+    <div class="setup-card-sub">
+      A project ties calls to a location and a rubric for grading.
+    </div>
+    <div class="setup-form-row">
+      <label for="setup-project-name">Project name</label>
+      <input type="text" id="setup-project-name" placeholder="e.g. April 2026 — Downtown Leasing" autocomplete="off">
+    </div>
+    <div class="setup-form-row">
+      <label for="setup-project-start">Start date</label>
+      <input type="date" id="setup-project-start">
+    </div>
+    <div class="setup-error" id="setup-err-3"></div>
+    <div class="setup-actions">
+      <button type="button" class="setup-skip" id="setup-skip-3">Skip setup</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-ghost" id="setup-back-3">Back</button>
+      <button type="button" class="btn btn-primary" id="setup-next-3">Finish</button>
+    </div>
+  </div>
+
+  {# ── Done ─────────────────────────────────────────── #}
+  <div class="setup-card" id="setup-card-done" hidden>
+    <div class="setup-done">
+      <div class="setup-done-title">You're all set.</div>
+      <div class="setup-done-sub">Your first project is ready. Time to grade your first call.</div>
+      <a href="/app/grade" class="btn btn-primary">Grade your first call →</a>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  "use strict";
+  const EA = window.EA;
+  const $ = (s) => document.querySelector(s);
+
+  const state = {
+    step: 1,
+    location_id: null,
+    rubric_group_id: null,
+    selected_template: null,
+  };
+
+  document.addEventListener("DOMContentLoaded", function () {
+    $("#setup-project-start").value = new Date().toISOString().slice(0, 10);
+    paintSteps();
+
+    $("#setup-skip-1").addEventListener("click", onSkip);
+    $("#setup-skip-2").addEventListener("click", onSkip);
+    $("#setup-skip-3").addEventListener("click", onSkip);
+
+    $("#setup-next-1").addEventListener("click", submitStep1);
+    $("#setup-back-2").addEventListener("click", () => goTo(1));
+    $("#setup-next-2").addEventListener("click", submitStep2);
+    $("#setup-back-3").addEventListener("click", () => goTo(2));
+    $("#setup-next-3").addEventListener("click", submitStep3);
+
+    $("#setup-loc-name").focus();
+  });
+
+  function paintSteps() {
+    document.querySelectorAll(".setup-step-pill").forEach((el) => {
+      const n = Number(el.getAttribute("data-step"));
+      el.classList.toggle("active", n === state.step);
+      el.classList.toggle("done", n < state.step);
+    });
+  }
+
+  function goTo(n) {
+    state.step = n;
+    [1, 2, 3].forEach((i) => {
+      const card = document.getElementById("setup-card-" + i);
+      if (card) card.hidden = (i !== n);
+    });
+    document.getElementById("setup-card-done").hidden = true;
+    paintSteps();
+    if (n === 2) loadTemplates();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function showError(stepNum, msg) {
+    const el = document.getElementById("setup-err-" + stepNum);
+    if (!el) return;
+    el.textContent = msg || "";
+    el.classList.toggle("show", !!msg);
+  }
+
+  async function onSkip() {
+    if (!confirm("Skip setup? You can always add locations, rubrics, and projects from Settings.")) return;
+    try {
+      await fetch("/app/setup/skip", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Accept": "application/json" },
+      });
+    } catch (_) { /* non-fatal — we redirect anyway */ }
+    window.location.href = "/app";
+  }
+
+  // ── Step 1: create location ──
+  async function submitStep1() {
+    const name = ($("#setup-loc-name").value || "").trim();
+    const phone = ($("#setup-loc-phone").value || "").trim();
+    if (!name) {
+      showError(1, "Please enter a location name.");
+      return;
+    }
+    showError(1, "");
+    const btn = $("#setup-next-1");
+    btn.disabled = true;
+    try {
+      const body = { location_name: name };
+      if (phone) body.location_phone = phone;
+      const created = await EA.fetchJSON("/api/locations", { method: "POST", body });
+      state.location_id = created.location_id;
+      // Default the rubric name to "<location> — <template>" once a template is picked.
+      const rubricNameField = $("#setup-rubric-name");
+      if (!rubricNameField.value) rubricNameField.value = name + " — Customer Service";
+      goTo(2);
+    } catch (err) {
+      showError(1, err.message || "Could not create location.");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // ── Step 2: load templates + apply chosen template to create rubric group ──
+  let templatesCache = null;
+  async function loadTemplates() {
+    if (templatesCache) return;
+    const wrap = $("#setup-template-list");
+    try {
+      const tmpl = await EA.fetchJSON("/api/rubric-templates");
+      templatesCache = tmpl || {};
+      const keys = Object.keys(templatesCache);
+      if (!keys.length) {
+        wrap.innerHTML = '<div class="muted text-small">No templates available.</div>';
+        return;
+      }
+      wrap.innerHTML = keys.map((k) => {
+        const t = templatesCache[k];
+        const count = (t.criteria || []).length;
+        return (
+          '<div class="setup-template" data-key="' + k + '">' +
+            '<div class="setup-template-name">' + EA.esc(t.name || k) + '</div>' +
+            '<div class="setup-template-meta">' + count + ' criteria · edit anytime in Settings</div>' +
+          '</div>'
+        );
+      }).join("");
+      wrap.querySelectorAll(".setup-template").forEach((el) => {
+        el.addEventListener("click", () => {
+          wrap.querySelectorAll(".setup-template").forEach((x) => x.classList.remove("selected"));
+          el.classList.add("selected");
+          state.selected_template = el.getAttribute("data-key");
+        });
+      });
+      // Pre-select "general" if present so the Continue button is one click away.
+      const def = templatesCache.general ? "general" : keys[0];
+      const defEl = wrap.querySelector('.setup-template[data-key="' + def + '"]');
+      if (defEl) defEl.click();
+    } catch (err) {
+      wrap.innerHTML = '<div class="section-error">' + EA.esc(err.message || "Failed to load templates.") + '</div>';
+    }
+  }
+
+  async function submitStep2() {
+    if (!state.location_id) { goTo(1); return; }
+    if (!state.selected_template) {
+      showError(2, "Pick a template to continue.");
+      return;
+    }
+    const rgName = ($("#setup-rubric-name").value || "").trim();
+    if (!rgName) {
+      showError(2, "Give the rubric a name so you can find it later.");
+      return;
+    }
+    showError(2, "");
+    const btn = $("#setup-next-2");
+    btn.disabled = true;
+    try {
+      const created = await EA.fetchJSON(
+        "/api/rubric-templates/" + encodeURIComponent(state.selected_template) + "/apply",
+        {
+          method: "POST",
+          body: { location_id: state.location_id, rg_name: rgName },
+        },
+      );
+      state.rubric_group_id = (created.rubric_group || {}).rubric_group_id;
+      if (!state.rubric_group_id) throw new Error("Rubric created but missing ID.");
+      const projectField = $("#setup-project-name");
+      if (!projectField.value) projectField.value = rgName;
+      goTo(3);
+    } catch (err) {
+      showError(2, err.message || "Could not create rubric.");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // ── Step 3: create project + dismiss wizard ──
+  async function submitStep3() {
+    if (!state.rubric_group_id) { goTo(2); return; }
+    const name = ($("#setup-project-name").value || "").trim();
+    const start = ($("#setup-project-start").value || "").trim();
+    if (!name) { showError(3, "Give the project a name."); return; }
+    if (!start) { showError(3, "Pick a start date."); return; }
+    showError(3, "");
+    const btn = $("#setup-next-3");
+    btn.disabled = true;
+    try {
+      await EA.fetchJSON("/api/projects", {
+        method: "POST",
+        body: {
+          project_name: name,
+          rubric_group_id: state.rubric_group_id,
+          project_start_date: start,
+        },
+      });
+      // Mark the wizard dismissed so a future delete-and-restart of all
+      // setup data doesn't pop the wizard back up. Best-effort — failure
+      // here is non-blocking; the suppression check still passes because
+      // a project now exists.
+      try {
+        await fetch("/app/setup/skip", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Accept": "application/json" },
+        });
+      } catch (_) { /* non-fatal */ }
+      [1, 2, 3].forEach((i) => { document.getElementById("setup-card-" + i).hidden = true; });
+      document.getElementById("setup-card-done").hidden = false;
+      // Update step pills to show all-done state.
+      state.step = 4;
+      paintSteps();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (err) {
+      showError(3, err.message || "Could not create project.");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+})();
+</script>
+{% endblock %}

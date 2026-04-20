@@ -127,6 +127,13 @@
       <label for="password">Password</label>
       <input type="password" id="password" name="password" placeholder="Enter your password" required>
 
+      <div style="margin-top:-10px; margin-bottom:14px; text-align:right;">
+        <a href="{{ url_for('forgot_password') }}"
+           style="color: var(--accent); text-decoration: none; font-size: 0.78rem; font-weight: 600;">
+          Forgot your password?
+        </a>
+      </div>
+
       <div class="remember-row">
         <input type="checkbox" id="remember" name="remember" value="1">
         <label for="remember">Remember me on this device</label>

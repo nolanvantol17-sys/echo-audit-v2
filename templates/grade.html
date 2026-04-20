@@ -366,6 +366,9 @@
       <span class="spacer"></span>
       <span class="text-small muted" id="form-hint"></span>
     </div>
+    <div class="text-small muted" style="margin-top:8px;">
+      Use <strong>Log unanswered call</strong> when no one picked up — records the attempt for tracking, no audio required.
+    </div>
   </form>
 </section>
 
@@ -479,7 +482,14 @@
     // to check the project_all_locations flag.
     const params = new URLSearchParams(window.location.search);
     const forcedProjectId = params.get("project_id");
-    if (forcedProjectId) await applyLockedProject(forcedProjectId);
+    if (forcedProjectId) {
+      await applyLockedProject(forcedProjectId);
+    } else {
+      applyGradeContext();
+    }
+
+    const recordAudio = document.getElementById("record-audio");
+    if (recordAudio) EA.AudioPlayer.enhance(recordAudio);
   }
 
   async function applyLockedProject(projectId) {
@@ -860,23 +870,65 @@
     } catch (err) { /* optional */ }
   }
 
+  const VOIP_QUEUE_POLL_MS = 30000;
+  let voipQueueTimer = null;
+
   async function checkVoip() {
     try {
       const cfg = await EA.fetchJSON("/api/voip/config");
       if (cfg && cfg.credentials_configured && cfg.voip_config_is_active) {
         state.voipConfigured = true;
         $("#tab-voip").hidden = false;
-        loadVoipQueue();
+        await loadVoipQueue();
+        startVoipQueuePolling();
+        document.addEventListener("visibilitychange", onVoipVisibilityChange);
       }
     } catch (err) { /* VoIP not configured — tab stays hidden. */ }
   }
 
+  function startVoipQueuePolling() {
+    stopVoipQueuePolling();
+    if (!state.voipConfigured) return;
+    voipQueueTimer = setInterval(loadVoipQueue, VOIP_QUEUE_POLL_MS);
+  }
+
+  function stopVoipQueuePolling() {
+    if (voipQueueTimer) {
+      clearInterval(voipQueueTimer);
+      voipQueueTimer = null;
+    }
+  }
+
+  function onVoipVisibilityChange() {
+    // Pause polling while the tab isn't visible — saves bandwidth and avoids
+    // a backlog of fetches firing all at once when the user returns. On
+    // resume, do an immediate fetch so the queue feels live.
+    if (!state.voipConfigured) return;
+    if (document.hidden) {
+      stopVoipQueuePolling();
+    } else {
+      loadVoipQueue();
+      startVoipQueuePolling();
+    }
+  }
+
   async function loadVoipQueue() {
     const box = $("#voip-queue-wrap");
+    // Snapshot the user's selection before tearing down the table so we can
+    // re-highlight the same row after re-render. If the selected call has
+    // since been graded by someone else (so it dropped off ?status=pending),
+    // we clear the hidden input and the form falls back to manual entry.
+    const previouslySelected = state.selectedQueueId;
     try {
       const items = await EA.fetchJSON("/api/voip/queue?status=pending");
       if (!items || !items.length) {
         box.innerHTML = '<div class="empty-state">No pending calls in the VoIP queue.</div>';
+        if (previouslySelected) {
+          state.selectedQueueId = null;
+          const hidden = $("#voip-queue-id");
+          if (hidden) hidden.value = "";
+          EA.toast("The selected queued call is no longer pending.", "info");
+        }
         return;
       }
       const head =
@@ -909,6 +961,20 @@
           if (tr.dataset.date) $("#gf-date").value = tr.dataset.date.slice(0,10);
         });
       });
+      if (previouslySelected) {
+        const tr = box.querySelector('tr[data-queue-id="' +
+                                     CSS.escape(String(previouslySelected)) + '"]');
+        if (tr) {
+          tr.style.background = "var(--accent-soft)";
+        } else {
+          // Selected call no longer pending — drop the stale selection so
+          // the user doesn't accidentally submit against a missing queue id.
+          state.selectedQueueId = null;
+          const hidden = $("#voip-queue-id");
+          if (hidden) hidden.value = "";
+          EA.toast("The selected queued call is no longer pending.", "info");
+        }
+      }
     } catch (err) {
       box.innerHTML = '<div class="section-error">' + EA.esc(err.message) + '</div>';
     }
@@ -1420,8 +1486,10 @@
 
     const audioHtml = (
       '<div style="margin-top:14px;">' +
-        '<audio class="app-audio" controls preload="none" ' +
-               'src="/api/interactions/' + interactionId + '/audio"></audio>' +
+        EA.AudioPlayer.html({
+          src: '/api/interactions/' + interactionId + '/audio',
+          preload: 'none',
+        }) +
       '</div>'
     );
 
@@ -1450,12 +1518,14 @@
       '<div class="hstack-wrap" style="margin-top:22px;">' +
         '<button type="button" class="btn btn-primary" id="btn-grade-another">Grade another call</button>' +
         '<a href="/app/history/' + interactionId + '" class="btn btn-ghost">View in History</a>' +
+        '<button type="button" class="btn btn-ghost" id="btn-grade-reset">Reset all</button>' +
       '</div>';
 
     section.hidden = false;
     $("#grade-form-section").hidden = true;
     const cs = document.getElementById("clarifying-section");
     if (cs) { cs.hidden = true; }
+    EA.AudioPlayer.attachAll(section);
     window.scrollTo({ top: 0, behavior: "smooth" });
 
     window.gradeComplete = true;
@@ -1725,8 +1795,75 @@
 
   function wireResultPanel(interactionId) {
     state.currentInteractionId = interactionId;
-    $("#btn-grade-another").addEventListener("click", resetForm);
+    $("#btn-grade-another").addEventListener("click", function () {
+      saveGradeContext();
+      resetForm();
+    });
+    const resetBtn = $("#btn-grade-reset");
+    if (resetBtn) {
+      resetBtn.addEventListener("click", function () {
+        clearGradeContext();
+        resetForm();
+      });
+    }
     wireRespondentEdit(interactionId);
+  }
+
+  // ── Project + location preservation across grades ────────
+  // After a grade, "Grade another call" stashes the just-used project +
+  // location into sessionStorage with a 5-minute TTL so the next grade in
+  // the same session pre-fills both dropdowns. "Reset all" clears the
+  // stash. Skipped entirely when the URL pins a project (?project_id=).
+  const GRADE_CTX_KEY = "ea.grade.context";
+  const GRADE_CTX_TTL_MS = 5 * 60 * 1000;
+
+  function saveGradeContext() {
+    const projectId  = ($("#gf-project")  || {}).value || "";
+    const locationId = ($("#gf-location") || {}).value || "";
+    if (!projectId && !locationId) return;
+    try {
+      sessionStorage.setItem(GRADE_CTX_KEY, JSON.stringify({
+        project_id:  projectId,
+        location_id: locationId,
+        ts: Date.now(),
+      }));
+    } catch (_) { /* private mode etc. — non-fatal */ }
+  }
+  function readGradeContext() {
+    try {
+      const raw = sessionStorage.getItem(GRADE_CTX_KEY);
+      if (!raw) return null;
+      const ctx = JSON.parse(raw);
+      if (!ctx || !ctx.ts) return null;
+      if ((Date.now() - ctx.ts) > GRADE_CTX_TTL_MS) {
+        sessionStorage.removeItem(GRADE_CTX_KEY);
+        return null;
+      }
+      return ctx;
+    } catch (_) { return null; }
+  }
+  function clearGradeContext() {
+    try { sessionStorage.removeItem(GRADE_CTX_KEY); } catch (_) {}
+  }
+  function applyGradeContext() {
+    const ctx = readGradeContext();
+    if (!ctx) return;
+    const locSel  = $("#gf-location");
+    const projSel = $("#gf-project");
+    if (!locSel || locSel.disabled) return;
+    if (!ctx.location_id) return;
+    const locOpt = Array.from(locSel.options).find(
+      (o) => String(o.value) === String(ctx.location_id),
+    );
+    if (!locOpt) return;
+    locSel.value = String(ctx.location_id);
+    onLocationChange();
+    if (ctx.project_id && projSel && !projSel.disabled) {
+      const projOpt = Array.from(projSel.options).find(
+        (o) => String(o.value) === String(ctx.project_id),
+      );
+      if (projOpt) projSel.value = String(ctx.project_id);
+    }
   }
 
   function resetForm() {
@@ -1757,6 +1894,9 @@
     if (intel) { intel.hidden = true; intel.innerHTML = ""; }
     switchTab("upload");
     window.scrollTo({ top: 0, behavior: "smooth" });
+
+    const params = new URLSearchParams(window.location.search);
+    if (!params.get("project_id")) applyGradeContext();
   }
 
   // ── No-answer flow ─────────────────────────────────
@@ -1803,6 +1943,7 @@
         },
       });
       EA.toast("Unanswered call logged (#" + res.interaction_id + ").", "success");
+      saveGradeContext();
       resetForm();
     } catch (err) {
       EA.toast(err.message || "Couldn't log the call", "error");
@@ -1814,6 +1955,7 @@
 
   window.addEventListener("beforeunload", function () {
     cleanupLiveRecording(true);
+    stopVoipQueuePolling();
     const h = document.getElementById("overlay-host");
     if (h) h.remove();
   });

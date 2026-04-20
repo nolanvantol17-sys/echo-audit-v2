@@ -115,8 +115,10 @@
 
     const audioHtml = d.interaction_audio_url
       ? '<div style="margin-top:14px;">' +
-          '<audio class="app-audio" controls preload="none" ' +
-                 'src="/api/interactions/' + interactionId + '/audio"></audio>' +
+          EA.AudioPlayer.html({
+            src: '/api/interactions/' + interactionId + '/audio',
+            preload: 'none',
+          }) +
         '</div>'
       : '';
 
@@ -145,6 +147,8 @@
       contextPanelHtml +
       (transcriptHtml ? '<div style="margin-top:14px;">' + transcriptHtml + '</div>' : '') +
       audioHtml;
+
+    EA.AudioPlayer.attachAll(host);
   }
 
   function renderRubricRow(r) {

@@ -371,7 +371,13 @@
   function renderLocations() {
     const wrap = $("#locations-wrap");
     if (!cache.locations.length) {
-      wrap.innerHTML = '<div class="empty-state">No locations yet. Add one to get started.</div>';
+      wrap.innerHTML =
+        '<div class="empty-state">' +
+          '<div style="margin-bottom:10px;">No locations yet. Add one to get started.</div>' +
+          '<button type="button" class="btn btn-primary btn-sm" id="btn-add-location-empty">Add location</button>' +
+        '</div>';
+      const emptyBtn = document.getElementById("btn-add-location-empty");
+      if (emptyBtn) emptyBtn.onclick = onAddLocation;
     } else {
       const rows = cache.locations.map((l) => (
         '<tr data-id="' + l.location_id + '">' +
@@ -525,7 +531,18 @@
     if (bulkBtn) bulkBtn.disabled = total >= max;
 
     if (!total) {
-      wrap.innerHTML = '<div class="empty-state">No terms yet. Add the names, brands, and phrases your team uses on calls.</div>';
+      wrap.innerHTML =
+        '<div class="empty-state">' +
+          '<div style="margin-bottom:10px;">No terms yet. Add the names, brands, and phrases your team uses on calls.</div>' +
+          '<div class="hstack-wrap" style="justify-content:center;gap:8px;">' +
+            '<button type="button" class="btn btn-ghost btn-sm" id="btn-add-hint-empty">Add term</button>' +
+            '<button type="button" class="btn btn-primary btn-sm" id="btn-bulk-add-hints-empty">Bulk add</button>' +
+          '</div>' +
+        '</div>';
+      const addEmpty  = document.getElementById("btn-add-hint-empty");
+      const bulkEmpty = document.getElementById("btn-bulk-add-hints-empty");
+      if (addEmpty)  addEmpty.onclick  = onAddHint;
+      if (bulkEmpty) bulkEmpty.onclick = onBulkAddHints;
       return;
     }
     const rows = cache.hints.map((h) => (

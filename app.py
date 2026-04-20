@@ -233,6 +233,86 @@ def _register_error_handlers(app):
         return e, 405
 
 
+# ── Helpers ─────────────────────────────────────────────────────
+
+
+def _setup_wizard_should_skip(company_id):
+    """Return True when /app/setup should redirect to the dashboard.
+
+    Skip when the company has any locations OR rubric_groups OR projects, OR
+    when the admin has previously dismissed the wizard. Returns True (skip)
+    on any DB error so a glitch in the suppression check never traps a real
+    user inside the wizard.
+    """
+    if company_id is None:
+        return True
+    try:
+        conn = db.get_conn()
+        try:
+            cur = conn.execute(
+                db.q("SELECT company_setup_dismissed_at FROM companies "
+                     "WHERE company_id = ?"),
+                (company_id,),
+            )
+            row = cur.fetchone()
+            dismissed = None
+            if row is not None:
+                try:
+                    dismissed = row["company_setup_dismissed_at"]
+                except (KeyError, TypeError, IndexError):
+                    dismissed = row[0]
+            if dismissed is not None:
+                return True
+
+            # Rubric groups don't carry company_id directly — they're scoped
+            # via locations. All-locations rubric groups (location_id NULL)
+            # are always created alongside a project, so the projects check
+            # covers that path.
+            for sql in (
+                "SELECT 1 FROM locations WHERE company_id = ? "
+                "AND location_deleted_at IS NULL LIMIT 1",
+                "SELECT 1 FROM projects WHERE company_id = ? "
+                "AND project_deleted_at IS NULL LIMIT 1",
+                "SELECT 1 FROM rubric_groups rg "
+                "JOIN locations l ON l.location_id = rg.location_id "
+                "WHERE l.company_id = ? AND rg.rg_deleted_at IS NULL "
+                "AND l.location_deleted_at IS NULL LIMIT 1",
+            ):
+                cur = conn.execute(db.q(sql), (company_id,))
+                if cur.fetchone() is not None:
+                    return True
+            return False
+        finally:
+            conn.close()
+    except Exception:
+        logger.exception("Setup-wizard suppression check failed")
+        return True
+
+
+def _mark_setup_dismissed(company_id):
+    conn = db.get_conn()
+    try:
+        if db.IS_POSTGRES:
+            conn.execute(
+                "UPDATE companies SET company_setup_dismissed_at = NOW() "
+                "WHERE company_id = %s AND company_setup_dismissed_at IS NULL",
+                (company_id,),
+            )
+        else:
+            conn.execute(
+                "UPDATE companies "
+                "SET company_setup_dismissed_at = CURRENT_TIMESTAMP "
+                "WHERE company_id = ? AND company_setup_dismissed_at IS NULL",
+                (company_id,),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 # ── Routes ──────────────────────────────────────────────────────
 
 
@@ -320,7 +400,12 @@ def register_routes(app):
                         error = "Account created but could not log in. Please try logging in."
                     else:
                         login_user(user)
-                        return redirect(url_for("app_home"))
+                        # First-time admins land in the setup wizard. The
+                        # wizard self-suppresses (redirects to /app) when
+                        # data already exists or has been dismissed, so this
+                        # is safe even if a fresh signup somehow inherits
+                        # state (e.g. the admin retried after a partial run).
+                        return redirect(url_for("setup_wizard"))
                 except ValueError as e:
                     error = str(e)
                 except Exception:
@@ -335,6 +420,84 @@ def register_routes(app):
             email=email,
             first_name=first_name,
             last_name=last_name,
+        )
+
+    # ── Forgot password ──
+    # Static informational page only — there is no email-based reset flow yet.
+    # The page tells users to contact their org admin (admins are listed when
+    # an email is provided, otherwise generic guidance is shown).
+    @app.route("/forgot-password", methods=["GET", "POST"])
+    def forgot_password():
+        if current_user.is_authenticated:
+            return redirect(url_for("change_password"))
+
+        submitted = False
+        admins = []
+        email = (request.form.get("email") if request.method == "POST" else "") or ""
+        email = email.strip()
+        if request.method == "POST":
+            submitted = True
+            if email:
+                try:
+                    conn = db.get_conn()
+                    try:
+                        # Resolve the company for the entered email, then list
+                        # active admins of that company so the user knows whom
+                        # to contact. Lookup is best-effort and does NOT reveal
+                        # whether the email itself exists (we always render the
+                        # same "If your account exists…" message below).
+                        cur = conn.execute(
+                            db.q("""SELECT d.company_id
+                                    FROM users u
+                                    JOIN departments d ON d.department_id = u.department_id
+                                    WHERE LOWER(u.user_email) = LOWER(?)
+                                    LIMIT 1"""),
+                            (email,),
+                        )
+                        row = cur.fetchone()
+                        company_id = None
+                        if row is not None:
+                            try:
+                                company_id = row["company_id"]
+                            except (KeyError, TypeError, IndexError):
+                                company_id = row[0]
+                        if company_id is not None:
+                            cur = conn.execute(
+                                db.q("""SELECT u.user_email, u.user_first_name, u.user_last_name
+                                        FROM users u
+                                        JOIN user_roles ur ON ur.user_role_id = u.user_role_id
+                                        JOIN roles      r  ON r.role_id       = ur.role_id
+                                        JOIN departments d ON d.department_id = u.department_id
+                                        WHERE d.company_id = ?
+                                          AND r.role_name IN ('admin','super_admin')
+                                          AND u.status_id = 1
+                                        ORDER BY u.user_email
+                                        LIMIT 5"""),
+                                (company_id,),
+                            )
+                            for r in cur.fetchall():
+                                try:
+                                    admins.append({
+                                        "email": r["user_email"],
+                                        "name":  " ".join(
+                                            s for s in (r["user_first_name"], r["user_last_name"]) if s
+                                        ).strip() or None,
+                                    })
+                                except (KeyError, TypeError, IndexError):
+                                    admins.append({
+                                        "email": r[0],
+                                        "name":  " ".join(s for s in (r[1], r[2]) if s).strip() or None,
+                                    })
+                    finally:
+                        conn.close()
+                except Exception:
+                    logger.exception("Forgot-password admin lookup failed")
+                    # Swallow — the page still renders the generic message.
+        return render_template(
+            "forgot_password.html",
+            email=email,
+            submitted=submitted,
+            admins=admins,
         )
 
     # ── Change password ──
@@ -428,6 +591,32 @@ def register_routes(app):
     @login_required
     def app_home():
         return render_template("index.html")
+
+    # ── Post-signup setup wizard ──
+    # Walks a brand-new admin through creating one location, one rubric, and
+    # one project so the empty product has something to grade against. The
+    # wizard itself reuses the existing JSON APIs; this route just renders
+    # the shell and gates entry.
+    @app.route("/app/setup")
+    @login_required
+    def setup_wizard():
+        # Non-admins have nothing to do here — back to the dashboard.
+        if current_user.role not in ("admin", "super_admin"):
+            return redirect(url_for("app_home"))
+        if _setup_wizard_should_skip(get_effective_company_id()):
+            return redirect(url_for("app_home"))
+        return render_template("setup.html")
+
+    @app.route("/app/setup/skip", methods=["POST"])
+    @login_required
+    def setup_wizard_skip():
+        if current_user.role not in ("admin", "super_admin"):
+            return jsonify({"error": "Forbidden"}), 403
+        cid = get_effective_company_id()
+        if cid is None:
+            return jsonify({"error": "No active company"}), 400
+        _mark_setup_dismissed(cid)
+        return jsonify({"ok": True})
 
     # ── FE stub routes — each renders a placeholder that extends base.html.
     # Data loads client-side via fetch(); the routes only render the shell.

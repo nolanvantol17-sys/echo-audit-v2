@@ -22,6 +22,7 @@ import logging
 import secrets
 from datetime import datetime
 
+import requests
 from flask import Blueprint, Response, jsonify, request, send_file
 from flask_login import current_user, login_required
 
@@ -543,6 +544,126 @@ def get_webhook_url():
 @login_required
 def list_providers():
     return jsonify({"providers": PROVIDER_INFO})
+
+
+# ═══════════════════════════════════════════════════════════════
+# POST /api/voip/test-connection   (admin+, in-memory creds)
+# ═══════════════════════════════════════════════════════════════
+#
+# Lightweight connectivity check used by the setup form. Accepts the same
+# {voip_config_provider, credentials} body shape as POST /config but does
+# NOT persist anything — credentials are validated against the provider's
+# API and discarded. Returns:
+#   { ok: bool, supported: bool, message: str, docs_url?: str }
+#
+# Only Dialpad and Aircall have live test paths today (they expose cheap
+# authenticated GETs that confirm the secret is good). Other API-based
+# providers report supported=False with a docs link so the user knows
+# where to verify their credentials manually. Generic Webhook has no
+# upstream API at all and the UI hides the button — but the endpoint
+# answers safely if called directly.
+
+_TEST_TIMEOUT_S = 8
+
+
+def _test_dialpad(creds):
+    api_key = (creds.get("api_key") or "").strip()
+    if not api_key:
+        return {"ok": False, "supported": True,
+                "message": "API key is required to test the connection."}
+    try:
+        resp = requests.get(
+            "https://dialpad.com/api/v2/users",
+            headers={"Authorization": f"Bearer {api_key}"},
+            params={"limit": 1},
+            timeout=_TEST_TIMEOUT_S,
+        )
+    except requests.RequestException as exc:
+        return {"ok": False, "supported": True,
+                "message": f"Could not reach Dialpad: {exc}"}
+    if resp.status_code in (401, 403):
+        return {"ok": False, "supported": True,
+                "message": "Dialpad rejected the API key — double-check it in your Dialpad admin console."}
+    if resp.status_code >= 400:
+        return {"ok": False, "supported": True,
+                "message": f"Dialpad returned HTTP {resp.status_code}."}
+    return {"ok": True, "supported": True,
+            "message": "Dialpad credentials look good."}
+
+
+def _test_aircall(creds):
+    api_id = (creds.get("api_id") or "").strip()
+    api_token = (creds.get("api_token") or "").strip()
+    if not api_id or not api_token:
+        return {"ok": False, "supported": True,
+                "message": "API ID and API token are required to test the connection."}
+    try:
+        resp = requests.get(
+            "https://api.aircall.io/v1/ping",
+            auth=(api_id, api_token),
+            timeout=_TEST_TIMEOUT_S,
+        )
+    except requests.RequestException as exc:
+        return {"ok": False, "supported": True,
+                "message": f"Could not reach Aircall: {exc}"}
+    if resp.status_code in (401, 403):
+        return {"ok": False, "supported": True,
+                "message": "Aircall rejected the API ID/token — verify them in your Aircall dashboard."}
+    if resp.status_code >= 400:
+        return {"ok": False, "supported": True,
+                "message": f"Aircall returned HTTP {resp.status_code}."}
+    return {"ok": True, "supported": True,
+            "message": "Aircall credentials look good."}
+
+
+_PROVIDER_TESTERS = {
+    "dialpad": _test_dialpad,
+    "aircall": _test_aircall,
+}
+
+
+def _docs_url_for(provider_key):
+    for p in PROVIDER_INFO:
+        if p["key"] == provider_key:
+            return p.get("docs_url")
+    return None
+
+
+@voip_bp.route("/test-connection", methods=["POST"])
+@login_required
+@role_required("admin", "super_admin")
+def test_voip_connection():
+    body = _body()
+    provider_key = (body.get("voip_config_provider") or "").strip()
+    credentials = body.get("credentials") or {}
+
+    if provider_key not in PROVIDERS:
+        return _err("Unknown voip_config_provider", 400)
+    if not isinstance(credentials, dict):
+        return _err("credentials must be an object", 400)
+
+    docs_url = _docs_url_for(provider_key)
+    tester = _PROVIDER_TESTERS.get(provider_key)
+    if tester is None:
+        # Provider doesn't have a live test path yet. Tell the user instead
+        # of pretending success — and surface the docs URL so they can verify
+        # credentials by hand.
+        return jsonify({
+            "ok": False,
+            "supported": False,
+            "message": ("Live connection testing isn't available for this "
+                        "provider yet. Save your credentials and we'll surface "
+                        "any auth errors when the first webhook arrives."),
+            "docs_url": docs_url,
+        })
+    try:
+        result = tester(credentials)
+    except Exception:
+        logger.exception("VoIP test-connection failed for %s", provider_key)
+        return _err("Connection test crashed — check server logs.", 500)
+    if docs_url and not result.get("ok"):
+        result["docs_url"] = docs_url
+    return jsonify(result)
 
 
 # ═══════════════════════════════════════════════════════════════
