@@ -363,12 +363,36 @@
   }
 
   async function onDeleteDept(id) {
-    const ok = await EA.confirmDialog({
-      title: "Delete department?",
-      body:  "Members in this department will need to be reassigned.",
-      okLabel: "Delete",
-      variant: "danger",
-    });
+    let impact;
+    try {
+      impact = await EA.fetchJSON("/api/departments/" + encodeURIComponent(id) + "/deletion-impact");
+    } catch (err) {
+      EA.toast("Couldn't check deletion impact. Try again.", "error");
+      return;
+    }
+    const members = (impact.counts && impact.counts.members) || 0;
+    const name = impact.name || "this department";
+
+    let ok;
+    if (members > 0) {
+      ok = await EA.strongConfirmDialog({
+        title: "Delete department?",
+        intro: members + " active member" + (members === 1 ? "" : "s") +
+               " currently belong" + (members === 1 ? "s" : "") + ' to "' + name +
+               '". They will be left without a department and will need to be reassigned.',
+        requiredPhrase: name,
+        promptLabel: "Type the department name to confirm:",
+        okLabel: "Delete",
+        variant: "danger",
+      });
+    } else {
+      ok = await EA.confirmDialog({
+        title: "Delete department?",
+        body:  '"' + name + '" has no members. This removes it from the list.',
+        okLabel: "Delete",
+        variant: "danger",
+      });
+    }
     if (!ok) return;
     try {
       await EA.fetchJSON("/api/departments/" + encodeURIComponent(id), { method: "DELETE" });

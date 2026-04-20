@@ -345,10 +345,13 @@
   }
 
   async function disconnect() {
-    const ok = await EA.confirmDialog({
+    const ok = await EA.strongConfirmDialog({
       title: "Disconnect VoIP?",
-      body:  "Incoming calls will no longer be delivered to Echo Audit. " +
-             "Calls already in the queue will remain available.",
+      intro: "Incoming calls will no longer be delivered to Echo Audit. " +
+             "Calls already in the queue will remain available. " +
+             "Reconnecting later requires re-entering credentials.",
+      requiredPhrase: "DISCONNECT",
+      promptLabel: "Type DISCONNECT to confirm:",
       okLabel: "Disconnect",
       variant: "danger",
     });

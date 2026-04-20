@@ -329,6 +329,40 @@ def delete_rubric_group(rubric_group_id):
         conn.close()
 
 
+@rubrics_bp.route("/rubric-groups/<int:rubric_group_id>/deletion-impact", methods=["GET"])
+@login_required
+@role_required("admin", "super_admin")
+def rubric_group_deletion_impact(rubric_group_id):
+    company_id, err = _require_company()
+    if err: return err
+
+    conn = get_conn()
+    try:
+        rg = _get_rubric_group_in_company(conn, rubric_group_id, company_id)
+        if not rg:
+            return _err("Rubric not found", 404)
+
+        cur = conn.execute(
+            q("""SELECT COUNT(*) AS cnt FROM projects
+                 WHERE rubric_group_id = ? AND project_deleted_at IS NULL"""),
+            (rubric_group_id,),
+        )
+        row = cur.fetchone()
+        projects_count = row["cnt"] if IS_POSTGRES else row[0]
+
+        deletable = projects_count == 0
+        payload = {
+            "deletable": deletable,
+            "name": rg.get("rg_name"),
+            "counts": {"projects": projects_count},
+        }
+        if not deletable:
+            payload["reason"] = "This rubric is used by active projects. Remove or reassign those projects first."
+        return jsonify(payload)
+    finally:
+        conn.close()
+
+
 # ═══════════════════════════════════════════════════════════════
 # RUBRIC ITEMS
 # ═══════════════════════════════════════════════════════════════

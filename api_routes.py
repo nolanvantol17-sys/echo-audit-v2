@@ -439,6 +439,45 @@ def delete_location(location_id):
         conn.close()
 
 
+@api_bp.route("/locations/<int:location_id>/deletion-impact", methods=["GET"])
+@login_required
+@role_required("admin", "super_admin")
+def location_deletion_impact(location_id):
+    company_id, err = _require_company()
+    if err: return err
+
+    conn = get_conn()
+    try:
+        loc = _get_location(conn, location_id, company_id)
+        if not loc:
+            return _err("Location not found", 404)
+
+        cur = conn.execute(q("""
+            SELECT COUNT(*) AS cnt FROM rubric_groups
+            WHERE location_id = ? AND rg_deleted_at IS NULL
+        """), (location_id,))
+        row = cur.fetchone()
+        rubrics_count = row["cnt"] if IS_POSTGRES else row[0]
+
+        cur = conn.execute(q("""
+            SELECT COUNT(DISTINCT p.project_id) AS cnt FROM projects p
+            LEFT JOIN campaigns c ON c.campaign_id = p.campaign_id
+            LEFT JOIN rubric_groups rg ON rg.rubric_group_id = p.rubric_group_id
+            WHERE p.company_id = ? AND p.project_deleted_at IS NULL
+              AND (c.location_id = ? OR rg.location_id = ?)
+        """), (company_id, location_id, location_id))
+        row = cur.fetchone()
+        projects_count = row["cnt"] if IS_POSTGRES else row[0]
+
+        return jsonify({
+            "deletable": True,
+            "name": dict(loc).get("location_name"),
+            "counts": {"rubrics": rubrics_count, "projects": projects_count},
+        })
+    finally:
+        conn.close()
+
+
 # ── Bulk upload ────────────────────────────────────────────────
 # Accepts CSV / Excel. Flexible column matching, tolerant of extra
 # columns and blank rows. Duplicates (by case-insensitive name within
@@ -825,6 +864,35 @@ def delete_department(department_id):
         conn.close()
 
 
+@api_bp.route("/departments/<int:department_id>/deletion-impact", methods=["GET"])
+@login_required
+@role_required("admin", "super_admin")
+def department_deletion_impact(department_id):
+    company_id, err = _require_company()
+    if err: return err
+
+    conn = get_conn()
+    try:
+        dept = _get_department(conn, department_id, company_id)
+        if not dept:
+            return _err("Department not found", 404)
+
+        cur = conn.execute(q("""
+            SELECT COUNT(*) AS cnt FROM users
+            WHERE department_id = ? AND user_deleted_at IS NULL
+        """), (department_id,))
+        row = cur.fetchone()
+        members_count = row["cnt"] if IS_POSTGRES else row[0]
+
+        return jsonify({
+            "deletable": True,
+            "name": dict(dept).get("department_name"),
+            "counts": {"members": members_count},
+        })
+    finally:
+        conn.close()
+
+
 # ═══════════════════════════════════════════════════════════════
 # CAMPAIGNS  (per-location, accessible to all authenticated users)
 # ═══════════════════════════════════════════════════════════════
@@ -942,6 +1010,35 @@ def delete_campaign(campaign_id):
                 return _err("Campaign is referenced by existing records", 409)
             raise
         return _ok()
+    finally:
+        conn.close()
+
+
+@api_bp.route("/campaigns/<int:campaign_id>/deletion-impact", methods=["GET"])
+@login_required
+@role_required("admin", "super_admin")
+def campaign_deletion_impact(campaign_id):
+    company_id, err = _require_company()
+    if err: return err
+
+    conn = get_conn()
+    try:
+        camp = _get_campaign(conn, campaign_id, company_id)
+        if not camp:
+            return _err("Campaign not found", 404)
+
+        cur = conn.execute(q("""
+            SELECT COUNT(*) AS cnt FROM projects
+            WHERE campaign_id = ? AND project_deleted_at IS NULL
+        """), (campaign_id,))
+        row = cur.fetchone()
+        projects_count = row["cnt"] if IS_POSTGRES else row[0]
+
+        return jsonify({
+            "deletable": True,
+            "name": dict(camp).get("campaign_name"),
+            "counts": {"projects": projects_count},
+        })
     finally:
         conn.close()
 
@@ -1133,6 +1230,37 @@ def delete_project(project_id):
         )
         conn.commit()
         return _ok()
+    finally:
+        conn.close()
+
+
+@api_bp.route("/projects/<int:project_id>/deletion-impact", methods=["GET"])
+@login_required
+@role_required("admin", "super_admin")
+def project_deletion_impact(project_id):
+    company_id, err = _require_company()
+    if err: return err
+
+    conn = get_conn()
+    try:
+        proj = _get_project(conn, project_id, company_id)
+        if not proj:
+            return _err("Project not found", 404)
+
+        cur = conn.execute(q("""
+            SELECT COUNT(*) AS cnt FROM interactions
+            WHERE project_id = ?
+              AND interaction_overall_score IS NOT NULL
+              AND interaction_deleted_at IS NULL
+        """), (project_id,))
+        row = cur.fetchone()
+        graded_count = row["cnt"] if IS_POSTGRES else row[0]
+
+        return jsonify({
+            "deletable": True,
+            "name": dict(proj).get("project_name"),
+            "counts": {"graded_interactions": graded_count},
+        })
     finally:
         conn.close()
 

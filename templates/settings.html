@@ -446,10 +446,41 @@
   }
 
   async function onDeleteLocation(id) {
-    const ok = await EA.confirmDialog({
-      title: "Delete location?", body:"This removes the location from the list.",
-      okLabel:"Delete", variant:"danger",
-    });
+    let impact;
+    try {
+      impact = await EA.fetchJSON("/api/locations/" + encodeURIComponent(id) + "/deletion-impact");
+    } catch (err) {
+      EA.toast("Couldn't check deletion impact. Try again.", "error");
+      return;
+    }
+    const counts   = impact.counts || {};
+    const rubrics  = counts.rubrics  || 0;
+    const projects = counts.projects || 0;
+    const name = impact.name || "this location";
+
+    let ok;
+    if (rubrics > 0 || projects > 0) {
+      const parts = [];
+      if (rubrics  > 0) parts.push(rubrics  + " rubric"  + (rubrics  === 1 ? "" : "s"));
+      if (projects > 0) parts.push(projects + " project" + (projects === 1 ? "" : "s"));
+      ok = await EA.strongConfirmDialog({
+        title: "Delete location?",
+        intro: '"' + name + '" has ' + parts.join(" and ") +
+               " attached. Deleting it will hide them from the list and they will no longer " +
+               "appear in reports for this location.",
+        requiredPhrase: name,
+        promptLabel: "Type the location name to confirm:",
+        okLabel: "Delete",
+        variant: "danger",
+      });
+    } else {
+      ok = await EA.confirmDialog({
+        title: "Delete location?",
+        body:  '"' + name + '" has no rubrics or projects. This removes it from the list.',
+        okLabel: "Delete",
+        variant: "danger",
+      });
+    }
     if (!ok) return;
     try {
       await EA.fetchJSON("/api/locations/" + encodeURIComponent(id), { method:"DELETE" });
@@ -827,7 +858,37 @@
   }
 
   async function onDeleteCampaign(id) {
-    const ok = await EA.confirmDialog({ title:"Delete campaign?", okLabel:"Delete", variant:"danger" });
+    let impact;
+    try {
+      impact = await EA.fetchJSON("/api/campaigns/" + encodeURIComponent(id) + "/deletion-impact");
+    } catch (err) {
+      EA.toast("Couldn't check deletion impact. Try again.", "error");
+      return;
+    }
+    const projects = (impact.counts && impact.counts.projects) || 0;
+    const name = impact.name || "this campaign";
+
+    let ok;
+    if (projects > 0) {
+      ok = await EA.strongConfirmDialog({
+        title: "Delete campaign?",
+        intro: projects + " project" + (projects === 1 ? " is" : "s are") +
+               ' attached to "' + name + '". Deleting the campaign will hide ' +
+               (projects === 1 ? "it" : "them") + " from the list and remove " +
+               (projects === 1 ? "it" : "them") + " from this campaign's reports.",
+        requiredPhrase: name,
+        promptLabel: "Type the campaign name to confirm:",
+        okLabel: "Delete",
+        variant: "danger",
+      });
+    } else {
+      ok = await EA.confirmDialog({
+        title: "Delete campaign?",
+        body:  '"' + name + '" has no projects. This removes it from the list.',
+        okLabel: "Delete",
+        variant: "danger",
+      });
+    }
     if (!ok) return;
     try {
       await EA.fetchJSON("/api/campaigns/" + encodeURIComponent(id), { method:"DELETE" });
@@ -934,9 +995,21 @@
   }
 
   async function onDeleteRubricGroup(id) {
+    let impact;
+    try {
+      impact = await EA.fetchJSON("/api/rubric-groups/" + encodeURIComponent(id) + "/deletion-impact");
+    } catch (err) {
+      EA.toast("Couldn't check deletion impact. Try again.", "error");
+      return;
+    }
+    if (!impact.deletable) {
+      EA.toast(impact.reason || "This rubric cannot be deleted.", "error");
+      return;
+    }
+    const name = impact.name || "this rubric";
     const ok = await EA.confirmDialog({
       title:"Delete rubric?",
-      body:"Blocked if any active projects reference this rubric.",
+      body:  '"' + name + '" has no active projects attached. This removes it from the list.',
       okLabel:"Delete", variant:"danger",
     });
     if (!ok) return;
@@ -1334,7 +1407,37 @@
   }
 
   async function onDeleteProject(id) {
-    const ok = await EA.confirmDialog({ title:"Delete project?", okLabel:"Delete", variant:"danger" });
+    let impact;
+    try {
+      impact = await EA.fetchJSON("/api/projects/" + encodeURIComponent(id) + "/deletion-impact");
+    } catch (err) {
+      EA.toast("Couldn't check deletion impact. Try again.", "error");
+      return;
+    }
+    const graded = (impact.counts && impact.counts.graded_interactions) || 0;
+    const name = impact.name || "this project";
+
+    let ok;
+    if (graded > 0) {
+      ok = await EA.strongConfirmDialog({
+        title: "Delete project?",
+        intro: '"' + name + '" has ' + graded + " graded interaction" +
+               (graded === 1 ? "" : "s") +
+               ". Deleting the project hides " + (graded === 1 ? "it" : "them") +
+               " and removes " + (graded === 1 ? "it" : "them") + " from this project's reports.",
+        requiredPhrase: name,
+        promptLabel: "Type the project name to confirm:",
+        okLabel: "Delete",
+        variant: "danger",
+      });
+    } else {
+      ok = await EA.confirmDialog({
+        title: "Delete project?",
+        body:  '"' + name + '" has no graded interactions. This removes it from the list.',
+        okLabel: "Delete",
+        variant: "danger",
+      });
+    }
     if (!ok) return;
     try {
       await EA.fetchJSON("/api/projects/" + encodeURIComponent(id), { method:"DELETE" });
