@@ -318,12 +318,12 @@
     const score = (r.status_id === 44)
       ? '<span class="score-pill gray">N/A</span>'
       : '<span class="score-pill ' + cls + '">' + EA.formatScore(r.interaction_overall_score) + '</span>';
-    const statusName = statusIdToName(r.status_id);
-    const statusCls = "status-" + statusName.replace(/_/g,'-');
+    const statusName = EA.statusIdToName(r.status_id);
+    const statusCls = "status-" + EA.statusIdToSlug(r.status_id);
     const actions =
       '<a class="btn btn-ghost btn-sm row-action action-view" href="/app/history/' + iid + '">View</a>' +
       (state.canDelete
-        ? '<button type="button" class="btn btn-ghost btn-sm row-action action-delete" data-iid="' + iid + '">Delete</button>'
+        ? '<button type="button" class="btn btn-ghost btn-sm row-action action-delete" data-iid="' + iid + '">Remove</button>'
         : '');
     const callTime = EA.formatCallTime(
       r.interaction_call_start_time,
@@ -350,25 +350,12 @@
     );
   }
 
-  // Local map of status IDs → readable names. Matches the seed in db.py.
-  function statusIdToName(id) {
-    switch (Number(id)) {
-      case 40: return "transcribing";
-      case 41: return "awaiting_clarification";
-      case 42: return "grading";
-      case 43: return "graded";
-      case 44: return "no_answer";
-      case 45: return "pending";
-      default: return "—";
-    }
-  }
-
   // ── Delete ───────────────────────────────────────────
   async function onDelete(interactionId) {
     const ok = await EA.confirmDialog({
-      title:   "Delete interaction?",
-      body:    "This soft-deletes interaction #" + interactionId + ". It can be restored by a super admin.",
-      okLabel: "Delete",
+      title:   "Remove interaction?",
+      body:    "This removes interaction #" + interactionId + " from the list.",
+      okLabel: "Remove",
       cancelLabel: "Cancel",
       variant: "danger",
     });
@@ -381,9 +368,9 @@
       state.all = state.all.filter(function (r) { return r.interaction_id !== Number(interactionId); });
       state.shown = Math.min(state.shown, state.all.length);
       render();
-      EA.toast("Interaction deleted.", "success");
+      EA.toast("Interaction removed.", "success");
     } catch (err) {
-      EA.toast(err.message || "Delete failed", "error");
+      EA.toast(err.message || "Remove failed", "error");
     }
   }
 

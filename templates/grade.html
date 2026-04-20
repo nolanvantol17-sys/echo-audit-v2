@@ -362,7 +362,7 @@
          this gating must be made explicit on the button itself, otherwise
          onLogNoAnswer() can fire without a location_id and the backend
          will 400. #}
-      <button type="button" class="btn btn-ghost" id="btn-no-answer">Log no answer</button>
+      <button type="button" class="btn btn-ghost" id="btn-no-answer">Log unanswered call</button>
       <span class="spacer"></span>
       <span class="text-small muted" id="form-hint"></span>
     </div>
@@ -737,7 +737,7 @@
     const lastDateD  = intel.li_last_call_date
                         ? EA.formatDate(intel.li_last_call_date) : null;
     const noAnsBit   = noAns
-      ? '<span class="intel-stat-meta">' + noAns + ' no answer</span>' : '';
+      ? '<span class="intel-stat-meta">' + noAns + ' unanswered</span>' : '';
 
     const avgPill = (avgRaw === null || avgRaw === undefined)
       ? '<span class="score-pill gray">—</span>'
@@ -767,7 +767,7 @@
     if (intel.li_last_call_outcome === 'no_answer') {
       lastRowHtml =
         '<div class="intel-last-row">' +
-          '<span class="intel-noanswer-badge">Last call: No Answer</span>' +
+          '<span class="intel-noanswer-badge">Last call: unanswered</span>' +
           (lastDateD ? '<span class="muted text-small">on ' + EA.esc(lastDateD) + '</span>' : '') +
         '</div>';
     } else if (intel.li_last_call_score !== null && intel.li_last_call_score !== undefined) {
@@ -1153,7 +1153,7 @@
     if (!state.liveRecordingBlob) return;
     $("#record-wrap").classList.add("confirmed");
     $("#btn-record-use").textContent = "✓ Ready to submit";
-    $("#form-hint").textContent = "Live recording ready — click Submit for grading.";
+    $("#form-hint").textContent = "Recording ready — click Submit to grade.";
   }
 
   function cleanupLiveRecording(reset) {
@@ -1311,7 +1311,7 @@
       overlay.close();
       $("#form-hint").textContent = "";
       const retry = await EA.confirmDialog({
-        title: "Grading failed",
+        title: "We couldn't grade that call",
         body:  err.message || "Something went wrong grading that call.",
         okLabel: "Retry",
         cancelLabel: "Dismiss",
@@ -1783,9 +1783,9 @@
       '</div>';
 
     const ok = await EA.confirmDialog({
-      title: "Log a no-answer call",
+      title: "Log an unanswered call",
       body:  body,
-      okLabel: "Log no answer",
+      okLabel: "Log unanswered",
       cancelLabel: "Cancel",
     });
     if (!ok) return;
@@ -1802,10 +1802,10 @@
           caller_user_id: $("#gf-caller").value || null,
         },
       });
-      EA.toast("No-answer logged (#" + res.interaction_id + ").", "success");
+      EA.toast("Unanswered call logged (#" + res.interaction_id + ").", "success");
       resetForm();
     } catch (err) {
-      EA.toast(err.message || "Failed to log no answer", "error");
+      EA.toast(err.message || "Couldn't log the call", "error");
     }
   }
 

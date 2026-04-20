@@ -457,6 +457,32 @@
     });
   }
 
+  // Shared status-id helpers. Name is user-facing copy (with spaces);
+  // slug is the CSS-selector form used in `.status-<slug>` class names.
+  // Kept as separate functions so copy changes don't break CSS selectors.
+  function statusIdToName(id) {
+    switch (Number(id)) {
+      case 40: return "Transcribing";
+      case 41: return "Awaiting clarification";
+      case 42: return "Grading";
+      case 43: return "Graded";
+      case 44: return "No answer";
+      case 45: return "Pending";
+      default: return "—";
+    }
+  }
+  function statusIdToSlug(id) {
+    switch (Number(id)) {
+      case 40: return "transcribing";
+      case 41: return "awaiting-clarification";
+      case 42: return "grading";
+      case 43: return "graded";
+      case 44: return "no-answer";
+      case 45: return "pending";
+      default: return "none";
+    }
+  }
+
   // Expose as a single namespace so template scripts can use them.
   window.EA = {
     fetchJSON:       fetchJSON,
@@ -474,5 +500,7 @@
     strongConfirmDialog: strongConfirmDialog,
     formDialog:      formDialog,
     showOverlay:     showOverlay,
+    statusIdToName:  statusIdToName,
+    statusIdToSlug:  statusIdToSlug,
   };
 })();

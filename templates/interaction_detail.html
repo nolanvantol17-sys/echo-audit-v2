@@ -16,7 +16,7 @@
     </button>
     {% endif %}
     {% if user_role in ('admin','super_admin') %}
-    <button type="button" class="btn btn-ghost btn-sm" id="btn-delete">Delete</button>
+    <button type="button" class="btn btn-ghost btn-sm" id="btn-delete">Remove</button>
     {% endif %}
   </div>
 </div>
@@ -76,19 +76,19 @@
 
   async function onDelete() {
     const ok = await EA.confirmDialog({
-      title: "Delete interaction?",
-      body:  "This soft-deletes interaction #" + INTERACTION_ID + ".",
-      okLabel: "Delete",
+      title: "Remove interaction?",
+      body:  "This removes interaction #" + INTERACTION_ID + " from the list.",
+      okLabel: "Remove",
       cancelLabel: "Cancel",
       variant: "danger",
     });
     if (!ok) return;
     try {
       await EA.fetchJSON("/api/interactions/" + INTERACTION_ID, { method: "DELETE" });
-      EA.toast("Interaction deleted.", "success");
+      EA.toast("Interaction removed.", "success");
       setTimeout(function () { window.location.href = "/app/history"; }, 600);
     } catch (err) {
-      EA.toast(err.message || "Delete failed", "error");
+      EA.toast(err.message || "Remove failed", "error");
     }
   }
 

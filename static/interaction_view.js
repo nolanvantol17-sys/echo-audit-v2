@@ -38,8 +38,8 @@
          '</span>')
       : "";
 
-    const statusName = statusIdToName(d.status_id);
-    const statusCls  = "status-" + statusName.replace(/_/g,'-');
+    const statusName = EA.statusIdToName(d.status_id);
+    const statusCls  = "status-" + EA.statusIdToSlug(d.status_id);
 
     const flagsHtml = (d.interaction_flags || "")
       ? '<div class="flag-banner">' + EA.esc(d.interaction_flags) + '</div>' : "";
@@ -223,22 +223,8 @@
     );
   }
 
-  function statusIdToName(id) {
-    switch (Number(id)) {
-      case 40: return "transcribing";
-      case 41: return "awaiting_clarification";
-      case 42: return "grading";
-      case 43: return "graded";
-      case 44: return "no_answer";
-      case 45: return "pending";
-      default:
-        return "—";
-    }
-  }
-
   window.EA = window.EA || {};
   window.EA.InteractionView = {
     render: render,
-    statusIdToName: statusIdToName,
   };
 })();

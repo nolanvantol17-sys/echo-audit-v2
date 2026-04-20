@@ -84,8 +84,8 @@
   </summary>
   <div class="collapsible-body">
     <div class="section-desc">
-      Teach the transcription engine the names, terms, and phrases specific to your business.
-      Improves transcription accuracy on future calls.
+      Teach the transcription engine the names, terms, and phrases specific to your business —
+      improves accuracy on future calls.
     </div>
     <div class="hstack-wrap" style="margin-bottom:10px;">
       <span class="muted text-small" id="hints-count-line">Loading…</span>
@@ -101,15 +101,15 @@
 </details>
 {% endif %}
 
-{# ── Rubric Groups ─────────────────────────────────── #}
+{# ── Rubrics ─────────────────────────────────── #}
 <details class="collapsible settings-section">
-  <summary>Rubric Groups</summary>
+  <summary>Rubrics</summary>
   <div class="collapsible-body">
     <div class="hstack-wrap" style="margin-bottom:10px;">
-      <span class="muted text-small">Group related rubric items; projects are assigned to a group.</span>
+      <span class="muted text-small">Each rubric is a set of scoring criteria assigned to a project.</span>
       <span class="spacer"></span>
       <button type="button" class="btn btn-ghost btn-sm" id="btn-use-template">Use a template</button>
-      <button type="button" class="btn btn-primary btn-sm" id="btn-add-rubric-group">Create rubric group</button>
+      <button type="button" class="btn btn-primary btn-sm" id="btn-add-rubric-group">Create rubric</button>
     </div>
     <div id="rubric-wrap">
       <div class="skeleton" style="height:18px;margin:8px 0;"></div>
@@ -133,7 +133,7 @@
         <div>
           <div class="panel-title" style="margin:0 0 2px;">Bulk upload locations</div>
           <div class="muted text-small">
-            Upload a CSV or Excel file with columns: Name, Phone, Engagement Date
+            Upload a CSV or Excel file with columns: Name, Phone, First Contact Date
           </div>
         </div>
         <a href="#" id="bulk-template-link" class="text-small">Download template</a>
@@ -237,14 +237,21 @@
   const $ = (s) => document.querySelector(s);
 
   const GRADE_TARGETS = [
-    {value:"caller",     label:"Caller"},
-    {value:"respondent", label:"Respondent"},
+    {value:"caller",     label:"The person who placed the call"},
+    {value:"respondent", label:"The person who answered the call"},
   ];
   const SCORE_TYPES = [
-    {value:"out_of_10",      label:"Out of 10"},
+    {value:"out_of_10",      label:"1–10 scale"},
     {value:"yes_no",         label:"Yes / No"},
     {value:"yes_no_pending", label:"Yes / No / Pending"},
   ];
+  // Inline label helper for any raw rg_grade_target/ri_score_type value we
+  // need to display outside a form. Keep local — promote to EA.* only once a
+  // second template needs it.
+  function gradeTargetLabel(v) {
+    const o = GRADE_TARGETS.find((x) => x.value === v);
+    return o ? o.label : (v || "—");
+  }
 
   // Shared caches so child dropdowns don't each refetch.
   const cache = { locations: [], campaigns: [], rubricGroups: [], projects: [], hints: [] };
@@ -392,7 +399,7 @@
       )).join("");
       wrap.innerHTML =
         '<table class="history-table"><thead><tr>' +
-          '<th>Name</th><th>Phone</th><th>Engagement date</th><th>Status</th><th></th>' +
+          '<th>Name</th><th>Phone</th><th>First contact date</th><th>Status</th><th></th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
     }
     $("#btn-add-location").onclick = onAddLocation;
@@ -406,7 +413,7 @@
       fields: [
         { name:"location_name",  label:"Name", required:true },
         { name:"location_phone", label:"Phone" },
-        { name:"location_engagement_date", label:"Engagement date", type:"date" },
+        { name:"location_engagement_date", label:"First contact date", type:"date" },
       ],
       okLabel: "Create",
     });
@@ -426,7 +433,7 @@
       fields: [
         { name:"location_name",  label:"Name", required:true, value: loc.location_name },
         { name:"location_phone", label:"Phone", value: loc.location_phone },
-        { name:"location_engagement_date", label:"Engagement date", type:"date",
+        { name:"location_engagement_date", label:"First contact date", type:"date",
           value: loc.location_engagement_date ? String(loc.location_engagement_date).slice(0,10) : "" },
       ],
     });
@@ -440,7 +447,7 @@
 
   async function onDeleteLocation(id) {
     const ok = await EA.confirmDialog({
-      title: "Delete location?", body:"Soft-delete only. Can be restored by a super admin.",
+      title: "Delete location?", body:"This removes the location from the list.",
       okLabel:"Delete", variant:"danger",
     });
     if (!ok) return;
@@ -562,7 +569,7 @@
 
   async function onDeleteHint(id) {
     const ok = await EA.confirmDialog({
-      title:"Remove term?", body:"Soft-delete only. Can be restored by a super admin.",
+      title:"Remove term?", body:"This removes the term from your list.",
       okLabel:"Remove", variant:"danger",
     });
     if (!ok) return;
@@ -628,7 +635,7 @@
     tmplLink.addEventListener("click", (e) => {
       e.preventDefault();
       const csv =
-        "Location Name,Phone Number,Engagement Date\n" +
+        "Location Name,Phone Number,First Contact Date\n" +
         "Example Property,555-123-4567,2026-01-15\n";
       const url = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
       const a = document.createElement("a");
@@ -829,13 +836,13 @@
     } catch (err) { EA.toast(err.message || "Delete failed", "error"); }
   }
 
-  // ── Rubric Groups ─────────────────────────────
+  // ── Rubrics ─────────────────────────────
   async function loadRubricGroups() {
     try {
       cache.rubricGroups = await EA.fetchJSON("/api/rubric-groups");
     } catch (err) {
       cache.rubricGroups = [];
-      EA.showError("#rubric-wrap", err.message || "Failed to load rubric groups.");
+      EA.showError("#rubric-wrap", err.message || "Failed to load rubrics.");
       return;
     }
     renderRubricGroups();
@@ -844,13 +851,13 @@
   function renderRubricGroups() {
     const wrap = $("#rubric-wrap");
     if (!cache.rubricGroups.length) {
-      wrap.innerHTML = '<div class="empty-state">No rubric groups yet. Create one or start from a template.</div>';
+      wrap.innerHTML = '<div class="empty-state">No rubrics yet. Create one or start from a template.</div>';
     } else {
       const rows = cache.rubricGroups.map((rg) => (
         '<tr data-id="' + rg.rubric_group_id + '">' +
           '<td>' + EA.esc(rg.rg_name) + '</td>' +
           '<td>' + EA.esc(rg.location_name || "—") + '</td>' +
-          '<td>' + EA.esc(rg.rg_grade_target) + '</td>' +
+          '<td>' + EA.esc(gradeTargetLabel(rg.rg_grade_target)) + '</td>' +
           '<td><span class="status-pill">' + EA.esc(rg.status_name || "—") + '</span></td>' +
           '<td style="text-align:right;">' +
             '<button type="button" class="btn btn-ghost btn-sm rg-items" data-id="' + rg.rubric_group_id + '">Manage items</button>' +
@@ -864,7 +871,7 @@
       )).join("");
       wrap.innerHTML =
         '<table class="history-table"><thead><tr>' +
-          '<th>Name</th><th>Location</th><th>Grade target</th><th>Status</th><th></th>' +
+          '<th>Name</th><th>Location</th><th>Who we\'re grading</th><th>Status</th><th></th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
     }
     $("#btn-add-rubric-group").onclick = onAddRubricGroup;
@@ -877,10 +884,10 @@
   async function onAddRubricGroup() {
     if (!cache.locations.length) return EA.toast("Add a location first.", "error");
     const data = await EA.formDialog({
-      title: "Create rubric group",
+      title: "Create rubric",
       fields: [
         { name:"rg_name", label:"Name", required:true },
-        { name:"rg_grade_target", label:"Grade target", type:"select", required:true, options: GRADE_TARGETS, value:"respondent" },
+        { name:"rg_grade_target", label:"Who we're grading", type:"select", required:true, options: GRADE_TARGETS, value:"respondent" },
         { name:"location_id", label:"Location", type:"select", required:true, options: locationOptions() },
       ],
       okLabel:"Create",
@@ -896,7 +903,7 @@
         },
       });
       await loadRubricGroups();
-      EA.toast("Rubric group created.", "success");
+      EA.toast("Rubric created.", "success");
     } catch (err) { EA.toast(err.message || "Create failed", "error"); }
   }
 
@@ -904,10 +911,10 @@
     const rg = cache.rubricGroups.find((x) => String(x.rubric_group_id) === String(id));
     if (!rg) return;
     const data = await EA.formDialog({
-      title: "Edit rubric group",
+      title: "Edit rubric",
       fields: [
         { name:"rg_name", label:"Name", required:true, value: rg.rg_name },
-        { name:"rg_grade_target", label:"Grade target", type:"select", required:true, options: GRADE_TARGETS, value: rg.rg_grade_target },
+        { name:"rg_grade_target", label:"Who we're grading", type:"select", required:true, options: GRADE_TARGETS, value: rg.rg_grade_target },
         { name:"location_id", label:"Location", type:"select", required:true, options: locationOptions(), value: rg.location_id },
       ],
     });
@@ -922,21 +929,21 @@
         },
       });
       await loadRubricGroups();
-      EA.toast("Rubric group saved.", "success");
+      EA.toast("Rubric saved.", "success");
     } catch (err) { EA.toast(err.message || "Save failed", "error"); }
   }
 
   async function onDeleteRubricGroup(id) {
     const ok = await EA.confirmDialog({
-      title:"Delete rubric group?",
-      body:"Blocked if any active projects reference this group.",
+      title:"Delete rubric?",
+      body:"Blocked if any active projects reference this rubric.",
       okLabel:"Delete", variant:"danger",
     });
     if (!ok) return;
     try {
       await EA.fetchJSON("/api/rubric-groups/" + encodeURIComponent(id), { method:"DELETE" });
       await loadRubricGroups();
-      EA.toast("Rubric group deleted.", "success");
+      EA.toast("Rubric deleted.", "success");
     } catch (err) { EA.toast(err.message || "Delete failed", "error"); }
   }
 
@@ -955,8 +962,8 @@
       fields: [
         { name:"template_key", label:"Template", type:"select", required:true, options: tplOptions },
         { name:"location_id", label:"Location", type:"select", required:true, options: locationOptions() },
-        { name:"rg_name", label:"Name this rubric group", required:true },
-        { name:"rg_grade_target", label:"Grade target", type:"select", required:true, options: GRADE_TARGETS, value:"respondent" },
+        { name:"rg_name", label:"Name this rubric", required:true },
+        { name:"rg_grade_target", label:"Who we're grading", type:"select", required:true, options: GRADE_TARGETS, value:"respondent" },
       ],
       okLabel:"Create from template",
     });
@@ -1244,7 +1251,7 @@
       )).join("");
       wrap.innerHTML =
         '<table class="history-table"><thead><tr>' +
-          '<th>Name</th><th>Campaign</th><th>Rubric group</th><th>Start</th><th>End</th><th>Status</th><th></th>' +
+          '<th>Name</th><th>Campaign</th><th>Rubric</th><th>Start</th><th>End</th><th>Status</th><th></th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
     }
     $("#btn-add-project").onclick = onAddProject;
@@ -1258,12 +1265,12 @@
   }
 
   async function onAddProject() {
-    if (!cache.rubricGroups.length) return EA.toast("Create a rubric group first.", "error");
+    if (!cache.rubricGroups.length) return EA.toast("Create a rubric first.", "error");
     const data = await EA.formDialog({
       title:"Add project",
       fields: [
         { name:"project_name", label:"Name", required:true },
-        { name:"rubric_group_id", label:"Rubric group", type:"select", required:true,
+        { name:"rubric_group_id", label:"Rubric", type:"select", required:true,
           options: cache.rubricGroups.map((r) => ({value:r.rubric_group_id, label:r.rg_name})) },
         { name:"campaign_id", label:"Campaign", type:"select",
           options: [{value:"", label:"—"}].concat(cache.campaigns.map((c) => ({value:c.campaign_id, label:c.campaign_name}))) },
@@ -1297,7 +1304,7 @@
       title:"Edit project",
       fields: [
         { name:"project_name", label:"Name", required:true, value: p.project_name },
-        { name:"rubric_group_id", label:"Rubric group", type:"select", required:true,
+        { name:"rubric_group_id", label:"Rubric", type:"select", required:true,
           options: cache.rubricGroups.map((r) => ({value:r.rubric_group_id, label:r.rg_name})),
           value: p.rubric_group_id },
         { name:"campaign_id", label:"Campaign", type:"select",

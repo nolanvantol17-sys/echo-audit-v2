@@ -1156,7 +1156,9 @@
     if (!w.editingProjectId) {
       rows.push(
         ["Rubric", (w.rubricName || "Custom") + " — " + w.rubricItems.length + " items"],
-        ["Grade target", w.gradeTarget === "caller" ? "The caller" : "The respondent"],
+        ["Who we're grading", w.gradeTarget === "caller"
+          ? "The person who placed the call"
+          : "The person who answered the call"],
       );
     }
     $("#wizard-summary").innerHTML = rows.map(function (r) {
