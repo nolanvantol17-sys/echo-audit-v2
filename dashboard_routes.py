@@ -272,8 +272,7 @@ def get_dashboard():
                     i.interaction_overall_score,
                     i.interaction_flags,
                     p.project_name,
-                    p.project_all_locations,
-                    COALESCE(loc_c.location_name, loc_rg.location_name) AS location_name,
+                    loc.location_name,
                     COALESCE(
                         r.respondent_name,
                         NULLIF(TRIM(u.user_first_name || ' ' || u.user_last_name), ''),
@@ -281,23 +280,15 @@ def get_dashboard():
                     ) AS respondent_name
                  FROM interactions i
                  JOIN projects p ON p.project_id = i.project_id
-                 LEFT JOIN campaigns     cmp     ON cmp.campaign_id     = p.campaign_id
-                 LEFT JOIN locations     loc_c   ON loc_c.location_id   = cmp.location_id
-                 LEFT JOIN rubric_groups rg      ON rg.rubric_group_id  = p.rubric_group_id
-                 LEFT JOIN locations     loc_rg  ON loc_rg.location_id  = rg.location_id
-                 LEFT JOIN users       u ON u.user_id       = i.respondent_user_id
-                 LEFT JOIN respondents r ON r.respondent_id = i.respondent_id
+                 LEFT JOIN locations   loc ON loc.location_id   = i.interaction_location_id
+                 LEFT JOIN users       u   ON u.user_id         = i.respondent_user_id
+                 LEFT JOIN respondents r   ON r.respondent_id   = i.respondent_id
                  WHERE p.company_id = ? AND i.interaction_deleted_at IS NULL
                  ORDER BY i.interaction_id DESC
                  LIMIT 5"""),
             (company_id,),
         )
         recent = _rows(cur)
-        # Mask the resolved location for all-locations projects so the UI
-        # shows "All Locations" rather than a specific (and misleading) name.
-        for row in recent:
-            if row.get("project_all_locations"):
-                row["location_name"] = "All Locations"
 
         return jsonify({
             "stat_cards": {

@@ -125,7 +125,7 @@ def export_interactions():
                 FROM interactions i
                 JOIN projects   p   ON p.project_id  = i.project_id
                 LEFT JOIN campaigns cmp ON cmp.campaign_id = p.campaign_id
-                LEFT JOIN locations loc ON loc.location_id = cmp.location_id
+                LEFT JOIN locations loc ON loc.location_id = i.interaction_location_id
                 LEFT JOIN users caller     ON caller.user_id     = i.caller_user_id
                 LEFT JOIN users respondent ON respondent.user_id = i.respondent_user_id
                 WHERE {where_clause}

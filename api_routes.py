@@ -1335,15 +1335,15 @@ def get_project_summary(project_id):
         avg_score = round(float(avg), 1) if avg is not None else None
         call_count = rollup.get("call_count") or 0
 
-        # Recent calls — last 5 for this project. Resolve location through the
-        # campaign join (and fall back to rubric_groups) so all-locations
-        # projects can show the per-call location in the hub's mini table.
+        # Recent calls — last 5 for this project. Per-call location comes
+        # from the interaction's stamped location_id (source of truth), so
+        # all-locations projects show the actual property per row.
         cur = conn.execute(q("""
             SELECT
                 i.interaction_id, i.interaction_date, i.interaction_overall_score,
                 i.interaction_call_start_time, i.interaction_uploaded_at,
                 i.interaction_flags,
-                COALESCE(loc_c.location_name, loc_rg.location_name) AS location_name,
+                loc.location_name,
                 COALESCE(
                     r.respondent_name,
                     NULLIF(TRIM(u.user_first_name || ' ' || u.user_last_name), ''),
@@ -1351,12 +1351,9 @@ def get_project_summary(project_id):
                 ) AS respondent_name
             FROM interactions i
             JOIN projects p ON p.project_id = i.project_id
-            LEFT JOIN campaigns     cmp    ON cmp.campaign_id    = p.campaign_id
-            LEFT JOIN locations     loc_c  ON loc_c.location_id  = cmp.location_id
-            LEFT JOIN rubric_groups rg     ON rg.rubric_group_id = p.rubric_group_id
-            LEFT JOIN locations     loc_rg ON loc_rg.location_id = rg.location_id
-            LEFT JOIN users         u      ON u.user_id          = i.respondent_user_id
-            LEFT JOIN respondents   r      ON r.respondent_id    = i.respondent_id
+            LEFT JOIN locations   loc ON loc.location_id   = i.interaction_location_id
+            LEFT JOIN users       u   ON u.user_id         = i.respondent_user_id
+            LEFT JOIN respondents r   ON r.respondent_id   = i.respondent_id
             WHERE i.project_id = ? AND i.interaction_deleted_at IS NULL
             ORDER BY i.interaction_id DESC
             LIMIT 5

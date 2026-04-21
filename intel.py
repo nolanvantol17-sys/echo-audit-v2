@@ -67,18 +67,15 @@ def _compute_safe(location_id, company_id):
 def compute_location_intel(location_id, company_id):
     """Refresh the location_intel row for (location, company).
 
-    Pulls every non-deleted interaction whose project's campaign or rubric
-    group resolves to this location, computes rolling stats, and asks Claude
-    for an updated brief. Upserts the row and sets li_last_computed_at.
+    Pulls every non-deleted interaction stamped with this location_id at
+    creation time, computes rolling stats, and asks Claude for an updated
+    brief. Upserts the row and sets li_last_computed_at.
 
     Skips the Claude call (and leaves AI columns NULL) when there are no
     graded calls — only no-answers or no calls at all.
     """
     conn = get_conn()
     try:
-        # Pull all interactions for this location via either join path.
-        # Projects can resolve location through campaigns OR rubric_groups,
-        # so COALESCE through both.
         cur = conn.execute(q("""
             SELECT
                 i.interaction_id,
@@ -91,10 +88,8 @@ def compute_location_intel(location_id, company_id):
                 i.interaction_overall_assessment,
                 i.status_id
               FROM interactions i
-              JOIN projects     p  ON p.project_id      = i.project_id
-              LEFT JOIN campaigns     c  ON c.campaign_id    = p.campaign_id
-              LEFT JOIN rubric_groups rg ON rg.rubric_group_id = p.rubric_group_id
-             WHERE COALESCE(c.location_id, rg.location_id) = ?
+              JOIN projects p ON p.project_id = i.project_id
+             WHERE i.interaction_location_id = ?
                AND p.company_id = ?
                AND i.interaction_deleted_at IS NULL
              ORDER BY i.interaction_id DESC

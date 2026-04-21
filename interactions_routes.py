@@ -179,29 +179,6 @@ def _project_location_id(conn, project_id):
     return row.get("location_id")
 
 
-def _project_location_id_via_either(project_id):
-    """Resolve a project's location via campaigns OR rubric_groups.
-
-    Single-location projects without a campaign get their location from
-    rubric_groups.location_id. Used for the location-intel refresh hook
-    where we want the location even when the campaigns join is null.
-    """
-    conn = get_conn()
-    try:
-        cur = conn.execute(
-            q("""SELECT COALESCE(c.location_id, rg.location_id) AS location_id
-                   FROM projects p
-                   LEFT JOIN campaigns     c  ON c.campaign_id     = p.campaign_id
-                   LEFT JOIN rubric_groups rg ON rg.rubric_group_id = p.rubric_group_id
-                  WHERE p.project_id = ?"""),
-            (project_id,),
-        )
-        row = _row_to_dict(cur.fetchone())
-    finally:
-        conn.close()
-    return row.get("location_id") if row else None
-
-
 def _is_meaningful_respondent_name(name):
     if name is None:
         return False
@@ -823,9 +800,8 @@ def _grade_and_persist(*, interaction_id, company_id, project_id,
         respondent_id=respondent_id,
     )
     # Refresh the location intel card in the background — non-blocking.
-    location_id_for_intel = _project_location_id_via_either(project_id)
-    if location_id_for_intel:
-        compute_location_intel_async(location_id_for_intel, company_id)
+    if effective_location_id:
+        compute_location_intel_async(effective_location_id, company_id)
 
     response = _build_grade_response(
         interaction_id, grade_result, total_score, flags, transcript=transcript
@@ -1194,11 +1170,9 @@ def list_interactions():
         filters.append("i.status_id = ?")
         params.append(args["status_id"])
     if args.get("location_id"):
-        # Match through the campaign join (cmp.location_id) — the same path
-        # the SELECT uses for location_name. Single-location projects without
-        # a campaign won't appear here; that's acceptable for filtering since
-        # the pickable Location dropdown is sourced from /api/locations.
-        filters.append("cmp.location_id = ?")
+        # Filter by the per-call stamped location (source of truth) so
+        # all-locations projects surface here too.
+        filters.append("i.interaction_location_id = ?")
         params.append(args["location_id"])
     if args.get("q"):
         filters.append("LOWER(i.interaction_transcript) LIKE LOWER(?)")
@@ -1249,7 +1223,7 @@ def list_interactions():
         FROM interactions i
         JOIN projects   p   ON p.project_id  = i.project_id
         LEFT JOIN campaigns cmp ON cmp.campaign_id = p.campaign_id
-        LEFT JOIN locations loc ON loc.location_id = cmp.location_id
+        LEFT JOIN locations loc ON loc.location_id = i.interaction_location_id
         LEFT JOIN users caller     ON caller.user_id     = i.caller_user_id
         LEFT JOIN users respondent ON respondent.user_id = i.respondent_user_id
         LEFT JOIN respondents r    ON r.respondent_id    = i.respondent_id
@@ -1296,7 +1270,7 @@ def get_interaction(interaction_id):
             FROM interactions i
             JOIN projects   p   ON p.project_id  = i.project_id
             LEFT JOIN campaigns cmp ON cmp.campaign_id = p.campaign_id
-            LEFT JOIN locations loc ON loc.location_id = cmp.location_id
+            LEFT JOIN locations loc ON loc.location_id = i.interaction_location_id
             LEFT JOIN users caller     ON caller.user_id     = i.caller_user_id
             LEFT JOIN users respondent ON respondent.user_id = i.respondent_user_id
             LEFT JOIN respondents r    ON r.respondent_id    = i.respondent_id
@@ -1599,9 +1573,8 @@ def regrade_with_context(interaction_id):
         respondent_user_id=interaction["respondent_user_id"],
         respondent_id=respondent_id,
     )
-    location_id_for_intel = _project_location_id_via_either(interaction["project_id"])
-    if location_id_for_intel:
-        compute_location_intel_async(location_id_for_intel, company_id)
+    if effective_location_id:
+        compute_location_intel_async(effective_location_id, company_id)
 
     response = _build_grade_response(
         interaction_id, grade_result, total_score, flags, transcript=transcript
