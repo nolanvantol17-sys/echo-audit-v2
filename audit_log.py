@@ -12,7 +12,7 @@ Action type IDs and target entity type IDs match the seed in db.py:
                6=submitted, 7=unposted
     TARGETS:   1=user, 2=interaction, 3=project, 4=phone_routing, 5=company,
                6=rubric_group, 7=rubric_item, 8=department, 9=location,
-               10=transcription_hint
+               10=transcription_hint, 11=campaign
 """
 
 import json
@@ -42,6 +42,7 @@ ENTITY_RUBRIC_ITEM  = 7
 ENTITY_DEPARTMENT   = 8
 ENTITY_LOCATION     = 9
 ENTITY_TRANSCRIPTION_HINT = 10
+ENTITY_CAMPAIGN     = 11
 
 
 def write_audit_log(actor_user_id, action_type_id, target_entity_type_id=None,

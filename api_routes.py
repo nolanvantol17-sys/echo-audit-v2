@@ -18,8 +18,8 @@ from flask_login import current_user, login_required
 import auth
 from audit_log import (
     ACTION_CREATED, ACTION_DELETED, ACTION_UPDATED,
-    ENTITY_COMPANY, ENTITY_DEPARTMENT, ENTITY_LOCATION, ENTITY_PHONE_ROUTING,
-    ENTITY_PROJECT, ENTITY_USER,
+    ENTITY_CAMPAIGN, ENTITY_COMPANY, ENTITY_DEPARTMENT, ENTITY_LOCATION,
+    ENTITY_PHONE_ROUTING, ENTITY_PROJECT, ENTITY_USER,
     write_audit_log,
 )
 from auth import role_required
@@ -128,6 +128,19 @@ def _get_project(conn, project_id, company_id):
         q("""SELECT * FROM projects
              WHERE project_id = ? AND company_id = ? AND project_deleted_at IS NULL"""),
         (project_id, company_id),
+    )
+    return cur.fetchone()
+
+
+def _get_campaign_in_company(conn, campaign_id, company_id):
+    """Return campaign row if its project belongs to this company (soft-delete aware)."""
+    cur = conn.execute(
+        q("""SELECT c.* FROM campaigns c
+             JOIN projects p ON p.project_id = c.project_id
+             WHERE c.campaign_id = ? AND p.company_id = ?
+               AND c.campaign_deleted_at IS NULL
+               AND p.project_deleted_at IS NULL"""),
+        (campaign_id, company_id),
     )
     return cur.fetchone()
 
@@ -1266,6 +1279,143 @@ def project_deletion_impact(project_id):
             "name": dict(proj).get("project_name"),
             "counts": {"graded_interactions": graded_count},
         })
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+# CAMPAIGNS  (scoped to a project)
+# ═══════════════════════════════════════════════════════════════
+#
+# Campaigns are a per-project label applied to an interaction at grade time,
+# so downstream reports can slice by campaign (e.g. "April 2026 push").
+# Interactions reference campaigns via interactions.campaign_id (SET NULL on
+# delete). Soft-deleted campaigns remain on the existing interactions for
+# historical reporting; the list endpoint filters them out so new grades can't
+# pick a tombstoned campaign.
+
+
+@api_bp.route("/projects/<int:project_id>/campaigns", methods=["GET"])
+@login_required
+def list_campaigns(project_id):
+    company_id, err = _require_company()
+    if err: return err
+
+    conn = get_conn()
+    try:
+        if not _get_project(conn, project_id, company_id):
+            return _err("Project not found", 404)
+        # Order by last-used (most recent interaction) first, then by creation
+        # date for campaigns that have never been used. Matches the default-
+        # selection rule on the Grade page (pre-select items[0]).
+        cur = conn.execute(q("""
+            SELECT c.campaign_id, c.project_id, c.campaign_name,
+                   c.campaign_created_at, c.campaign_updated_at,
+                   MAX(i.interaction_created_at) AS last_used_at
+            FROM campaigns c
+            LEFT JOIN interactions i
+                   ON i.campaign_id = c.campaign_id
+                  AND i.interaction_deleted_at IS NULL
+            WHERE c.project_id = ? AND c.campaign_deleted_at IS NULL
+            GROUP BY c.campaign_id, c.project_id, c.campaign_name,
+                     c.campaign_created_at, c.campaign_updated_at
+            ORDER BY last_used_at DESC NULLS LAST, c.campaign_created_at DESC
+        """) if IS_POSTGRES else q("""
+            SELECT c.campaign_id, c.project_id, c.campaign_name,
+                   c.campaign_created_at, c.campaign_updated_at,
+                   MAX(i.interaction_created_at) AS last_used_at
+            FROM campaigns c
+            LEFT JOIN interactions i
+                   ON i.campaign_id = c.campaign_id
+                  AND i.interaction_deleted_at IS NULL
+            WHERE c.project_id = ? AND c.campaign_deleted_at IS NULL
+            GROUP BY c.campaign_id
+            ORDER BY last_used_at IS NULL, last_used_at DESC, c.campaign_created_at DESC
+        """), (project_id,))
+        return jsonify(_rows(cur))
+    finally:
+        conn.close()
+
+
+@api_bp.route("/projects/<int:project_id>/campaigns", methods=["POST"])
+@login_required
+@role_required("admin", "caller", "super_admin")
+def create_campaign(project_id):
+    company_id, err = _require_company()
+    if err: return err
+
+    body = _body()
+    name = (body.get("campaign_name") or "").strip()
+    if not name:
+        return _err("Missing campaign_name", 400)
+
+    conn = get_conn()
+    try:
+        if not _get_project(conn, project_id, company_id):
+            return _err("Project not found", 404)
+
+        # Case-insensitive duplicate guard, scoped to live campaigns in the
+        # same project. Tombstoned rows don't block a new creation with the
+        # same name.
+        dup = conn.execute(
+            q("""SELECT campaign_id FROM campaigns
+                 WHERE project_id = ? AND campaign_deleted_at IS NULL
+                   AND LOWER(campaign_name) = LOWER(?)"""),
+            (project_id, name),
+        ).fetchone()
+        if dup:
+            existing_id = dup["campaign_id"] if IS_POSTGRES else dup[0]
+            return jsonify(_row_to_dict(
+                _get_campaign_in_company(conn, existing_id, company_id)
+            )), 200
+
+        campaign_id = _insert_returning(
+            conn,
+            sql_pg="""INSERT INTO campaigns (project_id, campaign_name)
+                      VALUES (%s, %s) RETURNING campaign_id""",
+            sql_lite="INSERT INTO campaigns (project_id, campaign_name) VALUES (?, ?)",
+            params=(project_id, name),
+            pk_col="campaign_id",
+        )
+        write_audit_log(
+            current_user.user_id, ACTION_CREATED, ENTITY_CAMPAIGN, campaign_id,
+            metadata={"project_id": project_id, "campaign_name": name},
+            conn=conn,
+        )
+        conn.commit()
+        return jsonify(_row_to_dict(
+            _get_campaign_in_company(conn, campaign_id, company_id)
+        )), 201
+    finally:
+        conn.close()
+
+
+@api_bp.route("/campaigns/<int:campaign_id>", methods=["DELETE"])
+@login_required
+@role_required("admin", "super_admin")
+def delete_campaign(campaign_id):
+    """Soft-delete a campaign. Interactions keep their campaign_id so past
+    grades stay labeled; the list endpoint hides deleted rows so new grades
+    can't pick them. Hard delete would cascade SET NULL on interactions and
+    lose historical reporting context."""
+    company_id, err = _require_company()
+    if err: return err
+
+    conn = get_conn()
+    try:
+        if not _get_campaign_in_company(conn, campaign_id, company_id):
+            return _err("Campaign not found", 404)
+        conn.execute(
+            q("""UPDATE campaigns SET campaign_deleted_at = CURRENT_TIMESTAMP
+                 WHERE campaign_id = ?"""),
+            (campaign_id,),
+        )
+        write_audit_log(
+            current_user.user_id, ACTION_DELETED, ENTITY_CAMPAIGN, campaign_id,
+            conn=conn,
+        )
+        conn.commit()
+        return _ok()
     finally:
         conn.close()
 

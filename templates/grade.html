@@ -245,6 +245,28 @@
     margin-bottom: 14px;
   }
 
+  /* Campaign field row — mirrors .project-row's reveal animation. The
+     extra .ready class is set by JS after the transition ends so the
+     combobox dropdown can escape the row without being clipped. */
+  .campaign-row {
+    display: grid;
+    grid-template-columns: minmax(240px, 1fr);
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    margin-bottom: 0;
+    transition: max-height 150ms ease, opacity 150ms ease, margin-bottom 150ms ease;
+  }
+  .campaign-row.visible {
+    max-height: 120px;
+    opacity: 1;
+    margin-bottom: 14px;
+  }
+  .campaign-row.ready {
+    overflow: visible;
+    max-height: none;
+  }
+
   /* Compact intel card — single muted line for empty / loading states. */
   .intel-card.compact {
     background: transparent;
@@ -359,6 +381,18 @@
       </div>
     </div>
 
+    {# Campaign field — render-on-demand once a project is selected.
+       Optional. Backed by a searchable combobox (static/combobox.js) that
+       supports inline-create. The <input> is the display + filter element;
+       the selected campaign_id is pulled from the combobox API at submit. #}
+    <div id="campaign-field-row" class="campaign-row">
+      <div class="field">
+        <label class="field-label" for="gf-campaign">Campaign</label>
+        <input id="gf-campaign" type="text" class="field-input"
+               autocomplete="off" placeholder="Select or create…">
+      </div>
+    </div>
+
     {# Primary audio surface: Record Live (when MediaRecorder available)
        — Upload + VoIP demoted to text links below. #}
     <div id="panel-record" hidden>
@@ -468,6 +502,7 @@
 
 {% block extra_js %}
 <script defer src="{{ url_for('static', filename='audio_player.js') }}?v={{ static_v('audio_player.js') }}"></script>
+<script defer src="{{ url_for('static', filename='combobox.js') }}?v={{ static_v('combobox.js') }}"></script>
 <script>
 (function () {
   "use strict";
@@ -485,6 +520,9 @@
     locationNameDisplay: "",   // captured at submit time for the result panel
     allProjects:       [],     // cached project list, filtered client-side by location
     allLocations:      [],     // cached locations, for phone lookup on change
+    campaignCombo:     null,   // EA.Combobox handle, lifetime tied to project selection
+    campaignProjectId: null,   // project_id whose campaigns are currently loaded
+    campaignFetchSeq:  0,      // race guard for rapid project switches
 
     // Live recording
     liveRecordingBlob:    null,
@@ -625,6 +663,7 @@
       setLocationLabel(false);
     }
     updateProjectFieldVisibility();
+    onProjectChange();
   }
 
   function renderLockStrip(p, allLocations) {
@@ -707,6 +746,7 @@
       sel.innerHTML = '<option value="">Select a location first…</option>';
       sel.disabled = true;
       sel.value = "";
+      onProjectChange();
       return;
     }
     const matches = state.allProjects.filter(
@@ -716,6 +756,7 @@
     if (!matches.length) {
       sel.innerHTML = '<option value="" disabled selected>No projects for this location</option>';
       sel.disabled = true;
+      onProjectChange();
       return;
     }
     sel.innerHTML = '<option value="">Select a project…</option>';
@@ -726,6 +767,7 @@
       o.dataset.rubricGroupId = p.rubric_group_id || "";
       sel.appendChild(o);
     });
+    onProjectChange();
   }
 
   function formatPhone(raw) {
@@ -775,6 +817,101 @@
     const hasLocations = !!(locSel && !locSel.disabled && locSel.options.length > 1);
     const visible = hasLocation && hasLocations && !state.projectLocked;
     row.classList.toggle("visible", visible);
+  }
+
+  // ── Campaign combobox (optional field) ────────────────────
+  // Visible only when a project is selected. Fetches per-project campaigns
+  // via /api/projects/<id>/campaigns and mounts the EA.Combobox on change.
+  // Pre-selects the first item (most recently used, falling back to most
+  // recently created), or a stashed campaign_id from the grade context.
+  function updateCampaignFieldVisibility() {
+    const row = document.getElementById("campaign-field-row");
+    if (!row) return;
+    const projSel = $("#gf-project");
+    const hasProject = !!(projSel && projSel.value);
+    const willShow = hasProject;
+    const wasVisible = row.classList.contains("visible");
+    row.classList.toggle("visible", willShow);
+    if (willShow && !wasVisible) {
+      // Wait for the slide-in to finish before lifting overflow so the
+      // combobox dropdown can escape the row. transitionend fires once per
+      // property; we listen on max-height specifically.
+      const onEnd = function (e) {
+        if (e.propertyName !== "max-height") return;
+        row.removeEventListener("transitionend", onEnd);
+        row.classList.add("ready");
+      };
+      row.addEventListener("transitionend", onEnd);
+    } else if (!willShow) {
+      row.classList.remove("ready");
+    }
+  }
+
+  async function loadCampaignsForProject(projectId, opts) {
+    opts = opts || {};
+    const preferId = opts.preferId || null;
+    const seq = ++state.campaignFetchSeq;
+    if (!projectId) {
+      destroyCampaignCombo();
+      state.campaignProjectId = null;
+      return;
+    }
+    if (String(state.campaignProjectId) === String(projectId) && state.campaignCombo) {
+      // Same project — just apply the preferred pre-selection if asked.
+      if (preferId !== null) state.campaignCombo.setValue(preferId);
+      return;
+    }
+    try {
+      const list = await EA.fetchJSON(
+        "/api/projects/" + encodeURIComponent(projectId) + "/campaigns"
+      );
+      if (seq !== state.campaignFetchSeq) return;  // stale response
+      const items = (list || []).map(function (c) {
+        return { id: c.campaign_id, label: c.campaign_name };
+      });
+      const initial = (preferId !== null && items.find(
+        (it) => String(it.id) === String(preferId)
+      ))
+        ? preferId
+        : (items.length ? items[0].id : null);
+      mountCampaignCombo(projectId, items, initial);
+    } catch (err) {
+      if (seq !== state.campaignFetchSeq) return;
+      mountCampaignCombo(projectId, [], null);
+    }
+  }
+
+  function mountCampaignCombo(projectId, items, initialId) {
+    destroyCampaignCombo();
+    const input = document.getElementById("gf-campaign");
+    if (!input) return;
+    state.campaignProjectId = projectId;
+    state.campaignCombo = EA.Combobox.mount(input, {
+      items: items,
+      initialValue: initialId,
+      placeholder: items.length ? "Select or create…" : "No campaigns yet — type to create.",
+      createLabel: "Create '{q}'",
+      emptyLabel: "No campaigns yet — type to create.",
+      onCreate: async function (name) {
+        try {
+          const created = await EA.fetchJSON(
+            "/api/projects/" + encodeURIComponent(projectId) + "/campaigns",
+            { method: "POST", body: { campaign_name: name } },
+          );
+          return { id: created.campaign_id, label: created.campaign_name };
+        } catch (err) {
+          EA.toast(err.message || "Couldn't create campaign", "error");
+          return null;
+        }
+      },
+    });
+  }
+
+  function destroyCampaignCombo() {
+    if (state.campaignCombo) {
+      try { state.campaignCombo.destroy(); } catch (_) {}
+      state.campaignCombo = null;
+    }
   }
 
   // ── Location intel card ──────────────────────────────
@@ -1050,10 +1187,23 @@
     }
   }
 
+  function onProjectChange() {
+    updateCampaignFieldVisibility();
+    const projSel = $("#gf-project");
+    const pid = projSel ? projSel.value : "";
+    if (pid) {
+      loadCampaignsForProject(pid);
+    } else {
+      destroyCampaignCombo();
+      state.campaignProjectId = null;
+    }
+  }
+
   // ── Form wiring ─────────────────────────────────────
   function wireForm() {
     // Location change — update phone + re-filter projects
     $("#gf-location").addEventListener("change", onLocationChange);
+    $("#gf-project").addEventListener("change", onProjectChange);
 
     // Dropzone: <label for="audio-file"> natively forwards clicks to the input —
     // don't also call fi.click() from JS, that causes Chrome to open-and-immediately-
@@ -1442,6 +1592,10 @@
       if (callerId) fd.append("caller_user_id", callerId);
       const callDate = $("#gf-date").value;
       if (callDate) fd.append("interaction_date", callDate);
+      const campaignId = state.campaignCombo ? state.campaignCombo.getValue() : null;
+      if (campaignId !== null && campaignId !== undefined) {
+        fd.append("campaign_id", String(campaignId));
+      }
 
       // Three-step flow — pace the overlay messages through the server's
       // phases: upload → transcribe → ask clarifying questions.
@@ -1920,11 +2074,13 @@
   function saveGradeContext() {
     const projectId  = ($("#gf-project")  || {}).value || "";
     const locationId = ($("#gf-location") || {}).value || "";
+    const campaignId = state.campaignCombo ? state.campaignCombo.getValue() : null;
     if (!projectId && !locationId) return;
     try {
       sessionStorage.setItem(GRADE_CTX_KEY, JSON.stringify({
         project_id:  projectId,
         location_id: locationId,
+        campaign_id: campaignId,
         ts: Date.now(),
       }));
     } catch (_) { /* private mode etc. — non-fatal */ }
@@ -1962,7 +2118,19 @@
       const projOpt = Array.from(projSel.options).find(
         (o) => String(o.value) === String(ctx.project_id),
       );
-      if (projOpt) projSel.value = String(ctx.project_id);
+      if (projOpt) {
+        projSel.value = String(ctx.project_id);
+        // Fire the project-change handler so the campaign combobox mounts
+        // for the restored project. Pass preferId so the combobox defaults
+        // to the stashed campaign_id if it still exists in the loaded list;
+        // otherwise loadCampaignsForProject falls back to items[0].
+        updateCampaignFieldVisibility();
+        if (ctx.campaign_id !== undefined && ctx.campaign_id !== null && ctx.campaign_id !== "") {
+          loadCampaignsForProject(ctx.project_id, { preferId: ctx.campaign_id });
+        } else {
+          loadCampaignsForProject(ctx.project_id);
+        }
+      }
     }
   }
 
@@ -1990,6 +2158,9 @@
     $("#gf-location-phone").textContent = "";
     $("#gf-location-phone").hidden = true;
     renderProjectDropdown(null);
+    destroyCampaignCombo();
+    state.campaignProjectId = null;
+    updateCampaignFieldVisibility();
     const intel = document.getElementById("location-intel-card");
     if (intel) {
       intel.hidden = true;
@@ -2037,15 +2208,20 @@
 
     const chosenDate = (document.getElementById("na-date") || {}).value || callDate;
 
+    const campaignId = state.campaignCombo ? state.campaignCombo.getValue() : null;
+    const naBody = {
+      project_id: parseInt(projectId, 10),
+      location_id: locationId,
+      interaction_date: chosenDate,
+      caller_user_id: $("#gf-caller").value || null,
+    };
+    if (campaignId !== null && campaignId !== undefined) {
+      naBody.campaign_id = parseInt(campaignId, 10);
+    }
     try {
       const res = await EA.fetchJSON("/api/interactions/no-answer", {
         method: "POST",
-        body: {
-          project_id: parseInt(projectId, 10),
-          location_id: locationId,
-          interaction_date: chosenDate,
-          caller_user_id: $("#gf-caller").value || null,
-        },
+        body: naBody,
       });
       EA.toast("Unanswered call logged (#" + res.interaction_id + ").", "success");
       saveGradeContext();

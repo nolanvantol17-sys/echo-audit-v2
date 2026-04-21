@@ -456,6 +456,7 @@ _TARGET_ENTITY_TYPE_SEEDS = [
     (8, 'department'),
     (9, 'location'),
     (10, 'transcription_hint'),
+    (11, 'campaign'),
 ]
 
 _ROLE_SEEDS = [

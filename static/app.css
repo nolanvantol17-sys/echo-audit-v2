@@ -515,7 +515,7 @@ button { font-family: inherit; }
   box-shadow: 0 0 0 3px rgba(37,99,235,0.2);
 }
 
-/* Typeahead suggestions */
+/* Typeahead suggestions — also used by EA.Combobox (see combobox.js) */
 .typeahead-wrap { position: relative; }
 .typeahead-list {
   position: absolute;
@@ -536,6 +536,19 @@ button { font-family: inherit; }
 }
 .typeahead-option:hover,
 .typeahead-option.active { background: var(--accent-soft); }
+/* Combobox "Create 'X'" affordance — visually distinct from regular picks. */
+.typeahead-option.ea-cb-create {
+  color: var(--accent);
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+}
+.typeahead-option.ea-cb-empty {
+  cursor: default;
+}
+.typeahead-option.ea-cb-empty:hover,
+.typeahead-option.ea-cb-empty.active {
+  background: transparent;
+}
 
 /* ── Tabs ────────────────────────────────────────────────── */
 .tabs {

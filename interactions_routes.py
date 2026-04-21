@@ -115,6 +115,18 @@ def _get_project_in_company(conn, project_id, company_id):
     return cur.fetchone()
 
 
+def _campaign_belongs_to_project(conn, campaign_id, project_id):
+    """Return True if the campaign is live and attached to this project.
+    Caller is expected to have already tenant-verified the project."""
+    cur = conn.execute(
+        q("""SELECT 1 FROM campaigns
+             WHERE campaign_id = ? AND project_id = ?
+               AND campaign_deleted_at IS NULL"""),
+        (campaign_id, project_id),
+    )
+    return cur.fetchone() is not None
+
+
 def _get_interaction_in_company(conn, interaction_id, company_id):
     """Return interaction row if its project belongs to this company.
 
@@ -358,6 +370,7 @@ def _build_criteria_from_request_rubric(rubric):
 def _insert_interaction_row(conn, *, project_id, caller_user_id, respondent_user_id,
                             interaction_date, status_id,
                             location_id=None,
+                            campaign_id=None,
                             call_start_time=None, call_end_time=None,
                             call_duration_seconds=None,
                             set_uploaded_at=False):
@@ -369,21 +382,23 @@ def _insert_interaction_row(conn, *, project_id, caller_user_id, respondent_user
     location_id is the property the call was placed to; callers that have it
     (live grade, no-answer) should pass it so it's the source-of-truth for
     downstream respondent upserts and report routing.
+    campaign_id is optional; when set, it tags the interaction for per-
+    campaign reporting slices (tenant-verified by the caller).
     """
     if IS_POSTGRES:
         cur = conn.execute(
             """INSERT INTO interactions
                    (project_id, caller_user_id, respondent_user_id,
-                    interaction_location_id,
+                    interaction_location_id, campaign_id,
                     interaction_date, interaction_submitted_at, status_id,
                     interaction_call_start_time, interaction_call_end_time,
                     interaction_call_duration_seconds,
                     interaction_uploaded_at)
-               VALUES (%s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s,
+               VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s,
                        CASE WHEN %s THEN NOW() ELSE NULL END)
                RETURNING interaction_id""",
             (project_id, caller_user_id, respondent_user_id,
-             location_id,
+             location_id, campaign_id,
              interaction_date, status_id,
              call_start_time, call_end_time, call_duration_seconds,
              bool(set_uploaded_at)),
@@ -392,15 +407,15 @@ def _insert_interaction_row(conn, *, project_id, caller_user_id, respondent_user
     conn.execute(
         """INSERT INTO interactions
                (project_id, caller_user_id, respondent_user_id,
-                interaction_location_id,
+                interaction_location_id, campaign_id,
                 interaction_date, interaction_submitted_at, status_id,
                 interaction_call_start_time, interaction_call_end_time,
                 interaction_call_duration_seconds,
                 interaction_uploaded_at)
-           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?,
+           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?,
                    CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END)""",
         (project_id, caller_user_id, respondent_user_id,
-         location_id,
+         location_id, campaign_id,
          interaction_date, status_id,
          call_start_time, call_end_time, call_duration_seconds,
          1 if set_uploaded_at else 0),
@@ -855,6 +870,16 @@ def submit_grade():
     if not location_id:
         return _err("Missing location_id", 400)
 
+    # campaign_id is optional. Parsed here; project-ownership verified below
+    # once we have a conn.
+    raw_campaign = request.form.get("campaign_id")
+    campaign_id = None
+    if raw_campaign not in (None, ""):
+        try:
+            campaign_id = int(raw_campaign)
+        except (TypeError, ValueError):
+            return _err("Invalid campaign_id", 400)
+
     # Live-recording timestamps. All three are optional (uploads omit them).
     call_start_time       = (request.form.get("call_start_time") or "").strip() or None
     call_end_time         = (request.form.get("call_end_time")   or "").strip() or None
@@ -898,6 +923,13 @@ def submit_grade():
         if not loc_row:
             return _err("Invalid location_id for this company", 400)
 
+        # Verify the campaign (if any) belongs to this project. Project is
+        # already tenant-verified above, so company scoping propagates.
+        if campaign_id is not None and not _campaign_belongs_to_project(
+            conn, campaign_id, project_id
+        ):
+            return _err("Invalid campaign_id for this project", 400)
+
         # Resolve criteria: client-supplied wins over project rubric_group
         script_text = None
         context_text = None
@@ -926,6 +958,7 @@ def submit_grade():
             caller_user_id=caller_user_id,
             respondent_user_id=respondent_user_id,
             location_id=location_id,
+            campaign_id=campaign_id,
             interaction_date=interaction_date,
             status_id=STATUS_SUBMITTED,
             call_start_time=call_start_time,
@@ -1095,6 +1128,15 @@ def log_no_answer():
     if not location_id:
         return _err("Missing location_id", 400)
 
+    # Optional campaign_id — tenant-verified by project FK check below.
+    raw_campaign = body.get("campaign_id")
+    campaign_id = None
+    if raw_campaign not in (None, ""):
+        try:
+            campaign_id = int(raw_campaign)
+        except (TypeError, ValueError):
+            return _err("Invalid campaign_id", 400)
+
     caller_user_id = body.get("caller_user_id") or None
     interaction_date = _parse_date(body.get("interaction_date"), date.today())
 
@@ -1111,12 +1153,17 @@ def log_no_answer():
         ).fetchone()
         if not loc_row:
             return _err("Invalid location_id for this company", 400)
+        if campaign_id is not None and not _campaign_belongs_to_project(
+            conn, campaign_id, project_id
+        ):
+            return _err("Invalid campaign_id for this project", 400)
         interaction_id = _insert_interaction_row(
             conn,
             project_id=project_id,
             caller_user_id=caller_user_id,
             respondent_user_id=None,
             location_id=location_id,
+            campaign_id=campaign_id,
             interaction_date=interaction_date,
             status_id=STATUS_NO_ANSWER,
         )
@@ -1124,7 +1171,8 @@ def log_no_answer():
             current_user.user_id, ACTION_SUBMITTED, ENTITY_INTERACTION,
             interaction_id,
             metadata={"project_id": project_id, "no_answer": True,
-                      "location_id": location_id},
+                      "location_id": location_id,
+                      "campaign_id": campaign_id},
             conn=conn,
         )
         conn.commit()
