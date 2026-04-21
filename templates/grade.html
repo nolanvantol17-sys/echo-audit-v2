@@ -232,6 +232,95 @@
     0%, 100% { opacity: 1; }
     50%      { opacity: 0.55; }
   }
+
+  /* ── V1-inspired layout primitives ────────────────────── */
+  .grade-fields-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px 16px;
+    margin-bottom: 14px;
+  }
+  @media (max-width: 880px) {
+    .grade-fields-row { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 520px) {
+    .grade-fields-row { grid-template-columns: 1fr; }
+  }
+
+  /* Render-on-demand project field — collapses smoothly when hidden. */
+  .project-row {
+    display: grid;
+    grid-template-columns: minmax(240px, 1fr);
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    margin-bottom: 0;
+    transition: max-height 150ms ease, opacity 150ms ease, margin-bottom 150ms ease;
+  }
+  .project-row.visible {
+    max-height: 120px;
+    opacity: 1;
+    margin-bottom: 14px;
+  }
+
+  /* Compact intel card — single muted line for empty / loading states. */
+  .intel-card.compact {
+    background: transparent;
+    border: none;
+    padding: 6px 0;
+    margin-top: 4px;
+  }
+  .intel-empty-msg {
+    color: var(--muted);
+    font-size: 0.88rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .intel-dots { display: inline-flex; gap: 4px; align-items: center; }
+  .intel-dots span {
+    width: 5px; height: 5px;
+    background: var(--muted);
+    border-radius: 50%;
+    display: inline-block;
+    animation: intel-dot-pulse 1.2s ease-in-out infinite;
+  }
+  .intel-dots span:nth-child(2) { animation-delay: 0.15s; }
+  .intel-dots span:nth-child(3) { animation-delay: 0.30s; }
+  @keyframes intel-dot-pulse {
+    0%, 100% { opacity: 0.25; transform: scale(0.85); }
+    50%      { opacity: 1;    transform: scale(1.15); }
+  }
+
+  /* Audio-source secondary links ("Or: ... · ...") */
+  .source-links {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.88rem;
+    margin-top: 12px;
+  }
+  .source-links a {
+    color: var(--accent, #4f9cff);
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .source-links a:hover { text-decoration: underline; }
+  .source-link-sep { margin: 0 6px; opacity: 0.6; }
+
+  /* Record panel: Start + Log Unanswered side-by-side */
+  #record-idle .record-action-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+  }
+  /* Upload panel: Log Unanswered button below the dropzone */
+  .upload-action-row {
+    display: flex;
+    justify-content: center;
+    margin-top: 12px;
+  }
 </style>
 {% endblock %}
 
@@ -246,7 +335,14 @@
 {# ── Pre-call form ──────────────────────────────────────── #}
 <section id="grade-form-section" class="panel">
   <form id="grade-form" autocomplete="off">
-    <div class="form-grid">
+    {# Four fields on one row: Caller · Location · Campaign/Type · Date #}
+    <div class="grade-fields-row">
+      <div class="field">
+        <label class="field-label" for="gf-caller">Caller</label>
+        <select id="gf-caller" name="caller_user_id" class="field-select">
+          <option value="">—</option>
+        </select>
+      </div>
       <div class="field">
         <label class="field-label field-required" for="gf-location">
           {{ location_label or "Location" }}
@@ -258,17 +354,8 @@
         <div id="gf-location-empty" class="muted text-small" style="margin-top:4px;" hidden></div>
       </div>
       <div class="field">
-        <label class="field-label field-required" for="gf-project">Project</label>
-        <select id="gf-project" name="project_id" class="field-select" required disabled>
-          <option value="">Select a location first…</option>
-        </select>
-      </div>
-
-      {# ── Property intel card — populated when a location is picked ── #}
-      <div id="location-intel-card" class="intel-card" hidden style="grid-column:1 / -1;"></div>
-      <div class="field">
-        <label class="field-label" for="gf-caller">Caller</label>
-        <select id="gf-caller" name="caller_user_id" class="field-select">
+        <label class="field-label" for="gf-campaign">Campaign / Type</label>
+        <select id="gf-campaign" name="campaign_id" class="field-select">
           <option value="">—</option>
         </select>
       </div>
@@ -276,48 +363,38 @@
         <label class="field-label" for="gf-date">Call date</label>
         <input id="gf-date" name="interaction_date" type="date" class="field-input">
       </div>
+    </div>
+
+    {# Project field — render-on-demand below the four-field row.
+       Hidden when no location is picked, no locations exist, or the URL
+       project lock is active. CSS transitions opacity + max-height. #}
+    <div id="project-field-row" class="project-row">
       <div class="field">
-        <label class="field-label" for="gf-campaign">Campaign</label>
-        <select id="gf-campaign" name="campaign_id" class="field-select">
-          <option value="">—</option>
+        <label class="field-label field-required" for="gf-project">Project</label>
+        <select id="gf-project" name="project_id" class="field-select" required disabled>
+          <option value="">Select a location first…</option>
         </select>
       </div>
     </div>
 
-    {# ── Audio source tabs ────────────────────────────────── #}
-    <div class="tabs" role="tablist">
-      <button type="button" class="tab-btn active" id="tab-upload" role="tab">Upload audio</button>
-      <button type="button" class="tab-btn" id="tab-record" role="tab" hidden>Record live</button>
-      <button type="button" class="tab-btn" id="tab-voip" role="tab" hidden>From VoIP queue</button>
-    </div>
+    {# Property intel card — compact-by-default. Empty / loading states
+       collapse to a single muted line; the full card expands when data exists. #}
+    <div id="location-intel-card" class="intel-card compact" hidden></div>
 
-    <div id="panel-upload">
-      <label class="dropzone" id="dropzone" for="audio-file">
-        <div id="dropzone-placeholder">
-          <div>Drop an audio file here or click to browse.</div>
-          <div class="dropzone-meta">
-            Accepts .mp3, .mp4, .m4a, .wav, .aac, .ogg, .flac, .webm
-          </div>
-        </div>
-        <div id="dropzone-filled" hidden>
-          <div class="dropzone-filename" id="dz-filename"></div>
-          <div class="dropzone-meta" id="dz-meta"></div>
-          <button type="button" class="btn btn-ghost btn-sm" id="dz-clear" style="margin-top:8px;">Remove</button>
-        </div>
-      </label>
-      <input id="audio-file" name="audio" type="file"
-             accept=".mp3,.mp4,.m4a,.wav,.aac,.ogg,.flac,.webm" hidden>
-    </div>
-
+    {# Primary audio surface: Record Live (when MediaRecorder available)
+       — Upload + VoIP demoted to text links below. #}
     <div id="panel-record" hidden>
       <div class="record-wrap" id="record-wrap">
         <div id="record-permission-error" class="section-error" hidden></div>
 
         <div id="record-idle" class="record-panel">
-          <button type="button" id="btn-record-start" class="btn btn-danger record-btn">
-            <span class="record-icon"></span>
-            Start Recording
-          </button>
+          <div class="record-action-row">
+            <button type="button" id="btn-record-start" class="btn btn-danger record-btn">
+              <span class="record-icon"></span>
+              Start Recording
+            </button>
+            <button type="button" class="btn btn-ghost" id="btn-no-answer-record">Log Unanswered Call</button>
+          </div>
           <div class="muted text-small" style="margin-top:10px; text-align:center;">
             Records from your device microphone. You'll be asked to grant permission.
           </div>
@@ -345,6 +422,27 @@
       </div>
     </div>
 
+    <div id="panel-upload" hidden>
+      <label class="dropzone" id="dropzone" for="audio-file">
+        <div id="dropzone-placeholder">
+          <div>Drop an audio file here or click to browse.</div>
+          <div class="dropzone-meta">
+            Accepts .mp3, .mp4, .m4a, .wav, .aac, .ogg, .flac, .webm
+          </div>
+        </div>
+        <div id="dropzone-filled" hidden>
+          <div class="dropzone-filename" id="dz-filename"></div>
+          <div class="dropzone-meta" id="dz-meta"></div>
+          <button type="button" class="btn btn-ghost btn-sm" id="dz-clear" style="margin-top:8px;">Remove</button>
+        </div>
+      </label>
+      <input id="audio-file" name="audio" type="file"
+             accept=".mp3,.mp4,.m4a,.wav,.aac,.ogg,.flac,.webm" hidden>
+      <div class="upload-action-row">
+        <button type="button" class="btn btn-ghost" id="btn-no-answer-upload">Log Unanswered Call</button>
+      </div>
+    </div>
+
     <div id="panel-voip" hidden>
       <div id="voip-queue-wrap">
         <div class="skeleton" style="height:16px;margin:10px 0;"></div>
@@ -354,20 +452,14 @@
       <input type="hidden" id="voip-queue-id">
     </div>
 
+    {# Secondary audio source links — built dynamically by renderSourceLinks().
+       Shows "Or: <other source> · <other source>". Active source is omitted. #}
+    <div id="source-links" class="source-links" hidden></div>
+
     <div class="hstack-wrap" style="margin-top:20px;">
       <button type="submit" class="btn btn-primary" id="grade-submit">Submit for grading</button>
-      {# Note: this button is transitively gated by the project dropdown,
-         which is disabled until a location is picked (renderProjectDropdown
-         in the script block). If the project→location dependency changes,
-         this gating must be made explicit on the button itself, otherwise
-         onLogNoAnswer() can fire without a location_id and the backend
-         will 400. #}
-      <button type="button" class="btn btn-ghost" id="btn-no-answer">Log unanswered call</button>
       <span class="spacer"></span>
       <span class="text-small muted" id="form-hint"></span>
-    </div>
-    <div class="text-small muted" style="margin-top:8px;">
-      Use <strong>Log unanswered call</strong> when no one picked up — records the attempt for tracking, no audio required.
     </div>
   </form>
 </section>
@@ -425,6 +517,8 @@
     callEndTime:          null,    // ISO string at Stop click
     callDurationSeconds:  null,    // integer, derived from start/end
     intelFetchSeq:        0,       // race guard for location intel fetches
+    activePanel:          "record", // which audio source is showing
+    projectLocked:        false,   // true when ?project_id= URL lock is in effect
   };
 
   const $ = function (sel) { return document.querySelector(sel); };
@@ -460,13 +554,11 @@
   async function init() {
     $("#gf-date").value = new Date().toISOString().slice(0,10);
 
-    // Feature-detect MediaRecorder. If unavailable, the Record Live tab
-    // stays hidden and only Upload + VoIP are shown.
-    if (window.MediaRecorder) {
-      $("#tab-record").hidden = false;
-    }
-
     wireForm();  // attach handlers BEFORE awaiting loaders so a fast user's first click lands
+
+    // Default audio source: Record Live when supported, otherwise Upload.
+    switchTab(window.MediaRecorder ? "record" : "upload");
+
     await Promise.all([
       loadLocations(),
       loadProjects(),
@@ -493,12 +585,15 @@
   }
 
   async function applyLockedProject(projectId) {
+    state.projectLocked = true;
     const p = (state.allProjects || []).find(
       (pp) => String(pp.project_id) === String(projectId)
     );
     if (!p) {
+      state.projectLocked = false;
       $("#form-hint").textContent =
         "Could not find that project in your account — defaulting to manual selection.";
+      updateProjectFieldVisibility();
       return;
     }
 
@@ -545,6 +640,7 @@
       state.locationNameDisplay = p.location_name || "";
       renderLockStrip(p, /*allLocations=*/false);
     }
+    updateProjectFieldVisibility();
   }
 
   function renderLockStrip(p, allLocations) {
@@ -591,6 +687,7 @@
         empty.hidden = false;
         empty.textContent =
           "No locations found. Add a location in Settings before grading a call.";
+        updateProjectFieldVisibility();
         return;
       }
       sel.innerHTML = '<option value="">Select a location…</option>';
@@ -678,8 +775,22 @@
       phoneEl.hidden = false;
     }
     renderProjectDropdown(locId);
+    updateProjectFieldVisibility();
     $("#form-hint").textContent = "";
     refreshLocationIntel(locId);
+  }
+
+  // Toggle the render-on-demand project field. Visible only when the user
+  // has picked a location AND the location dropdown actually has options
+  // AND no URL ?project_id= lock is in effect (the lock has its own banner).
+  function updateProjectFieldVisibility() {
+    const row = document.getElementById("project-field-row");
+    if (!row) return;
+    const locSel = $("#gf-location");
+    const hasLocation  = !!(locSel && locSel.value);
+    const hasLocations = !!(locSel && !locSel.disabled && locSel.options.length > 1);
+    const visible = hasLocation && hasLocations && !state.projectLocked;
+    row.classList.toggle("visible", visible);
   }
 
   // ── Location intel card ──────────────────────────────
@@ -695,11 +806,12 @@
     }
     const seq = ++state.intelFetchSeq;
     card.hidden = false;
-    card.classList.remove("empty");
+    card.classList.add("compact");
     card.innerHTML =
-      '<div class="intel-skeleton" style="width:60%;"></div>' +
-      '<div class="intel-skeleton" style="width:40%;"></div>' +
-      '<div class="intel-skeleton" style="width:80%;"></div>';
+      '<div class="intel-empty-msg">' +
+        'Loading location history' +
+        '<span class="intel-dots"><span></span><span></span><span></span></span>' +
+      '</div>';
     let intel;
     try {
       intel = await EA.fetchJSON(
@@ -707,7 +819,7 @@
       );
     } catch (err) {
       if (seq !== state.intelFetchSeq) return;
-      card.classList.add("empty");
+      card.classList.add("compact");
       card.innerHTML =
         '<div class="intel-empty-msg">Could not load location intel.</div>';
       return;
@@ -717,25 +829,17 @@
   }
 
   function renderLocationIntel(card, intel) {
-    // Distinguish between "intel row exists but truly has zero calls" and
-    // "intel row doesn't exist yet" — the latter just means compute hasn't
-    // run. Saying "No previous calls" in that case falsely implies there's
-    // no history, which is misleading for first-time setup after deploy.
-    if (!intel.computed) {
-      card.classList.add("empty");
-      card.innerHTML =
-        '<div class="intel-empty-msg"><strong>Loading location history…</strong></div>' +
-        '<div class="muted text-small" style="margin-top:4px;">' +
-          'Call history will appear here after your first grade at this location.' +
-        '</div>';
-      return;
-    }
-    if (!intel.li_total_calls && !intel.li_no_answer_count) {
-      card.classList.add("empty");
+    // Both "no intel computed yet" and "intel exists but zero calls" collapse
+    // to the same single muted line — there's nothing useful to differentiate
+    // for the user; both mean "no prior history to show."
+    if (!intel.computed ||
+        (!intel.li_total_calls && !intel.li_no_answer_count)) {
+      card.classList.add("compact");
       card.innerHTML =
         '<div class="intel-empty-msg">No previous calls at this location.</div>';
       return;
     }
+    card.classList.remove("compact");
     card.classList.remove("empty");
 
     const total      = intel.li_total_calls || 0;
@@ -878,7 +982,7 @@
       const cfg = await EA.fetchJSON("/api/voip/config");
       if (cfg && cfg.credentials_configured && cfg.voip_config_is_active) {
         state.voipConfigured = true;
-        $("#tab-voip").hidden = false;
+        renderSourceLinks();  // VoIP link wasn't shown before — surface it now
         await loadVoipQueue();
         startVoipQueuePolling();
         document.addEventListener("visibilitychange", onVoipVisibilityChange);
@@ -985,11 +1089,6 @@
     // Location change — update phone + re-filter projects
     $("#gf-location").addEventListener("change", onLocationChange);
 
-    // Tabs
-    $("#tab-upload").addEventListener("click", function () { switchTab("upload"); });
-    $("#tab-record").addEventListener("click", function () { switchTab("record"); });
-    $("#tab-voip")  .addEventListener("click", function () { switchTab("voip"); });
-
     // Dropzone: <label for="audio-file"> natively forwards clicks to the input —
     // don't also call fi.click() from JS, that causes Chrome to open-and-immediately-
     // close the picker because the label forward and the programmatic click both
@@ -1023,26 +1122,63 @@
 
     // Submit
     $("#grade-form").addEventListener("submit", onSubmit);
-    $("#btn-no-answer").addEventListener("click", onLogNoAnswer);
+    // Two copies of "Log Unanswered Call" — one in the Record panel, one in
+    // the Upload panel. Whichever panel is visible exposes the button. VoIP
+    // panel intentionally has no copy (queue rows already represent
+    // completed call events; logging "unanswered" doesn't apply).
+    const naRec = document.getElementById("btn-no-answer-record");
+    const naUp  = document.getElementById("btn-no-answer-upload");
+    if (naRec) naRec.addEventListener("click", onLogNoAnswer);
+    if (naUp)  naUp .addEventListener("click", onLogNoAnswer);
   }
 
   function switchTab(which) {
-    const upTab = $("#tab-upload"), recTab = $("#tab-record"), voipTab = $("#tab-voip");
-    upTab  .classList.toggle("active", which === "upload");
-    recTab .classList.toggle("active", which === "record");
-    voipTab.classList.toggle("active", which === "voip");
+    state.activePanel = which;
     $("#panel-upload").hidden = which !== "upload";
     $("#panel-record").hidden = which !== "record";
     $("#panel-voip")  .hidden = which !== "voip";
 
-    // Tabs are mutually exclusive — switching clears the OTHER sources.
-    if (which !== "upload") { /* keep upload cleared via its own clear below */ }
+    // Panels are mutually exclusive — switching clears the OTHER sources.
     if (which !== "record") { cleanupLiveRecording(/*reset*/ true); }
     if (which !== "voip")   {
       state.selectedQueueId = null;
-      $("#voip-queue-id").value = "";
+      const vq = $("#voip-queue-id"); if (vq) vq.value = "";
     }
     if (which !== "upload") { clearAudioFile(); }
+
+    renderSourceLinks();
+  }
+
+  // Build the "Or: <other source> · <other source>" link row beneath the
+  // active panel. Omits the link for the currently active panel; omits VoIP
+  // entirely when not configured; omits Record when MediaRecorder is missing.
+  function renderSourceLinks() {
+    const wrap = document.getElementById("source-links");
+    if (!wrap) return;
+    const active = state.activePanel || "upload";
+    const links = [];
+    if (window.MediaRecorder && active !== "record") {
+      links.push('<a href="#" data-tab="record">record live</a>');
+    }
+    if (active !== "upload") {
+      links.push('<a href="#" data-tab="upload">upload a file</a>');
+    }
+    if (state.voipConfigured && active !== "voip") {
+      links.push('<a href="#" data-tab="voip">pull from VoIP queue</a>');
+    }
+    if (!links.length) {
+      wrap.hidden = true;
+      wrap.innerHTML = "";
+      return;
+    }
+    wrap.hidden = false;
+    wrap.innerHTML = "Or: " + links.join(' <span class="source-link-sep">·</span> ');
+    wrap.querySelectorAll('a[data-tab]').forEach(function (a) {
+      a.addEventListener("click", function (e) {
+        e.preventDefault();
+        switchTab(a.dataset.tab);
+      });
+    });
   }
 
   function setAudioFile(file) {
@@ -1279,9 +1415,7 @@
       $("#form-hint").textContent = "Pick a project first.";
       return;
     }
-    const activeTab = $("#tab-voip").classList.contains("active") ? "voip"
-                    : $("#tab-record").classList.contains("active") ? "record"
-                    : "upload";
+    const activeTab = state.activePanel || "upload";
 
     if (activeTab === "upload" && !state.audioFile) {
       $("#form-hint").textContent = "Choose an audio file.";
@@ -1891,8 +2025,13 @@
     $("#gf-location-phone").hidden = true;
     renderProjectDropdown(null);
     const intel = document.getElementById("location-intel-card");
-    if (intel) { intel.hidden = true; intel.innerHTML = ""; }
-    switchTab("upload");
+    if (intel) {
+      intel.hidden = true;
+      intel.innerHTML = "";
+      intel.classList.add("compact");
+    }
+    updateProjectFieldVisibility();
+    switchTab(window.MediaRecorder ? "record" : "upload");
     window.scrollTo({ top: 0, behavior: "smooth" });
 
     const params = new URLSearchParams(window.location.search);
