@@ -359,10 +359,6 @@
       </div>
     </div>
 
-    {# Property intel card — compact-by-default. Empty / loading states
-       collapse to a single muted line; the full card expands when data exists. #}
-    <div id="location-intel-card" class="intel-card compact" hidden></div>
-
     {# Primary audio surface: Record Live (when MediaRecorder available)
        — Upload + VoIP demoted to text links below. #}
     <div id="panel-record" hidden>
@@ -437,6 +433,10 @@
     {# Secondary audio source links — built dynamically by renderSourceLinks().
        Shows "Or: <other source> · <other source>". Active source is omitted. #}
     <div id="source-links" class="source-links" hidden></div>
+
+    {# Property intel card — compact-by-default. Empty / loading states
+       collapse to a single muted line; the full card expands when data exists. #}
+    <div id="location-intel-card" class="intel-card compact" hidden></div>
 
     <div class="hstack-wrap" style="margin-top:20px;">
       <button type="submit" class="btn btn-primary" id="grade-submit">Submit for grading</button>
