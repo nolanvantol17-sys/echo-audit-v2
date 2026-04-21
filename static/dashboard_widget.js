@@ -19,6 +19,8 @@
 (function () {
   "use strict";
 
+  console.log("[dashboard_widget.js loaded]", { EA: typeof window.EA });
+
   if (!window.EA) {
     console.error("dashboard_widget.js requires window.EA (app.js).");
     return;
@@ -751,4 +753,5 @@
   }
 
   window.EA.DashboardWidget = { init: init };
+  console.log("[dashboard_widget.js registered]", { init: typeof window.EA.DashboardWidget.init });
 })();

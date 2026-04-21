@@ -464,6 +464,12 @@
         showZeroState();
         return { teardown() {} };
       }
+      console.log("[init /app]", {
+        DashboardWidget: typeof EA.DashboardWidget,
+        widgetInit: typeof (EA.DashboardWidget && EA.DashboardWidget.init),
+        scriptsLoaded: Array.from(document.querySelectorAll("script[src]")).map(s => s.src),
+        readyState: document.readyState
+      });
       widgetHandle = EA.DashboardWidget.init({
         container: document.getElementById("dashboard-widget"),
         defaultViewBy: "date",
