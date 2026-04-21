@@ -28,11 +28,31 @@
   }
   const EA = window.EA;
 
-  // Registered pages. Newer registrations replace older ones with the same
-  // matchKey so re-entering a page after swap doesn't leak closures.
+  // Registered pages. Seeded from KNOWN_ROUTES below so findPage() returns
+  // truthy for every swap-eligible route on the very first click after a
+  // cold page load (before any template except the current one has had a
+  // chance to run its register() call). Templates UPGRADE these placeholder
+  // entries in place; they do not append.
   const pages = [];
   const beforeSwapGuards = [];   // [fn(URL) -> bool | Promise<bool>]
   let currentTeardown = null;
+
+  // ── Central registry of swap-eligible routes ──
+  // Every route that should be intercepted and content-swapped must appear
+  // here; otherwise findPage() returns null and the router falls through to
+  // native navigation. Templates upgrade their entry via register() when
+  // their inline IIFE runs (on full load OR on swap-in). A register() call
+  // whose match spec doesn't correspond to any KNOWN_ROUTES entry warns to
+  // console — that's the signal to a future developer that they need to add
+  // the route here as well as in the template.
+  //
+  // ADD NEW ROUTES HERE when a page is migrated to content-swap.
+  const KNOWN_ROUTES = [
+    "/app",
+    "/app/reports",
+    /^\/app\/projects\/\d+$/,
+    /^\/app\/history\/\d+$/,
+  ];
 
   // ── Match building ──
   function buildMatch(spec) {
@@ -48,18 +68,39 @@
     return null;
   }
 
+  // Seed `pages` with placeholder entries for every KNOWN_ROUTES spec.
+  // Runs once at module-load so findPage() hits on cold-start clicks.
+  KNOWN_ROUTES.forEach(function (spec) {
+    const m = buildMatch(spec);
+    if (!m) {
+      console.error("PageRouter: bad KNOWN_ROUTES entry", spec);
+      return;
+    }
+    pages.push({ key: m.key, match: m.fn, init: null, teardown: null });
+  });
+
+  // Upgrade-in-place. Templates call register() to attach real init/teardown
+  // to the pre-seeded entry. If the match spec doesn't correspond to any
+  // seeded entry, we warn (and still append, so the page still works) —
+  // the warning is the prompt to add the route to KNOWN_ROUTES above.
   function register(spec) {
     const m = buildMatch(spec && spec.match);
     if (!m) { console.error("PageRouter.register: bad match", spec); return; }
-    const entry = {
-      key:      m.key,
-      match:    m.fn,
-      init:     spec.init,
-      teardown: spec.teardown || null,
-    };
-    const idx = pages.findIndex((p) => p.key === entry.key);
-    if (idx >= 0) pages[idx] = entry;
-    else pages.push(entry);
+    const idx = pages.findIndex((p) => p.key === m.key);
+    if (idx < 0) {
+      console.warn(
+        "PageRouter.register: no KNOWN_ROUTES entry for match",
+        spec.match,
+        "— add it to the central table in page_router.js. Falling back to append; cold-start navigation from other pages will not swap to this one until KNOWN_ROUTES is updated."
+      );
+      pages.push({
+        key: m.key, match: m.fn,
+        init: spec.init, teardown: spec.teardown || null,
+      });
+      return;
+    }
+    pages[idx].init     = spec.init;
+    pages[idx].teardown = spec.teardown || null;
   }
 
   function findPage(url) {
