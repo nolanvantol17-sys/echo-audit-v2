@@ -62,6 +62,34 @@
     return _MONTHS[d.getMonth()] + " " + d.getDate() + ", " + d.getFullYear();
   }
 
+  // ── Relative-time formatter ────────────────────────────────
+  // "just now" / "Nm ago" / "Nh ago" / "today" / "yesterday" / "N days ago"
+  // / "1 week ago" / "N weeks ago" / "N months ago", and falls back to
+  // formatDate for >1 year. Accepts ISO string or Date. Used for at-a-glance
+  // recency on dashboard panels.
+  function formatRelativeTime(value) {
+    if (!value) return "";
+    const d = (value instanceof Date) ? value : new Date(value);
+    if (isNaN(d.getTime())) return String(value);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1)  return "just now";
+    if (diffMin < 60) return diffMin + "m ago";
+    const diffH = Math.floor(diffMin / 60);
+    if (diffH < 24)   return diffH + "h ago";
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const day   = new Date(d.getFullYear(),   d.getMonth(),   d.getDate());
+    const diffDays = Math.round((today.getTime() - day.getTime()) / 86400000);
+    if (diffDays === 0)  return "today";
+    if (diffDays === 1)  return "yesterday";
+    if (diffDays < 7)    return diffDays + " days ago";
+    if (diffDays < 14)   return "1 week ago";
+    if (diffDays < 30)   return Math.floor(diffDays / 7) + " weeks ago";
+    if (diffDays < 365)  return Math.floor(diffDays / 30) + " months ago";
+    return formatDate(value);
+  }
+
   // ── Score formatter ────────────────────────────────────────
   // One decimal, strips trailing zero so "7.0" renders as "7.0" intentionally
   // (dashboard expects fixed-width scores). Returns em-dash for null/NaN.
@@ -623,6 +651,7 @@
   window.EA = {
     fetchJSON:       fetchJSON,
     formatDate:      formatDate,
+    formatRelativeTime: formatRelativeTime,
     formatCallTime:  formatCallTime,
     formatScore:     formatScore,
     scoreClass:      scoreClass,

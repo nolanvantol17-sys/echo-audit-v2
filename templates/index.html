@@ -32,9 +32,10 @@
   .dash3-bottom .panel { padding: 16px 18px; }
 
   .leader-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) auto 18px auto;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     padding: 10px 0;
     border-bottom: 1px solid var(--border);
   }
@@ -48,17 +49,46 @@
     line-height: 24px;
     font-size: 0.78rem;
     font-weight: 600;
-    flex-shrink: 0;
   }
-  .leader-name {
+  .leader-name-col { min-width: 0; line-height: 1.2; }
+  .leader-name-link, .leader-name-static {
+    display: block;
     font-size: 0.92rem;
     color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    flex: 1;
+    text-decoration: none;
+    font-weight: 500;
   }
-  .leader-meta { font-size: 0.78rem; color: var(--muted); }
+  .leader-name-link:hover { color: var(--accent); }
+  .leader-locations {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-top: 1px;
+  }
+  .leader-locations .more { font-style: italic; }
+  .leader-trend {
+    text-align: center;
+    font-size: 0.95rem;
+    line-height: 1;
+  }
+  .leader-trend.up   { color: var(--success); }
+  .leader-trend.down { color: var(--danger); }
+  .leader-trend.flat,
+  .leader-trend.none { color: var(--muted); }
+  .leader-meta {
+    font-size: 0.74rem;
+    color: var(--muted);
+    text-align: right;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+  .leader-meta .leader-last { display: block; font-size: 0.7rem; }
 
   .recent-item {
     display: flex;
@@ -70,13 +100,37 @@
   }
   .recent-item:last-child { border-bottom: none; }
   .recent-item:hover { background: var(--surface-2); }
-  .recent-date { font-size: 0.8rem; color: var(--muted); width: 68px; flex-shrink: 0; }
+  .recent-date { font-size: 0.8rem; color: var(--muted); width: 84px; flex-shrink: 0; }
   .recent-name {
     flex: 1;
     font-size: 0.92rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    min-width: 0;
+  }
+  .recent-trail {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  /* Numbered flag pill — reuses the amber palette from .flag-banner so the
+     dashboard recent-grades row visually agrees with the interaction-detail
+     warning surface. Compact size to sit beside the score pill. */
+  .flag-pill-mini {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: var(--warning-bg, rgba(245, 158, 11, 0.12));
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    color: #fbbf24;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1;
   }
 
   /* Responsive: <768px */
@@ -253,14 +307,55 @@
     }
     box.innerHTML = rows.slice(0, 3).map((r, i) => {
       const cls = EA.scoreClass(r.avg_score);
-      const name = EA.esc(r.respondent_name || "—");
+      const fullName = r.respondent_name || "—";
+      const nameEsc = EA.esc(fullName);
+
+      // Locations: "Loc A, Loc B +2 more" — italic for the +N suffix to make
+      // the rolled-up indicator visually distinct from the named locations.
+      const locs = Array.isArray(r.locations) ? r.locations : [];
+      let locStr = "";
+      if (locs.length === 1) {
+        locStr = EA.esc(locs[0]);
+      } else if (locs.length === 2) {
+        locStr = EA.esc(locs[0]) + ", " + EA.esc(locs[1]);
+      } else if (locs.length > 2) {
+        locStr = EA.esc(locs[0]) + ", " + EA.esc(locs[1]) +
+                 ' <span class="more">+' + (locs.length - 2) + " more</span>";
+      }
+      const locHtml = locStr
+        ? '<span class="leader-locations" title="' + EA.esc(locs.join(", ")) + '">' + locStr + '</span>'
+        : '';
+
+      // Name: link only when the backend resolved a deep-link URL. No URL
+      // means no performance report exists for this name yet — render plain.
+      const nameInner = r.report_url
+        ? ('<a class="leader-name-link" href="' + EA.esc(r.report_url) +
+           '" title="' + nameEsc + '">' + nameEsc + '</a>')
+        : ('<span class="leader-name-static" title="' + nameEsc + '">' + nameEsc + '</span>');
+
+      const trend = r.trend || "none";
+      const trendArrow = trend === "up" ? "↑"
+                       : trend === "down" ? "↓"
+                       : trend === "flat" ? "→" : "";
+      const trendTitle = trend === "up"   ? "Trending up (last 30 days)"
+                      : trend === "down" ? "Trending down (last 30 days)"
+                      : trend === "flat" ? "Steady (last 30 days)"
+                      : "Not enough data for a 30-day trend";
+
+      const callCount = r.call_count || 0;
+      const lastCall = r.last_call ? EA.formatRelativeTime(r.last_call) : "";
+
       return (
         '<div class="leader-row">' +
           '<span class="leader-rank">' + (i + 1) + '</span>' +
-          '<div class="leader-name" title="' + name + '">' + name + '</div>' +
+          '<div class="leader-name-col">' + nameInner + locHtml + '</div>' +
           '<span class="score-pill ' + cls + '">' + EA.formatScore(r.avg_score) + '</span>' +
-          '<span class="leader-meta">' + (r.call_count || 0) +
-            ' call' + ((r.call_count === 1) ? '' : 's') +
+          '<span class="leader-trend ' + trend + '" title="' + EA.esc(trendTitle) + '">' +
+            trendArrow +
+          '</span>' +
+          '<span class="leader-meta">' +
+            callCount + ' call' + (callCount === 1 ? '' : 's') +
+            (lastCall ? '<span class="leader-last">' + EA.esc(lastCall) + '</span>' : '') +
           '</span>' +
         '</div>'
       );
@@ -275,27 +370,23 @@
     }
     box.innerHTML = rows.slice(0, 5).map((r) => {
       const cls = EA.scoreClass(r.interaction_overall_score);
-      const href = "/app/history/" + encodeURIComponent(r.interaction_id);
       const full = r.respondent_name || "—";
       const name = full.length > 30 ? (full.slice(0, 29) + "…") : full;
-      let compact = "—";
-      if (r.interaction_date) {
-        const d = new Date(r.interaction_date);
-        if (!isNaN(d.getTime())) {
-          const months = ["Jan","Feb","Mar","Apr","May","Jun",
-                          "Jul","Aug","Sep","Oct","Nov","Dec"];
-          compact = months[d.getMonth()] + " " + d.getDate();
-        }
-      }
+
+      // Prefer the actual call timestamp for relative-time; fall back to the
+      // upload time, then the date-only column.
+      const ts = r.interaction_call_start_time || r.interaction_uploaded_at || r.interaction_date;
+      const rel = ts ? EA.formatRelativeTime(ts) : "—";
       const callTime = EA.formatCallTime(
         r.interaction_call_start_time, r.interaction_uploaded_at, null,
       );
       const dateCell = (callTime && callTime !== "—")
         ? ('<span class="recent-date" style="display:flex;flex-direction:column;line-height:1.15;">' +
-             EA.esc(compact) +
+             EA.esc(rel) +
              '<span class="muted text-small" style="font-size:0.7rem;">' + EA.esc(callTime) + '</span>' +
            '</span>')
-        : '<span class="recent-date">' + EA.esc(compact) + '</span>';
+        : '<span class="recent-date">' + EA.esc(rel) + '</span>';
+
       const locName = r.location_name || "";
       const nameStack = locName
         ? ('<span class="recent-name" style="display:flex;flex-direction:column;line-height:1.15;" title="' + EA.esc(full) + '">' +
@@ -303,15 +394,37 @@
              '<span class="muted text-small" style="font-size:0.7rem;">' + EA.esc(locName) + '</span>' +
            '</span>')
         : ('<span class="recent-name" title="' + EA.esc(full) + '">' + EA.esc(name) + '</span>');
+
+      // Flag count: count "🚩" markers in the interaction_flags TEXT column.
+      // Empty/null/no-match → no pill rendered.
+      const flagsText = r.interaction_flags || "";
+      const flagCount = (flagsText.match(/🚩/g) || []).length;
+      const flagPill = flagCount
+        ? '<span class="flag-pill-mini" title="' + flagCount +
+            ' flag' + (flagCount === 1 ? '' : 's') + ' on this call">🚩 ' + flagCount + '</span>'
+        : '';
+
       return (
-        '<div class="recent-item" data-href="' + href + '">' +
+        '<div class="recent-item" data-iid="' + EA.esc(r.interaction_id) + '">' +
           dateCell + nameStack +
-          '<span class="score-pill ' + cls + '">' + EA.formatScore(r.interaction_overall_score) + '</span>' +
+          '<span class="recent-trail">' +
+            '<span class="score-pill ' + cls + '">' + EA.formatScore(r.interaction_overall_score) + '</span>' +
+            flagPill +
+          '</span>' +
         '</div>'
       );
     }).join("");
-    box.querySelectorAll(".recent-item[data-href]").forEach((el) => {
-      el.addEventListener("click", () => { window.location.href = el.dataset.href; });
+    box.querySelectorAll(".recent-item[data-iid]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const iid = el.dataset.iid;
+        // Prefer the slide-in interaction panel (loaded site-wide via base.html).
+        // Fall back to the full-page history detail if the panel isn't available.
+        if (window.EA && EA.InteractionPanel && typeof EA.InteractionPanel.open === "function") {
+          EA.InteractionPanel.open(iid);
+        } else {
+          window.location.href = "/app/history/" + encodeURIComponent(iid);
+        }
+      });
     });
   }
 

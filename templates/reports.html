@@ -67,6 +67,16 @@ details.report-location > summary > .score-pill {
   <a href="/app/reports" class="text-small">View all reports →</a>
 </div>
 
+{# ── Focus-name banner — shown when arrived from dashboard Top Callers
+     for a name that has reports at multiple locations. ── #}
+<div id="focus-name-banner" class="panel" hidden
+     style="margin-bottom:14px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+  <div>
+    Showing reports for <strong id="focus-name-banner-name">…</strong>.
+  </div>
+  <a href="/app/reports" class="text-small">View all reports →</a>
+</div>
+
 <section id="reports-list-section">
   <div id="reports-wrap">
     <div class="skeleton" style="height:20px;margin:8px 0;"></div>
@@ -115,7 +125,33 @@ details.report-location > summary > .score-pill {
     try {
       const data = await EA.fetchJSON("/api/performance-reports");
       reportsCache = data.reports || [];
-      renderList(data.groups || {});
+
+      const params = new URLSearchParams(window.location.search);
+      const focusName = params.get("focus_name");
+      const reportId  = params.get("report");
+
+      if (focusName) {
+        const norm = (s) => String(s || "").trim().toLowerCase();
+        const target = norm(focusName);
+        const filtered = reportsCache.filter((r) => norm(r.respondent_name) === target);
+        const groups = {};
+        for (const r of filtered) {
+          const loc = r.location_name || "—";
+          (groups[loc] = groups[loc] || []).push(r);
+        }
+        document.getElementById("focus-name-banner-name").textContent = focusName;
+        document.getElementById("focus-name-banner").hidden = false;
+        renderList(groups);
+      } else {
+        renderList(data.groups || {});
+      }
+
+      // Detail-link param: open the report directly. Tenant scope is enforced
+      // server-side by /api/performance-reports/<id>, so a tampered id just
+      // surfaces a 404 banner via openReport's catch path.
+      if (reportId) {
+        openReport(reportId);
+      }
     } catch (err) {
       EA.showError(wrap, err.message || "Failed to load reports.");
     }
