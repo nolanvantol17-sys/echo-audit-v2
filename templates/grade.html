@@ -245,28 +245,6 @@
     margin-bottom: 14px;
   }
 
-  /* Campaign field row — mirrors .project-row's reveal animation. The
-     extra .ready class is set by JS after the transition ends so the
-     combobox dropdown can escape the row without being clipped. */
-  .campaign-row {
-    display: grid;
-    grid-template-columns: minmax(240px, 1fr);
-    max-height: 0;
-    opacity: 0;
-    overflow: hidden;
-    margin-bottom: 0;
-    transition: max-height 150ms ease, opacity 150ms ease, margin-bottom 150ms ease;
-  }
-  .campaign-row.visible {
-    max-height: 120px;
-    opacity: 1;
-    margin-bottom: 14px;
-  }
-  .campaign-row.ready {
-    overflow: visible;
-    max-height: none;
-  }
-
   /* Compact intel card — single muted line for empty / loading states. */
   .intel-card.compact {
     background: transparent;
@@ -339,7 +317,7 @@
 {# ── Pre-call form ──────────────────────────────────────── #}
 <section id="grade-form-section" class="panel">
   <form id="grade-form" autocomplete="off">
-    {# Four fields on one row: Caller · Location · Phone Routing · Date #}
+    {# Four fields on one row: Caller · Location · Campaign · Date #}
     <div class="grade-fields-row">
       <div class="field">
         <label class="field-label" for="gf-caller">Caller</label>
@@ -358,10 +336,9 @@
         <div id="gf-location-empty" class="muted text-small" style="margin-top:4px;" hidden></div>
       </div>
       <div class="field">
-        <label class="field-label" for="gf-phone-routing">Phone Routing</label>
-        <select id="gf-phone-routing" name="phone_routing_id" class="field-select">
-          <option value="">—</option>
-        </select>
+        <label class="field-label" for="gf-campaign">Campaign</label>
+        <input id="gf-campaign" type="text" class="field-input"
+               autocomplete="off" placeholder="Select a project first…" disabled>
       </div>
       <div class="field">
         <label class="field-label" for="gf-date">Call date</label>
@@ -378,18 +355,6 @@
         <select id="gf-project" name="project_id" class="field-select" required disabled>
           <option value="">Select a location first…</option>
         </select>
-      </div>
-    </div>
-
-    {# Campaign field — render-on-demand once a project is selected.
-       Optional. Backed by a searchable combobox (static/combobox.js) that
-       supports inline-create. The <input> is the display + filter element;
-       the selected campaign_id is pulled from the combobox API at submit. #}
-    <div id="campaign-field-row" class="campaign-row">
-      <div class="field">
-        <label class="field-label" for="gf-campaign">Campaign</label>
-        <input id="gf-campaign" type="text" class="field-input"
-               autocomplete="off" placeholder="Select or create…">
       </div>
     </div>
 
@@ -584,7 +549,6 @@
       loadLocations(),
       loadProjects(),
       loadCallers(),
-      loadPhoneRoutings(),
       checkVoip(),
     ]);
     if ($("#gf-location").value) onLocationChange();  // re-fire if user picked during the race
@@ -820,30 +784,20 @@
   }
 
   // ── Campaign combobox (optional field) ────────────────────
-  // Visible only when a project is selected. Fetches per-project campaigns
-  // via /api/projects/<id>/campaigns and mounts the EA.Combobox on change.
+  // Always rendered in the main 4-column field row, but disabled until a
+  // project is selected. Fetches per-project campaigns via
+  // /api/projects/<id>/campaigns and mounts the EA.Combobox on project change.
   // Pre-selects the first item (most recently used, falling back to most
   // recently created), or a stashed campaign_id from the grade context.
-  function updateCampaignFieldVisibility() {
-    const row = document.getElementById("campaign-field-row");
-    if (!row) return;
-    const projSel = $("#gf-project");
-    const hasProject = !!(projSel && projSel.value);
-    const willShow = hasProject;
-    const wasVisible = row.classList.contains("visible");
-    row.classList.toggle("visible", willShow);
-    if (willShow && !wasVisible) {
-      // Wait for the slide-in to finish before lifting overflow so the
-      // combobox dropdown can escape the row. transitionend fires once per
-      // property; we listen on max-height specifically.
-      const onEnd = function (e) {
-        if (e.propertyName !== "max-height") return;
-        row.removeEventListener("transitionend", onEnd);
-        row.classList.add("ready");
-      };
-      row.addEventListener("transitionend", onEnd);
-    } else if (!willShow) {
-      row.classList.remove("ready");
+  function setCampaignFieldEnabled(enabled, placeholderMsg) {
+    const input = document.getElementById("gf-campaign");
+    if (!input) return;
+    input.disabled = !enabled;
+    if (!enabled) {
+      input.value = "";
+      input.placeholder = "Select a project first…";
+    } else if (placeholderMsg) {
+      input.placeholder = placeholderMsg;
     }
   }
 
@@ -1063,20 +1017,6 @@
     }
   }
 
-  async function loadPhoneRoutings() {
-    const sel = $("#gf-phone-routing");
-    try {
-      const phoneRoutings = await EA.fetchJSON("/api/phone_routing");
-      sel.innerHTML = '<option value="">—</option>';
-      phoneRoutings.forEach(function (phr) {
-        const o = document.createElement("option");
-        o.value = phr.phone_routing_id;
-        o.textContent = phr.phone_routing_name;
-        sel.appendChild(o);
-      });
-    } catch (err) { /* optional */ }
-  }
-
   const VOIP_QUEUE_POLL_MS = 30000;
   let voipQueueTimer = null;
 
@@ -1188,14 +1128,15 @@
   }
 
   function onProjectChange() {
-    updateCampaignFieldVisibility();
     const projSel = $("#gf-project");
     const pid = projSel ? projSel.value : "";
     if (pid) {
+      setCampaignFieldEnabled(true, "Loading campaigns…");
       loadCampaignsForProject(pid);
     } else {
       destroyCampaignCombo();
       state.campaignProjectId = null;
+      setCampaignFieldEnabled(false);
     }
   }
 
@@ -2124,7 +2065,7 @@
         // for the restored project. Pass preferId so the combobox defaults
         // to the stashed campaign_id if it still exists in the loaded list;
         // otherwise loadCampaignsForProject falls back to items[0].
-        updateCampaignFieldVisibility();
+        setCampaignFieldEnabled(true, "Loading campaigns…");
         if (ctx.campaign_id !== undefined && ctx.campaign_id !== null && ctx.campaign_id !== "") {
           loadCampaignsForProject(ctx.project_id, { preferId: ctx.campaign_id });
         } else {
@@ -2160,7 +2101,7 @@
     renderProjectDropdown(null);
     destroyCampaignCombo();
     state.campaignProjectId = null;
-    updateCampaignFieldVisibility();
+    setCampaignFieldEnabled(false);
     const intel = document.getElementById("location-intel-card");
     if (intel) {
       intel.hidden = true;
