@@ -258,27 +258,30 @@ CREATE TRIGGER trg_departments_updated_at BEFORE UPDATE ON departments
 
 
 -- ================================================================
--- 10. campaigns  (renamed from campaign_types)
+-- 10. phone_routing  (VoIP phone-tree configuration per location)
 -- ================================================================
--- Scoped to a single location. No company_id, no industry_id —
--- location_id is the only parent FK.
+-- Originally named "campaigns"; renamed on 2026-04-21 to free the
+-- "campaign" name for a distinct product concept (time-bounded batches
+-- within a project — see table "campaigns" defined alongside
+-- interactions below). Scoped to a single location; no company_id, no
+-- industry_id — location_id is the only parent FK.
 -- ================================================================
-CREATE TABLE campaigns (
-    campaign_id         SERIAL PRIMARY KEY,
-    location_id         INTEGER NOT NULL
-                            REFERENCES locations (location_id) ON DELETE CASCADE,
-    campaign_name       TEXT NOT NULL,
-    campaign_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    campaign_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE phone_routing (
+    phone_routing_id         SERIAL PRIMARY KEY,
+    location_id              INTEGER NOT NULL
+                                 REFERENCES locations (location_id) ON DELETE CASCADE,
+    phone_routing_name       TEXT NOT NULL,
+    phone_routing_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    phone_routing_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_campaigns_location_id ON campaigns (location_id);
+CREATE INDEX idx_phone_routing_location_id ON phone_routing (location_id);
 
-CREATE OR REPLACE FUNCTION set_campaign_updated_at() RETURNS TRIGGER AS $$
-BEGIN NEW.campaign_updated_at = NOW(); RETURN NEW; END;
+CREATE OR REPLACE FUNCTION set_phone_routing_updated_at() RETURNS TRIGGER AS $$
+BEGIN NEW.phone_routing_updated_at = NOW(); RETURN NEW; END;
 $$ LANGUAGE plpgsql;
-CREATE TRIGGER trg_campaigns_updated_at BEFORE UPDATE ON campaigns
-    FOR EACH ROW EXECUTE FUNCTION set_campaign_updated_at();
+CREATE TRIGGER trg_phone_routing_updated_at BEFORE UPDATE ON phone_routing
+    FOR EACH ROW EXECUTE FUNCTION set_phone_routing_updated_at();
 
 
 -- ================================================================
@@ -397,7 +400,7 @@ CREATE TABLE projects (
     company_id         INTEGER NOT NULL
                            REFERENCES companies (company_id) ON DELETE RESTRICT,
     project_name       TEXT NOT NULL,
-    campaign_id        INTEGER REFERENCES campaigns (campaign_id) ON DELETE SET NULL,
+    phone_routing_id   INTEGER REFERENCES phone_routing (phone_routing_id) ON DELETE SET NULL,
     rubric_group_id    INTEGER NOT NULL
                            REFERENCES rubric_groups (rubric_group_id) ON DELETE RESTRICT,
     project_start_date DATE NOT NULL,
@@ -421,7 +424,7 @@ CREATE INDEX idx_projects_company_id            ON projects (company_id)
 CREATE INDEX idx_projects_company_id_status_id  ON projects (company_id, status_id)
     WHERE project_deleted_at IS NULL;
 CREATE INDEX idx_projects_rubric_group_id       ON projects (rubric_group_id);
-CREATE INDEX idx_projects_campaign_id           ON projects (campaign_id);
+CREATE INDEX idx_projects_phone_routing_id      ON projects (phone_routing_id);
 CREATE INDEX idx_projects_status_id             ON projects (status_id);
 
 CREATE OR REPLACE FUNCTION set_project_updated_at() RETURNS TRIGGER AS $$
@@ -467,19 +470,57 @@ CREATE TRIGGER trg_respondents_updated_at BEFORE UPDATE ON respondents
 
 
 -- ================================================================
+-- 14c. campaigns  (time-bounded batches within a project)
+-- ================================================================
+-- NEW concept (introduced 2026-04-21). A campaign is a named batch of
+-- calls inside a single project — e.g. "April 2026", "May 2026". Unlike
+-- phone_routing (the renamed legacy table), campaigns are time-scoped
+-- rather than location-scoped and belong to a project, not a location.
+--
+-- project_id is NOT NULL with ON DELETE CASCADE: a campaign is always a
+-- child of exactly one project, and deleting the project removes the
+-- campaign rows that can no longer be addressed anywhere in the UI.
+-- Soft-delete is supported via campaign_deleted_at so historical
+-- interactions can still surface the campaign name.
+-- ================================================================
+CREATE TABLE campaigns (
+    campaign_id         SERIAL PRIMARY KEY,
+    project_id          INTEGER NOT NULL
+                            REFERENCES projects (project_id) ON DELETE CASCADE,
+    campaign_name       TEXT NOT NULL,
+    campaign_deleted_at TIMESTAMPTZ,
+    campaign_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    campaign_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_campaigns_project_id ON campaigns (project_id)
+    WHERE campaign_deleted_at IS NULL;
+
+CREATE OR REPLACE FUNCTION set_campaign_updated_at() RETURNS TRIGGER AS $$
+BEGIN NEW.campaign_updated_at = NOW(); RETURN NEW; END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_campaigns_updated_at BEFORE UPDATE ON campaigns
+    FOR EACH ROW EXECUTE FUNCTION set_campaign_updated_at();
+
+
+-- ================================================================
 -- 15. interactions
 -- ================================================================
--- Tenant scope is derived through interaction → project → campaign,
--- but the *target property* of a call is captured directly on the
--- interaction via interaction_location_id. That column is populated
--- from the caller's UI selection at row creation (both answered and
--- no-answer paths) — not derived — because projects.campaign_id can
--- be NULL (legacy/migrated tenants), in which case the derivation
--- chain yields no location at all.
+-- Tenant scope is derived through interaction → project, but the
+-- *target property* of a call is captured directly on the interaction
+-- via interaction_location_id — populated from the caller's UI
+-- selection at row creation (both answered and no-answer paths), not
+-- derived from any parent.
+--
+-- campaign_id is nullable: legacy rows predate the campaign concept,
+-- and projects that don't bucket calls into time-bounded campaigns
+-- leave the column NULL. ON DELETE SET NULL so removing a campaign
+-- bucket doesn't destroy the calls inside it.
 -- ================================================================
 CREATE TABLE interactions (
     interaction_id                    SERIAL PRIMARY KEY,
     project_id                        INTEGER REFERENCES projects (project_id) ON DELETE SET NULL,
+    campaign_id                       INTEGER REFERENCES campaigns (campaign_id) ON DELETE SET NULL,
     interaction_location_id           INTEGER REFERENCES locations (location_id) ON DELETE SET NULL,
     caller_user_id                    INTEGER REFERENCES users (user_id) ON DELETE SET NULL,
     respondent_user_id                INTEGER REFERENCES users (user_id) ON DELETE SET NULL,
@@ -531,6 +572,8 @@ CREATE INDEX idx_interactions_respondent_user_id  ON interactions (respondent_us
 CREATE INDEX idx_interactions_respondent_id       ON interactions (respondent_id);
 CREATE INDEX idx_interactions_location_id         ON interactions (interaction_location_id)
     WHERE interaction_deleted_at IS NULL AND interaction_location_id IS NOT NULL;
+CREATE INDEX idx_interactions_campaign_id         ON interactions (campaign_id)
+    WHERE interaction_deleted_at IS NULL AND campaign_id IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION set_interaction_updated_at() RETURNS TRIGGER AS $$
 BEGIN NEW.interaction_updated_at = NOW(); RETURN NEW; END;
