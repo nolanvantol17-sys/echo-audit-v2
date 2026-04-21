@@ -344,7 +344,7 @@
         </select>
       </div>
       <div class="field">
-        <label class="field-label field-required" for="gf-location">
+        <label id="gf-location-label" class="field-label field-required" for="gf-location">
           {{ location_label or "Location" }}
         </label>
         <select id="gf-location" name="location_id" class="field-select" required>
@@ -593,6 +593,7 @@
       state.projectLocked = false;
       $("#form-hint").textContent =
         "Could not find that project in your account — defaulting to manual selection.";
+      setLocationLabel(false);
       updateProjectFieldVisibility();
       return;
     }
@@ -626,8 +627,7 @@
       projSel.disabled = true;
       state.locationNameDisplay = "";
       renderLockStrip(p, /*allLocations=*/true);
-      // Add the prompt label above the location dropdown.
-      ensureAllLocationsLabel();
+      setLocationLabel(true);
     } else {
       // Single-location mode — lock both dropdowns (existing behavior).
       if (p.location_id != null) {
@@ -639,6 +639,7 @@
       projSel.disabled = true;
       state.locationNameDisplay = p.location_name || "";
       renderLockStrip(p, /*allLocations=*/false);
+      setLocationLabel(false);
     }
     updateProjectFieldVisibility();
   }
@@ -664,15 +665,15 @@
       ' · <a href="/app/projects">change</a>';
   }
 
-  function ensureAllLocationsLabel() {
-    if (document.getElementById("all-locations-prompt")) return;
-    const note = document.createElement("div");
-    note.id = "all-locations-prompt";
-    note.className = "muted text-small";
-    note.style.cssText = "margin:0 0 6px 0;";
-    note.textContent = "Select which location you're calling today.";
-    const locField = document.querySelector('#gf-location').closest(".field");
-    if (locField) locField.insertBefore(note, locField.firstChild);
+  function setLocationLabel(allLocations) {
+    const label = document.getElementById("gf-location-label");
+    if (!label) return;
+    if (!("defaultLabel" in label.dataset)) {
+      label.dataset.defaultLabel = label.textContent.trim();
+    }
+    label.textContent = allLocations
+      ? "Which location are you calling today?"
+      : label.dataset.defaultLabel;
   }
 
   async function loadLocations() {
