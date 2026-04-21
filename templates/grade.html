@@ -161,24 +161,6 @@
     color: var(--muted);
     margin-left: 4px;
   }
-  .intel-last-row {
-    margin-top: 10px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 0.88rem;
-    color: var(--text);
-  }
-  .intel-noanswer-badge {
-    display: inline-block;
-    padding: 2px 10px;
-    border-radius: 999px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    background: rgba(245, 158, 11, 0.18);
-    color: #fbbf24;
-    border: 1px solid rgba(245, 158, 11, 0.4);
-  }
   .intel-brief {
     margin-top: 12px;
     padding-top: 12px;
@@ -878,24 +860,6 @@
         '</div>' +
       '</div>';
 
-    let lastRowHtml = '';
-    if (intel.li_last_call_outcome === 'no_answer') {
-      lastRowHtml =
-        '<div class="intel-last-row">' +
-          '<span class="intel-noanswer-badge">Last call: unanswered</span>' +
-          (lastDateD ? '<span class="muted text-small">on ' + EA.esc(lastDateD) + '</span>' : '') +
-        '</div>';
-    } else if (intel.li_last_call_score !== null && intel.li_last_call_score !== undefined) {
-      const cls = EA.scoreClass(intel.li_last_call_score);
-      lastRowHtml =
-        '<div class="intel-last-row">' +
-          '<span class="muted text-small">Last call:</span>' +
-          '<span class="score-pill ' + cls + '">' +
-            EA.formatScore(intel.li_last_call_score) + '</span>' +
-          (lastDateD ? '<span class="muted text-small">on ' + EA.esc(lastDateD) + '</span>' : '') +
-        '</div>';
-    }
-
     let briefHtml = '';
     if (intel.li_summary) {
       const s = bulletsHtml(intel.li_strengths);
@@ -926,7 +890,7 @@
       }
     }
 
-    card.innerHTML = statsHtml + lastRowHtml + briefHtml + staleHtml;
+    card.innerHTML = statsHtml + briefHtml + staleHtml;
   }
 
   function bulletsHtml(text) {
