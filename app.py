@@ -80,6 +80,16 @@ def _static_version(filename):
     return v
 
 
+# Opt-in helper for routes that participate in the HTMX page router. When the
+# client sends HX-Request, base.html skips its chrome and renders just
+# extra_css + content + extra_js so the response can be swapped into
+# <main id="app-main">. Routes still using plain render_template are
+# unaffected — _fragment defaults to falsy and the full shell renders.
+def render_page(template_name, **ctx):
+    ctx["_fragment"] = bool(request.headers.get("HX-Request"))
+    return render_template(template_name, **ctx)
+
+
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
@@ -619,7 +629,7 @@ def register_routes(app):
     @app.route("/app")
     @login_required
     def app_home():
-        return render_template("index.html")
+        return render_page("index.html")
 
     # ── Post-signup setup wizard ──
     # Walks a brand-new admin through creating one location, one rubric, and
@@ -658,7 +668,7 @@ def register_routes(app):
     @app.route("/app/projects/<int:project_id>")
     @login_required
     def project_hub_page(project_id):
-        return render_template("project_hub.html", project_id=project_id)
+        return render_page("project_hub.html", project_id=project_id)
 
     @app.route("/app/grade")
     @login_required
@@ -673,12 +683,12 @@ def register_routes(app):
     @app.route("/app/history/<int:interaction_id>")
     @login_required
     def interaction_detail_page(interaction_id):
-        return render_template("interaction_detail.html", interaction_id=interaction_id)
+        return render_page("interaction_detail.html", interaction_id=interaction_id)
 
     @app.route("/app/reports")
     @login_required
     def reports_page():
-        return render_template("reports.html")
+        return render_page("reports.html")
 
     @app.route("/app/team")
     @login_required

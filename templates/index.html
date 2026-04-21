@@ -208,7 +208,7 @@
       <span class="gs-step">Step 2</span>
       <div class="gs-action-title">Grade a call</div>
       <div class="gs-action-sub">Record live, upload an audio file, or log a no-answer attempt.</div>
-      <a href="/app/grade" class="btn btn-ghost btn-sm">Go to grading</a>
+      <a href="/app/grade" class="btn btn-ghost btn-sm" data-no-swap>Go to grading</a>
     </div>
     <div class="gs-action">
       <span class="gs-step">Step 3</span>
@@ -449,7 +449,12 @@
 
   // ── Boot: dashboard summary first so we can decide whether to render
   //     the chart widget at all (skipped in the zero-state). ──
-  document.addEventListener("DOMContentLoaded", async function () {
+  // Wrapped in init() + registered with EA.PageRouter so content swaps
+  // re-run this codepath; the returned teardown drops the DashboardWidget's
+  // chart instance + multi-select popovers before the <main> innerHTML is
+  // replaced.
+  async function init() {
+    let widgetHandle = null;
     try {
       const d = await EA.fetchJSON("/api/dashboard");
       const totalCalls = Number((d.stat_cards || {}).total_calls || 0);
@@ -457,9 +462,9 @@
         // Zero-state: skip rendering the dash3 layout entirely (chart,
         // stats, leaderboard, recent) and surface the Get Started panel.
         showZeroState();
-        return;
+        return { teardown() {} };
       }
-      EA.DashboardWidget.init({
+      widgetHandle = EA.DashboardWidget.init({
         container: document.getElementById("dashboard-widget"),
         defaultViewBy: "date",
       });
@@ -468,12 +473,29 @@
       renderRecent(d.recent_interactions || []);
     } catch (err) {
       ["stat-total","stat-avg","stat-below","stat-noans","stat-projects"].forEach((id) => {
-        document.getElementById(id).textContent = "—";
+        const el = document.getElementById(id);
+        if (el) el.textContent = "—";
       });
       EA.showError("#leaderboard", err.message || "Failed to load.");
       EA.showError("#recent-wrap", err.message || "Failed to load.");
     }
-  });
+    return {
+      teardown() {
+        if (widgetHandle && typeof widgetHandle.destroy === "function") {
+          widgetHandle.destroy();
+          widgetHandle = null;
+        }
+      },
+    };
+  }
+
+  if (window.EA && EA.PageRouter) {
+    EA.PageRouter.register({ match: "/app", init: init });
+  } else {
+    // Fallback: router unavailable (e.g. script load failure) — run init
+    // once on DOMContentLoaded so the page still boots.
+    document.addEventListener("DOMContentLoaded", init);
+  }
 })();
 </script>
 {% endblock %}

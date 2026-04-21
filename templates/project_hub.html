@@ -338,7 +338,7 @@
       Record or upload a new call. Project and location are pre-selected for you.
     </div>
     <div class="hub-card-footer">
-      <a href="#" class="btn btn-primary" id="btn-start-grading">Start Grading</a>
+      <a href="#" class="btn btn-primary" id="btn-start-grading" data-no-swap>Start Grading</a>
     </div>
   </div>
 
@@ -402,18 +402,28 @@
     $("#btn-start-grading").href   = "/app/grade?project_id="    + PROJECT_ID;
     $("#btn-view-all-history").href = "/app/history?project_id="  + PROJECT_ID;
     $("#btn-view-all-reports").href = "/app/reports?project_id="  + PROJECT_ID;
-    wireSettingsPopover();
-    EA.DashboardWidget.init({
+    const popoverTeardown = wireSettingsPopover();
+    const widgetHandle = EA.DashboardWidget.init({
       container: document.getElementById("project-analytics-widget"),
       projectId: PROJECT_ID,
       defaultViewBy: "date",
     });
     await Promise.all([loadSummary(), loadRubric()]);
+    return {
+      teardown() {
+        try { popoverTeardown(); } catch (_) {}
+        if (widgetHandle && typeof widgetHandle.destroy === "function") {
+          try { widgetHandle.destroy(); } catch (_) {}
+        }
+      },
+    };
   }
 
   // ── Project Settings popover (Edit + Delete) ─────────────
   // Delete is role-gated in the template (admin / super_admin); the popover
-  // itself is always present for Edit.
+  // itself is always present for Edit. Returns a teardown fn that removes
+  // the document-level outside-click listener — otherwise it'd leak across
+  // content-swap navigations since it's attached outside <main id=app-main>.
   function wireSettingsPopover() {
     const btn  = $("#btn-project-settings");
     const menu = $("#settings-popover");
@@ -423,12 +433,14 @@
       menu.hidden = !opening;
       btn.setAttribute("aria-expanded", String(opening));
     });
-    document.addEventListener("click", function (e) {
+    // Named function reference so removeEventListener can drop it on teardown.
+    function onDocClick(e) {
       if (menu.hidden) return;
       if (menu.contains(e.target) || btn.contains(e.target)) return;
       menu.hidden = true;
       btn.setAttribute("aria-expanded", "false");
-    });
+    }
+    document.addEventListener("click", onDocClick);
     $("#btn-settings-edit").addEventListener("click", function () {
       // The wizard isn't yet a shared component — it lives on the Projects
       // list page. We deep-link with ?edit=<id>&return=hub so projects.html
@@ -438,6 +450,9 @@
     });
     const delBtn = document.getElementById("btn-settings-delete");
     if (delBtn) delBtn.addEventListener("click", confirmAndDeleteProject);
+    return function teardown() {
+      document.removeEventListener("click", onDocClick);
+    };
   }
 
   async function confirmAndDeleteProject() {
@@ -701,7 +716,14 @@
     }).join("");
   }
 
-  document.addEventListener("DOMContentLoaded", init);
+  if (window.EA && EA.PageRouter) {
+    EA.PageRouter.register({
+      match: function (u) { return /^\/app\/projects\/\d+$/.test(u.pathname); },
+      init: init,
+    });
+  } else {
+    document.addEventListener("DOMContentLoaded", init);
+  }
 })();
 </script>
 {% endblock %}

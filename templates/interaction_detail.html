@@ -43,7 +43,19 @@
   // Cache of the full interaction payload so regrade responses can merge in.
   let current = null;
 
-  document.addEventListener("DOMContentLoaded", load);
+  // Wrapped in init() + registered with EA.PageRouter so content swaps
+  // re-run this codepath. No teardown needed — this page's listeners live
+  // inside <main id="app-main">, which the router replaces on swap.
+  function init() { load(); }
+
+  if (window.EA && EA.PageRouter) {
+    EA.PageRouter.register({
+      match: function (u) { return /^\/app\/history\/\d+$/.test(u.pathname); },
+      init: init,
+    });
+  } else {
+    document.addEventListener("DOMContentLoaded", init);
+  }
 
   async function load() {
     try {

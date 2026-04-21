@@ -1,3 +1,17 @@
+{# ========================================================================
+   base.html — shell layout with HTMX-style content-swap support.
+
+   When a request carries HX-Request, Flask's render_page helper sets
+   _fragment=True and this template emits only extra_css + content +
+   extra_js, letting page_router.js swap <main id="app-main"> without
+   re-rendering the shell. On a plain load _fragment is falsy and the
+   full DOCTYPE/head/body/sidebar scaffold renders as before.
+   ======================================================================== #}
+{% if _fragment %}
+{{ self.extra_css() }}
+{{ self.content() }}
+{{ self.extra_js() }}
+{% else %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -64,7 +78,7 @@
   `request.path` is e.g. "/app", "/app/grade", "/app/history/42". We treat
   `/app` as the dashboard path ("is-dashboard"); everything else matches
   by prefix so detail pages (/app/history/<id>) stay highlighted under the
-  parent section.
+  parent section. Post-swap highlights are reapplied by page_router.js.
 #}
 {% set _p = request.path %}
 {% set is_dashboard = (_p == '/app') %}
@@ -76,11 +90,20 @@
 {% set is_voip      = _p.startswith('/app/voip') %}
 {% set is_platform  = _p.startswith('/app/platform') %}
 
+{# When the user is on /app/grade the page holds mic streams, an active
+   MediaRecorder, possibly a setInterval poll, and a dirty form. Content-swap
+   would orphan all of that. We already mark inbound-to-grade links with
+   data-no-swap; this flag force-marks every sidebar/brand/breadcrumb link as
+   data-no-swap when the current page IS grade, so every outbound path is a
+   full nav too. Grade is a full-nav bubble in both directions. #}
+{% set is_grade = _p == '/app/grade' or _p.startswith('/app/grade/') or _p.startswith('/app/grade?') %}
+{% set _nsw = 'data-no-swap' if is_grade else '' %}
+
 <div class="app-shell">
 
   {# ── Sidebar ────────────────────────────────────────────── #}
   <aside class="sidebar">
-    <a href="{{ url_for('app_home') }}" class="sidebar-brand">
+    <a href="{{ url_for('app_home') }}" class="sidebar-brand" {{ _nsw }}>
       {% if logo_base64 %}
         <img src="data:image/png;base64,{{ logo_base64 }}" alt="{{ client_name or 'Logo' }}">
       {% endif %}
@@ -89,37 +112,37 @@
 
     <nav class="sidebar-nav">
       <a href="{{ url_for('app_home') }}"
-         class="nav-link {% if is_dashboard %}active{% endif %}">
+         class="nav-link {% if is_dashboard %}active{% endif %}" {{ _nsw }}>
         <span class="nav-icon">◆</span> Dashboard
       </a>
       <a href="{{ url_for('projects_page') }}"
-         class="nav-link {% if is_projects %}active{% endif %}">
+         class="nav-link {% if is_projects %}active{% endif %}" {{ _nsw }}>
         <span class="nav-icon">▶</span> Projects
       </a>
       <a href="{{ url_for('history_page') }}"
-         class="nav-link {% if is_history %}active{% endif %}">
+         class="nav-link {% if is_history %}active{% endif %}" {{ _nsw }}>
         <span class="nav-icon">≡</span> Past Grades
       </a>
       <a href="{{ url_for('reports_page') }}"
-         class="nav-link {% if is_reports %}active{% endif %}">
+         class="nav-link {% if is_reports %}active{% endif %}" {{ _nsw }}>
         <span class="nav-icon">◇</span> Performance Reports
       </a>
 
       {% if user_role in ('manager', 'admin', 'super_admin') %}
       <div class="sidebar-section-label">Manage</div>
       <a href="{{ url_for('team_page') }}"
-         class="nav-link {% if is_team %}active{% endif %}">
+         class="nav-link {% if is_team %}active{% endif %}" {{ _nsw }}>
         <span class="nav-icon">◉</span> Team
       </a>
       {% endif %}
 
       {% if user_role in ('admin', 'super_admin') %}
       <a href="{{ url_for('settings_page') }}"
-         class="nav-link {% if is_settings %}active{% endif %}">
+         class="nav-link {% if is_settings %}active{% endif %}" {{ _nsw }}>
         <span class="nav-icon">⚙</span> Settings
       </a>
       <a href="{{ url_for('voip_page') }}"
-         class="nav-link {% if is_voip %}active{% endif %}">
+         class="nav-link {% if is_voip %}active{% endif %}" {{ _nsw }}>
         <span class="nav-icon">☎</span> VoIP
       </a>
       {% endif %}
@@ -127,7 +150,7 @@
       {% if user_role == 'super_admin' %}
       <div class="sidebar-section-label">Super Admin</div>
       <a href="{{ url_for('platform_page') }}"
-         class="nav-link {% if is_platform %}active{% endif %}">
+         class="nav-link {% if is_platform %}active{% endif %}" {{ _nsw }}>
         <span class="nav-icon">★</span> Platform
       </a>
       {% endif %}
@@ -164,13 +187,13 @@
   </header>
 
   {# ── Project breadcrumb (persistent context bar) ──────── #}
-  {# Populated at runtime from sessionStorage. Hidden by default; base.html
-     inline script toggles it on when on /app/grade, /app/history, or
-     /app/reports with an activeProject set in sessionStorage. #}
+  {# Populated at runtime from sessionStorage. Hidden by default; the
+     __refreshBreadcrumb function below toggles it on when on /app/grade,
+     /app/history, or /app/reports with an activeProject set. #}
   <div id="project-breadcrumb" class="project-breadcrumb" hidden>
     <div>
       <span class="muted">Project:</span>
-      <a id="project-breadcrumb-link" href="#"></a>
+      <a id="project-breadcrumb-link" href="#" {{ _nsw }}></a>
     </div>
     <button type="button" id="project-breadcrumb-exit" class="exit-project-btn">
       × Exit Project
@@ -178,7 +201,9 @@
   </div>
 
   {# ── Main content ──────────────────────────────────────── #}
-  <main class="main">
+  {# id="app-main" is the content-swap target. page_router.js replaces its
+     innerHTML on intra-app navigation; the surrounding shell stays mounted. #}
+  <main class="main" id="app-main">
     {# Flash messages — dismissible banners above the page content #}
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -199,6 +224,7 @@
 </div>
 
 <script src="{{ url_for('static', filename='app.js') }}?v={{ static_v('app.js') }}"></script>
+<script src="{{ url_for('static', filename='page_router.js') }}?v={{ static_v('page_router.js') }}"></script>
 {# audio_player.js / interaction_view.js / interaction_panel.js are loaded
    per-page (extra_js block) on the ~4 pages that actually use them, so the
    other half of the sidebar doesn't pay for them on every nav. #}
@@ -207,16 +233,16 @@
   // Stores the last-entered project in sessionStorage so the user sees the
   // context across /app/grade, /app/history, /app/reports. Clears itself when
   // the user navigates to an unrelated top-level destination.
-  (function () {
+  //
+  // Exposed as window.__refreshBreadcrumb so page_router.js can re-run it
+  // after each content swap (the breadcrumb lives in the persistent shell,
+  // not inside <main id="app-main">, so it needs an explicit refresh hook).
+  window.__refreshBreadcrumb = async function () {
     const CONTEXT_PAGES = ["/app/grade", "/app/history", "/app/reports"];
-    // Prefix match; the project hub page (/app/projects/<id>) does not get the
-    // breadcrumb, but it does SET the context so subsequent navigations to
-    // grade/history/reports inherit it.
     const path = window.location.pathname;
     const isContextPage = CONTEXT_PAGES.some((p) =>
       path === p || path.startsWith(p + "/") || path.startsWith(p + "?")
     );
-    const isProjectHub = /^\/app\/projects\/\d+/.test(path);
     const isProjectList = (path === "/app/projects" || path === "/app/projects/");
     // Pages where we clear the project context entirely:
     //   /app (dashboard), /app/team, /app/settings, /app/voip, /app/platform,
@@ -233,60 +259,79 @@
       sessionStorage.removeItem("activeProject");
     }
 
-    document.addEventListener("DOMContentLoaded", async function () {
-      // When on a context page, opportunistically populate activeProject
-      // from ?project_id=<id> in the URL so entering from outside the hub
-      // (eg. a direct link) still gets context.
-      if (isContextPage) {
-        const qpId = new URLSearchParams(window.location.search).get("project_id");
-        if (qpId) {
-          let active = null;
-          try { active = JSON.parse(sessionStorage.getItem("activeProject") || "null"); }
-          catch (_) { active = null; }
-          if (!active || String(active.project_id) !== String(qpId)) {
-            try {
-              const projects = await window.EA.fetchJSON("/api/projects");
-              const p = (projects || []).find(x => String(x.project_id) === String(qpId));
-              if (p) {
-                sessionStorage.setItem("activeProject", JSON.stringify({
-                  project_id: p.project_id,
-                  project_name: p.project_name,
-                }));
-              }
-            } catch (_) { /* non-fatal */ }
-          }
+    // When on a context page, opportunistically populate activeProject
+    // from ?project_id=<id> in the URL so entering from outside the hub
+    // (eg. a direct link) still gets context.
+    if (isContextPage) {
+      const qpId = new URLSearchParams(window.location.search).get("project_id");
+      if (qpId) {
+        let active = null;
+        try { active = JSON.parse(sessionStorage.getItem("activeProject") || "null"); }
+        catch (_) { active = null; }
+        if (!active || String(active.project_id) !== String(qpId)) {
+          try {
+            const projects = await window.EA.fetchJSON("/api/projects");
+            const p = (projects || []).find(x => String(x.project_id) === String(qpId));
+            if (p) {
+              sessionStorage.setItem("activeProject", JSON.stringify({
+                project_id: p.project_id,
+                project_name: p.project_name,
+              }));
+            }
+          } catch (_) { /* non-fatal */ }
         }
       }
+    }
 
-      // Render the breadcrumb — only on context pages, only when set.
-      const bar = document.getElementById("project-breadcrumb");
-      if (!bar) return;
-      if (!isContextPage) return;
-      let active = null;
-      try { active = JSON.parse(sessionStorage.getItem("activeProject") || "null"); }
-      catch (_) { active = null; }
-      if (!active || !active.project_id) return;
+    const bar = document.getElementById("project-breadcrumb");
+    if (!bar) return;
 
-      const link = document.getElementById("project-breadcrumb-link");
-      link.textContent = active.project_name || "Project";
-      link.href = "/app/projects/" + encodeURIComponent(active.project_id);
-      bar.hidden = false;
+    if (!isContextPage) {
+      bar.hidden = true;
+      return;
+    }
+    let active = null;
+    try { active = JSON.parse(sessionStorage.getItem("activeProject") || "null"); }
+    catch (_) { active = null; }
+    if (!active || !active.project_id) {
+      bar.hidden = true;
+      return;
+    }
 
-      document.getElementById("project-breadcrumb-exit").addEventListener("click", function () {
+    const link = document.getElementById("project-breadcrumb-link");
+    link.textContent = active.project_name || "Project";
+    link.href = "/app/projects/" + encodeURIComponent(active.project_id);
+    bar.hidden = false;
+  };
+
+  // Wire the exit button once (button lives in persistent shell), then run
+  // the initial breadcrumb refresh for the starting URL.
+  document.addEventListener("DOMContentLoaded", function () {
+    const exitBtn = document.getElementById("project-breadcrumb-exit");
+    if (exitBtn) {
+      exitBtn.addEventListener("click", function () {
         sessionStorage.removeItem("activeProject");
-        // Strip ?project_id from the URL before reloading so we return to the
-        // global view rather than re-inheriting the context.
+        // Strip ?project_id from the URL before navigating so we return to
+        // the global view rather than re-inheriting the context.
         const url = new URL(window.location.href);
         url.searchParams.delete("project_id");
-        window.location.href = url.pathname + (url.search || "");
+        const target = url.pathname + (url.search || "");
+        if (window.EA && window.EA.PageRouter) {
+          window.EA.PageRouter.navigate(target);
+        } else {
+          window.location.href = target;
+        }
       });
-    });
-  })();
+    }
+    window.__refreshBreadcrumb();
+  });
 
   // ── Grade form nav-away guard ────────────────────────────
   // When the user is mid-grade on /app/grade, intercept sidebar nav clicks and
   // confirm before leaving. The grade page itself sets window.formIsDirty and
   // window.gradeComplete — if the page hasn't wired those, we don't intercept.
+  // Note: /app/grade is excluded from content-swap (see data-no-swap below on
+  // any outbound-to-grade link), so this page is always reached via full nav.
   (function () {
     if (window.location.pathname !== "/app/grade") return;
     document.addEventListener("DOMContentLoaded", function () {
@@ -343,3 +388,4 @@
 {% block extra_js %}{% endblock %}
 </body>
 </html>
+{% endif %}

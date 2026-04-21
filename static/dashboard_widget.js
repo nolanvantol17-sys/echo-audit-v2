@@ -735,6 +735,19 @@
     // Boot: fetch filter options + initial chart in parallel.
     showLoading();
     Promise.all([loadFilters(), reload()]).catch(() => {});
+
+    // Teardown handle — called by host page on PageRouter swap-away so the
+    // chart instance, its ResizeObserver, and any open multi-select popovers
+    // (appended to document.body) release their references instead of
+    // orphaning after the widget's container is destroyed.
+    return {
+      destroy() {
+        try { locMS.close(); }    catch (_) {}
+        try { callerMS.close(); } catch (_) {}
+        try { campMS.close(); }   catch (_) {}
+        if (chart) { try { chart.destroy(); } catch (_) {} chart = null; }
+      },
+    };
   }
 
   window.EA.DashboardWidget = { init: init };

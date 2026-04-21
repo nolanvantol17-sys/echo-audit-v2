@@ -98,10 +98,20 @@ details.report-location > summary > .score-pill {
 
   let reportsCache = [];   // flat list
 
-  document.addEventListener("DOMContentLoaded", function () {
+  // Wrapped in init() + registered with EA.PageRouter so content swaps
+  // re-run this codepath. No teardown needed — this page only attaches
+  // listeners to elements inside <main id="app-main">, which the router
+  // replaces on swap.
+  function init() {
     maybeShowProjectBanner();
     loadReports();
-  });
+  }
+
+  if (window.EA && EA.PageRouter) {
+    EA.PageRouter.register({ match: "/app/reports", init: init });
+  } else {
+    document.addEventListener("DOMContentLoaded", init);
+  }
 
   // Look up the project name for the banner if we arrived from a project hub.
   // Per spec the banner is display-only; we don't filter the report list,
@@ -164,7 +174,7 @@ details.report-location > summary > .score-pill {
       wrap.innerHTML =
         '<div class="empty-state">' +
           'No performance reports yet. They\'re built automatically as calls are graded. ' +
-          '<a href="/app/grade" class="text-small" style="margin-left:4px;">Grade your first call →</a>' +
+          '<a href="/app/grade" class="text-small" style="margin-left:4px;" data-no-swap>Grade your first call →</a>' +
         '</div>';
       return;
     }
