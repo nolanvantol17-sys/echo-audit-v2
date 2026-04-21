@@ -808,6 +808,9 @@
   function setCampaignFieldEnabled(enabled, placeholderMsg) {
     const input = document.getElementById("gf-campaign");
     console.log("[DBG setCampaignFieldEnabled] enabled=", enabled, "placeholder=", placeholderMsg, "input found:", !!input);
+    if (!enabled && state.campaignCombo) {
+      console.error("[DBG !!!] setCampaignFieldEnabled(false) called AFTER combobox mounted — this is the bug!", new Error().stack);
+    }
     console.trace("[DBG setCampaignFieldEnabled] CALLER STACK");
     if (!input) return;
     input.disabled = !enabled;
@@ -890,12 +893,18 @@
                 "input.value=", postMountInput && postMountInput.value,
                 "input.placeholder=", postMountInput && postMountInput.placeholder,
                 "wrapped parent class=", postMountInput && postMountInput.parentNode && postMountInput.parentNode.className);
-    setTimeout(function () {
-      const lateInput = document.getElementById("gf-campaign");
-      console.log("[DBG mountCampaignCombo] +500ms LATE state: input.disabled=", lateInput && lateInput.disabled,
-                  "input.value=", lateInput && lateInput.value,
-                  "input.placeholder=", lateInput && lateInput.placeholder);
-    }, 500);
+    [500, 1500, 3000, 5000].forEach(function (ms) {
+      setTimeout(function () {
+        const lateInput = document.getElementById("gf-campaign");
+        const wrap = lateInput && lateInput.parentNode;
+        const wrapText = wrap ? (wrap.innerText || wrap.textContent || "").replace(/\s+/g, " ").trim().slice(0, 200) : null;
+        console.log("[DBG mountCampaignCombo] +" + ms + "ms LATE state:",
+                    "input.disabled=", lateInput && lateInput.disabled,
+                    "input.value=", lateInput && lateInput.value,
+                    "input.placeholder=", lateInput && lateInput.placeholder,
+                    "wrap.text=", wrapText);
+      }, ms);
+    });
   }
 
   function destroyCampaignCombo() {
