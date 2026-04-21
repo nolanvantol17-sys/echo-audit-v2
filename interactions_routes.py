@@ -165,11 +165,11 @@ _SENTINEL_RESPONDENT_NAME = "Name Not Detected"
 
 
 def _project_location_id(conn, project_id):
-    """Resolve a project's location via projects → campaigns → locations."""
+    """Resolve a project's location via projects → phone_routing → locations."""
     cur = conn.execute(
-        q("""SELECT c.location_id
+        q("""SELECT phr.location_id
              FROM projects p
-             LEFT JOIN campaigns c ON c.campaign_id = p.campaign_id
+             LEFT JOIN phone_routing phr ON phr.phone_routing_id = p.phone_routing_id
              WHERE p.project_id = ?"""),
         (project_id,),
     )
@@ -1211,7 +1211,7 @@ def list_interactions():
             i.interaction_created_at,
             i.interaction_updated_at,
             p.project_name,
-            cmp.campaign_name,
+            phr.phone_routing_name,
             loc.location_id,
             loc.location_name,
             (caller.user_first_name || ' ' || caller.user_last_name) AS caller_name,
@@ -1222,7 +1222,7 @@ def list_interactions():
             ) AS respondent_name
         FROM interactions i
         JOIN projects   p   ON p.project_id  = i.project_id
-        LEFT JOIN campaigns cmp ON cmp.campaign_id = p.campaign_id
+        LEFT JOIN phone_routing phr ON phr.phone_routing_id = p.phone_routing_id
         LEFT JOIN locations loc ON loc.location_id = i.interaction_location_id
         LEFT JOIN users caller     ON caller.user_id     = i.caller_user_id
         LEFT JOIN users respondent ON respondent.user_id = i.respondent_user_id
@@ -1259,7 +1259,7 @@ def get_interaction(interaction_id):
             SELECT
                 i.*,
                 p.project_name,
-                cmp.campaign_name,
+                phr.phone_routing_name,
                 loc.location_name,
                 (caller.user_first_name || ' ' || caller.user_last_name) AS caller_name,
                 COALESCE(
@@ -1269,7 +1269,7 @@ def get_interaction(interaction_id):
                 ) AS respondent_name
             FROM interactions i
             JOIN projects   p   ON p.project_id  = i.project_id
-            LEFT JOIN campaigns cmp ON cmp.campaign_id = p.campaign_id
+            LEFT JOIN phone_routing phr ON phr.phone_routing_id = p.phone_routing_id
             LEFT JOIN locations loc ON loc.location_id = i.interaction_location_id
             LEFT JOIN users caller     ON caller.user_id     = i.caller_user_id
             LEFT JOIN users respondent ON respondent.user_id = i.respondent_user_id

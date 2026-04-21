@@ -505,23 +505,24 @@
     renderTopAgents(s.top_agents || []);
   }
 
-  // Breadcrumb: Location › Campaign › Project. Location and Campaign render
-  // as plain text. Dedicated detail pages are a future hook point.
+  // Breadcrumb: Location › Phone Routing › Project. Location and Phone
+  // Routing render as plain text. Dedicated detail pages are a future hook
+  // point.
   function renderBreadcrumb(s, projectName) {
     const sep = '<span class="crumb-sep">›</span>';
     const parts = [];
     const locName = s.location_name || "—";
     parts.push('<span class="crumb-current">' + EA.esc(locName) + '</span>');
-    if (s.campaign_name) {
-      parts.push('<span class="crumb-current">' + EA.esc(s.campaign_name) + '</span>');
+    if (s.phone_routing_name) {
+      parts.push('<span class="crumb-current">' + EA.esc(s.phone_routing_name) + '</span>');
     }
     parts.push('<span class="crumb-current">' + EA.esc(projectName) + '</span>');
     $("#hub-crumbs").innerHTML = parts.join(sep);
   }
 
   function renderMeta(s) {
-    const locName  = s.location_name  || "—";
-    const campName = s.campaign_name  || "—";
+    const locName = s.location_name      || "—";
+    const phrName = s.phone_routing_name || "—";
     const start    = s.project_start_date ? EA.formatDate(s.project_start_date) : null;
     const end      = s.project_end_date   ? EA.formatDate(s.project_end_date)   : null;
 
@@ -539,9 +540,9 @@
       '<span class="meta-value">' + EA.esc(value) + '</span></div>';
 
     $("#hub-meta").innerHTML =
-      row("Location",   locName) +
-      row("Campaign",   campName) +
-      row(activeLabel,  activeValue);
+      row("Location",      locName) +
+      row("Phone Routing", phrName) +
+      row(activeLabel,     activeValue);
   }
 
   function renderRecentCalls(calls) {

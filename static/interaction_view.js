@@ -73,7 +73,7 @@
         '<div class="score-hero-meta">' +
           '<span class="score-hero-label">Total score</span>' +
           '<span class="text-small muted">' +
-            [d.project_name, d.campaign_name, d.location_name]
+            [d.project_name, d.phone_routing_name, d.location_name]
               .filter(Boolean).map(EA.esc).join(" · ") +
           '</span>' +
           '<span class="text-small muted">' +

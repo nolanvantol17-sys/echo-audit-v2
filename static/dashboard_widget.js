@@ -2,14 +2,14 @@
    dashboard_widget.js — reusable analytics widget.
 
    Renders one horizontal filter row (Locations / Group by / Callers /
-   Campaigns) + a Chart.js chart below. Hits /api/dashboard/filters for the
-   dropdown options and /api/dashboard/chart for the data.
+   Phone Routing) + a Chart.js chart below. Hits /api/dashboard/filters for
+   the dropdown options and /api/dashboard/chart for the data.
 
    Usage:
      EA.DashboardWidget.init({
        container: HTMLElement,        // required: empty host node
        projectId: number | null,      // optional: scope to one project
-       defaultViewBy: "date" | "caller" | "location" | "campaign",
+       defaultViewBy: "date" | "caller" | "location" | "phone_routing",
      });
 
    Self-contained — relies only on window.EA + Chart.js (already loaded by
@@ -39,7 +39,7 @@
         <option value="date">By Date</option>
         <option value="caller">By Caller</option>
         <option value="location">By Location</option>
-        <option value="campaign">By Campaign</option>
+        <option value="phone_routing">By Phone Routing</option>
       </select>
 
       <button type="button" class="daw-ms-btn" data-key="callers">
@@ -47,8 +47,8 @@
         <span class="daw-ms-caret">▾</span>
       </button>
 
-      <button type="button" class="daw-ms-btn" data-key="campaigns">
-        <span class="daw-ms-label">All Campaigns</span>
+      <button type="button" class="daw-ms-btn" data-key="phone_routings">
+        <span class="daw-ms-label">All Phone Routings</span>
         <span class="daw-ms-caret">▾</span>
       </button>
 
@@ -400,7 +400,7 @@
     return viewBy === "date"     ? "Score Trend"
          : viewBy === "caller"   ? "Average Score by Caller"
          : viewBy === "location" ? "Average Score by Location"
-         : viewBy === "campaign" ? "Average Score by Campaign"
+         : viewBy === "phone_routing" ? "Average Score by Phone Routing"
                                  : "Score";
   }
 
@@ -582,7 +582,7 @@
     titleEl.textContent = chartTitleFor(defaultViewBy);
 
     let chart = null;
-    let allCampaigns = [];   // raw campaigns list for client-side narrowing
+    let allPhoneRoutings = [];   // raw phone routing list for client-side narrowing
     let datePreset = DEFAULT_DATE_PRESET;
 
     // Date pill wiring
@@ -620,26 +620,26 @@
     // Multi-selects
     const locMS = createMultiSelect(root.querySelector('[data-key="locations"]'), {
       allLabel: "All Locations",
-      onChange: () => { narrowCampaignsByLocation(); reload(); },
+      onChange: () => { narrowPhoneRoutingsByLocation(); reload(); },
     });
     const callerMS = createMultiSelect(root.querySelector('[data-key="callers"]'), {
       allLabel: "All Callers",
       onChange: reload,
     });
-    const campMS = createMultiSelect(root.querySelector('[data-key="campaigns"]'), {
-      allLabel: "All Campaigns",
+    const phrMS = createMultiSelect(root.querySelector('[data-key="phone_routings"]'), {
+      allLabel: "All Phone Routings",
       onChange: reload,
     });
 
-    function narrowCampaignsByLocation() {
+    function narrowPhoneRoutingsByLocation() {
       const loc = locMS.get();
-      let visible = allCampaigns;
+      let visible = allPhoneRoutings;
       if (!loc.all && loc.ids.length > 0) {
         const allowed = new Set(loc.ids);
-        visible = allCampaigns.filter((c) =>
-          c.location_id != null && allowed.has(c.location_id));
+        visible = allPhoneRoutings.filter((phr) =>
+          phr.location_id != null && allowed.has(phr.location_id));
       }
-      campMS.setItems(visible);
+      phrMS.setItems(visible);
     }
 
     viewBySel.addEventListener("change", () => {
@@ -655,10 +655,10 @@
 
       const loc    = locMS.get();
       const caller = callerMS.get();
-      const camp   = campMS.get();
-      if (!loc.all    && loc.ids.length)    params.set("location_ids",  loc.ids.join(","));
-      if (!caller.all && caller.ids.length) params.set("caller_ids",    caller.ids.join(","));
-      if (!camp.all   && camp.ids.length)   params.set("campaign_ids",  camp.ids.join(","));
+      const phr    = phrMS.get();
+      if (!loc.all    && loc.ids.length)    params.set("location_ids",       loc.ids.join(","));
+      if (!caller.all && caller.ids.length) params.set("caller_ids",         caller.ids.join(","));
+      if (!phr.all    && phr.ids.length)    params.set("phone_routing_ids",  phr.ids.join(","));
 
       const range = dateRangeFor(datePreset);
       if (range.from) params.set("date_from", range.from);
@@ -720,12 +720,12 @@
         const callers = (data.callers || []).map((r) => ({
           id: r.user_id, name: r.user_name || ("User #" + r.user_id),
         }));
-        allCampaigns = (data.campaigns || []).map((r) => ({
-          id: r.campaign_id, name: r.campaign_name, location_id: r.location_id,
+        allPhoneRoutings = (data.phone_routings || []).map((r) => ({
+          id: r.phone_routing_id, name: r.phone_routing_name, location_id: r.location_id,
         }));
         locMS.setItems(locs);
         callerMS.setItems(callers);
-        narrowCampaignsByLocation();
+        narrowPhoneRoutingsByLocation();
       } catch (err) {
         // Filters are non-critical — chart still works with no options.
         console.warn("Failed to load filter options:", err);

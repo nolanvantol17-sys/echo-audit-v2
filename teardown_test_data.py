@@ -152,8 +152,8 @@ def main():
         # Rubric groups (RESTRICT from locations)
         delete_in("rubric_groups",             "rubric_group_id", rg_ids)
 
-        # Campaigns (CASCADE from locations anyway)
-        delete_in("campaigns",                 "location_id",     loc_ids)
+        # Phone routing (CASCADE from locations anyway)
+        delete_in("phone_routing",             "location_id",     loc_ids)
 
         # Locations (RESTRICT from companies)
         delete_in("locations",                 "location_id",     loc_ids)

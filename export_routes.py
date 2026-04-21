@@ -118,13 +118,13 @@ def export_interactions():
                     i.interaction_strengths, i.interaction_weaknesses,
                     i.interaction_flags, i.interaction_transcript,
                     p.project_name,
-                    cmp.campaign_name,
+                    phr.phone_routing_name,
                     loc.location_name,
                     (caller.user_first_name || ' ' || caller.user_last_name)         AS caller_name,
                     (respondent.user_first_name || ' ' || respondent.user_last_name) AS respondent_name
                 FROM interactions i
                 JOIN projects   p   ON p.project_id  = i.project_id
-                LEFT JOIN campaigns cmp ON cmp.campaign_id = p.campaign_id
+                LEFT JOIN phone_routing phr ON phr.phone_routing_id = p.phone_routing_id
                 LEFT JOIN locations loc ON loc.location_id = i.interaction_location_id
                 LEFT JOIN users caller     ON caller.user_id     = i.caller_user_id
                 LEFT JOIN users respondent ON respondent.user_id = i.respondent_user_id
@@ -166,7 +166,7 @@ def export_interactions():
     ws.title = "Interactions"
 
     header = [
-        "Date", "Project", "Campaign", "Location",
+        "Date", "Project", "Phone Routing", "Location",
         "Caller", "Respondent", "Total Score",
     ] + rubric_columns + ["Strengths", "Weaknesses", "Flags", "Transcript"]
     ws.append(header)
@@ -179,7 +179,7 @@ def export_interactions():
                 if hasattr(interaction["interaction_date"], "isoformat")
                 else interaction["interaction_date"],
             interaction.get("project_name"),
-            interaction.get("campaign_name"),
+            interaction.get("phone_routing_name"),
             interaction.get("location_name"),
             interaction.get("caller_name"),
             interaction.get("respondent_name"),
@@ -224,7 +224,7 @@ def export_interactions():
 #
 # Tables included (strictly company-scoped):
 #   companies, company_settings, company_labels,
-#   locations, departments, campaigns, rubric_groups, rubric_items,
+#   locations, departments, phone_routing, rubric_groups, rubric_items,
 #   projects, interactions, interaction_rubric_scores,
 #   clarifying_questions, performance_reports,
 #   voip_call_queue, users
@@ -285,14 +285,14 @@ def export_backup():
             (company_id,),
         )
         departments = _rows(cur)
-        # 6. campaigns (scope through location)
+        # 6. phone_routing (scope through location)
         cur = conn.execute(
-            q("""SELECT c.* FROM campaigns c
-                 JOIN locations l ON l.location_id = c.location_id
+            q("""SELECT phr.* FROM phone_routing phr
+                 JOIN locations l ON l.location_id = phr.location_id
                  WHERE l.company_id = ?"""),
             (company_id,),
         )
-        campaigns = _rows(cur)
+        phone_routings = _rows(cur)
         # 7. rubric_groups (scope through location)
         cur = conn.execute(
             q("""SELECT rg.* FROM rubric_groups rg
@@ -404,7 +404,7 @@ def export_backup():
             "company_labels":            labels,
             "locations":                 locations,
             "departments":               departments,
-            "campaigns":                 campaigns,
+            "phone_routings":            phone_routings,
             "rubric_groups":             rubric_groups,
             "rubric_items":              rubric_items,
             "projects":                  projects,
@@ -458,7 +458,7 @@ _TABLE_ORDER = (
     "locations",
     "departments",
     "users",
-    "campaigns",
+    "phone_routings",
     "rubric_groups",
     "rubric_items",
     "projects",
@@ -620,18 +620,18 @@ def restore_backup():
                 id_maps["users"][old_id] = new_id
         counts["users"] = len(id_maps["users"])
 
-        # ── 4. campaigns ──
-        for row in tables["campaigns"]:
+        # ── 4. phone_routings ──
+        for row in tables["phone_routings"]:
             row = dict(row)
-            old_id = row.pop("campaign_id", None)
+            old_id = row.pop("phone_routing_id", None)
             _remap_fk(row, "location_id", id_maps["locations"])
             if row.get("location_id") is None:
                 continue
-            _pop_managed(row, "campaign_created_at", "campaign_updated_at")
-            new_id = _insert_row_returning(conn, "campaigns", row, "campaign_id")
+            _pop_managed(row, "phone_routing_created_at", "phone_routing_updated_at")
+            new_id = _insert_row_returning(conn, "phone_routing", row, "phone_routing_id")
             if old_id is not None:
-                id_maps["campaigns"][old_id] = new_id
-        counts["campaigns"] = len(id_maps["campaigns"])
+                id_maps["phone_routings"][old_id] = new_id
+        counts["phone_routings"] = len(id_maps["phone_routings"])
 
         # ── 5. rubric_groups ──
         for row in tables["rubric_groups"]:
@@ -664,7 +664,7 @@ def restore_backup():
             row = dict(row)
             old_id = row.pop("project_id", None)
             row["company_id"] = company_id
-            _remap_fk(row, "campaign_id", id_maps["campaigns"])
+            _remap_fk(row, "phone_routing_id", id_maps["phone_routings"])
             _remap_fk(row, "rubric_group_id", id_maps["rubric_groups"])
             if row.get("rubric_group_id") is None:
                 continue

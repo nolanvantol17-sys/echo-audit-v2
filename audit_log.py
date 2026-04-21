@@ -10,7 +10,7 @@ Action type IDs and target entity type IDs match the seed in db.py:
 
     ACTIONS:   1=created, 2=updated, 3=deleted, 4=graded, 5=regraded,
                6=submitted, 7=unposted
-    TARGETS:   1=user, 2=interaction, 3=project, 4=campaign, 5=company,
+    TARGETS:   1=user, 2=interaction, 3=project, 4=phone_routing, 5=company,
                6=rubric_group, 7=rubric_item, 8=department, 9=location,
                10=transcription_hint
 """
@@ -35,7 +35,7 @@ ACTION_UNPOSTED   = 7
 ENTITY_USER         = 1
 ENTITY_INTERACTION  = 2
 ENTITY_PROJECT      = 3
-ENTITY_CAMPAIGN     = 4
+ENTITY_PHONE_ROUTING = 4
 ENTITY_COMPANY      = 5
 ENTITY_RUBRIC_GROUP = 6
 ENTITY_RUBRIC_ITEM  = 7

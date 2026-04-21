@@ -116,10 +116,10 @@ MAYFAIR = {
         ("Teresa", "Vela"),
     ],
     "rubric_source_name": "Leasing Call Evaluation",
-    "campaign_name":      "Secret Shopping",
+    "phone_routing_name": "Secret Shopping",
     "projects": [
-        # Projects link to campaigns, which are per-location. We'll attach
-        # projects to the FIRST location's campaign for simplicity.
+        # Projects link to phone_routing rows, which are per-location. We'll
+        # attach projects to the FIRST location's phone_routing for simplicity.
         ("April Secret Shopping", date(2026, 4, 1), date(2026, 4, 30), "active"),
         ("March Secret Shopping", date(2026, 3, 1), date(2026, 3, 31), "completed"),
     ],
@@ -156,7 +156,7 @@ AUTONATION = {
         ("Closing & Next Steps",        "out_of_10", 1.0, 5),
         ("Appointment Scheduled",       "yes_no",    2.0, 6),
     ],
-    "campaign_name": "Inbound Sales",
+    "phone_routing_name": "Inbound Sales",
     "projects": [
         ("Q1 Sales Review", date(2026, 1, 1), date(2026, 3, 31), "completed"),
         ("Q2 Sales Review", date(2026, 4, 1), date(2026, 6, 30), "active"),
@@ -429,21 +429,22 @@ def seed_company(cur, bp, industry_ids, role_ids, counts):
         location_ids[lname] = cur.fetchone()["location_id"]
         counts["locations"] = counts.get("locations", 0) + 1
 
-    # Campaigns (per-location now). Create one campaign per location using bp["campaign_name"].
-    # Projects will reference the FIRST location's campaign (simplest mapping given the blueprint).
-    campaign_ids_by_location = {}
+    # Phone routing (per-location now). Create one phone_routing row per
+    # location using bp["phone_routing_name"]. Projects will reference the
+    # FIRST location's phone_routing (simplest mapping given the blueprint).
+    phone_routing_ids_by_location = {}
     for lname, lid in location_ids.items():
         cur.execute(
-            """INSERT INTO campaigns (location_id, campaign_name)
-               VALUES (%s, %s) RETURNING campaign_id""",
-            (lid, bp["campaign_name"]),
+            """INSERT INTO phone_routing (location_id, phone_routing_name)
+               VALUES (%s, %s) RETURNING phone_routing_id""",
+            (lid, bp["phone_routing_name"]),
         )
-        campaign_ids_by_location[lname] = cur.fetchone()["campaign_id"]
-        counts["campaigns"] = counts.get("campaigns", 0) + 1
+        phone_routing_ids_by_location[lname] = cur.fetchone()["phone_routing_id"]
+        counts["phone_routing"] = counts.get("phone_routing", 0) + 1
 
-    # Pick the first location's campaign as the project-level campaign
+    # Pick the first location's phone_routing as the project-level phone_routing
     first_location_name = bp["locations"][0][0]
-    project_campaign_id = campaign_ids_by_location[first_location_name]
+    project_phone_routing_id = phone_routing_ids_by_location[first_location_name]
     first_location_id = location_ids[first_location_name]
 
     # Rubric group — deep copy industry template (Mayfair) or build custom (AutoNation)
@@ -511,10 +512,10 @@ def seed_company(cur, bp, industry_ids, role_ids, counts):
     for (pname, start, end, status) in bp["projects"]:
         cur.execute(
             """INSERT INTO projects
-                   (company_id, project_name, campaign_id, rubric_group_id,
+                   (company_id, project_name, phone_routing_id, rubric_group_id,
                     project_start_date, project_end_date, status_id)
                VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING project_id""",
-            (company_id, pname, project_campaign_id, rubric_group_id, start, end,
+            (company_id, pname, project_phone_routing_id, rubric_group_id, start, end,
              PROJECT_STATUS_MAP[status]),
         )
         project_ids[pname] = cur.fetchone()["project_id"]

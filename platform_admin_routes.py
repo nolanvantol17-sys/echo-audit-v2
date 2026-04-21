@@ -424,7 +424,7 @@ def hard_delete_org(company_id):
             )
 
         # Per spec: settings, labels, voip_config, voip_queue, api_keys,
-        # api_usage, api_call_log, campaigns, departments, locations, users,
+        # api_usage, api_call_log, phone_routing, departments, locations, users,
         # company. (Users are scoped through departments so we delete users
         # BEFORE departments.)
         conn.execute(q("DELETE FROM company_settings  WHERE company_id = ?"), (company_id,))
@@ -435,9 +435,9 @@ def hard_delete_org(company_id):
         conn.execute(q("DELETE FROM api_usage         WHERE company_id = ?"), (company_id,))
         conn.execute(q("DELETE FROM api_call_log      WHERE company_id = ?"), (company_id,))
 
-        # Campaigns are scoped through locations.
+        # Phone routing rows are scoped through locations.
         conn.execute(
-            q("""DELETE FROM campaigns WHERE location_id IN (
+            q("""DELETE FROM phone_routing WHERE location_id IN (
                     SELECT location_id FROM locations WHERE company_id = ?
                  )"""),
             (company_id,),

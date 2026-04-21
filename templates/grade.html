@@ -317,7 +317,7 @@
 {# ── Pre-call form ──────────────────────────────────────── #}
 <section id="grade-form-section" class="panel">
   <form id="grade-form" autocomplete="off">
-    {# Four fields on one row: Caller · Location · Campaign/Type · Date #}
+    {# Four fields on one row: Caller · Location · Phone Routing · Date #}
     <div class="grade-fields-row">
       <div class="field">
         <label class="field-label" for="gf-caller">Caller</label>
@@ -336,8 +336,8 @@
         <div id="gf-location-empty" class="muted text-small" style="margin-top:4px;" hidden></div>
       </div>
       <div class="field">
-        <label class="field-label" for="gf-campaign">Campaign / Type</label>
-        <select id="gf-campaign" name="campaign_id" class="field-select">
+        <label class="field-label" for="gf-phone-routing">Phone Routing</label>
+        <select id="gf-phone-routing" name="phone_routing_id" class="field-select">
           <option value="">—</option>
         </select>
       </div>
@@ -546,7 +546,7 @@
       loadLocations(),
       loadProjects(),
       loadCallers(),
-      loadCampaigns(),
+      loadPhoneRoutings(),
       checkVoip(),
     ]);
     if ($("#gf-location").value) onLocationChange();  // re-fire if user picked during the race
@@ -926,15 +926,15 @@
     }
   }
 
-  async function loadCampaigns() {
-    const sel = $("#gf-campaign");
+  async function loadPhoneRoutings() {
+    const sel = $("#gf-phone-routing");
     try {
-      const campaigns = await EA.fetchJSON("/api/campaigns");
+      const phoneRoutings = await EA.fetchJSON("/api/phone_routing");
       sel.innerHTML = '<option value="">—</option>';
-      campaigns.forEach(function (c) {
+      phoneRoutings.forEach(function (phr) {
         const o = document.createElement("option");
-        o.value = c.campaign_id;
-        o.textContent = c.campaign_name;
+        o.value = phr.phone_routing_id;
+        o.textContent = phr.phone_routing_name;
         sel.appendChild(o);
       });
     } catch (err) { /* optional */ }

@@ -449,7 +449,7 @@ _TARGET_ENTITY_TYPE_SEEDS = [
     (1, 'user'),
     (2, 'interaction'),
     (3, 'project'),
-    (4, 'campaign'),
+    (4, 'phone_routing'),
     (5, 'company'),
     (6, 'rubric_group'),
     (7, 'rubric_item'),
@@ -564,7 +564,7 @@ COMPANY_SETTING_KEYS = (
     "location_list_label",
     "caller_label",
     "respondent_label",
-    "campaign_label",
+    "phone_routing_label",
     "project_label",
     "show_transcript",
 )
@@ -575,7 +575,7 @@ _COMPANY_SETTING_DEFAULTS = {
     "location_list_label": "Locations",
     "caller_label":        "Caller",
     "respondent_label":    "Respondent",
-    "campaign_label":      "Campaign",
+    "phone_routing_label": "Phone Routing",
     "project_label":       "Project",
     "show_transcript":     "true",
 }

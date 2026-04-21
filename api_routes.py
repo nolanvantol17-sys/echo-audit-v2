@@ -1,7 +1,7 @@
 """
 api_routes.py — Echo Audit V2 Phase 2 API routes.
 
-Scope: companies, locations, departments, campaigns, projects,
+Scope: companies, locations, departments, phone_routing, projects,
        team (users), and industries reference data.
 
 All routes emit JSON. Company scoping is enforced via
@@ -18,7 +18,7 @@ from flask_login import current_user, login_required
 import auth
 from audit_log import (
     ACTION_CREATED, ACTION_DELETED, ACTION_UPDATED,
-    ENTITY_CAMPAIGN, ENTITY_COMPANY, ENTITY_DEPARTMENT, ENTITY_LOCATION,
+    ENTITY_COMPANY, ENTITY_DEPARTMENT, ENTITY_LOCATION, ENTITY_PHONE_ROUTING,
     ENTITY_PROJECT, ENTITY_USER,
     write_audit_log,
 )
@@ -112,13 +112,13 @@ def _get_department(conn, department_id, company_id):
     return cur.fetchone()
 
 
-def _get_campaign(conn, campaign_id, company_id):
+def _get_phone_routing(conn, phone_routing_id, company_id):
     cur = conn.execute(
-        q("""SELECT c.* FROM campaigns c
-             JOIN locations l ON l.location_id = c.location_id
-             WHERE c.campaign_id = ? AND l.company_id = ?
+        q("""SELECT phr.* FROM phone_routing phr
+             JOIN locations l ON l.location_id = phr.location_id
+             WHERE phr.phone_routing_id = ? AND l.company_id = ?
                AND l.location_deleted_at IS NULL"""),
-        (campaign_id, company_id),
+        (phone_routing_id, company_id),
     )
     return cur.fetchone()
 
@@ -466,10 +466,10 @@ def location_deletion_impact(location_id):
 
         cur = conn.execute(q("""
             SELECT COUNT(DISTINCT p.project_id) AS cnt FROM projects p
-            LEFT JOIN campaigns c ON c.campaign_id = p.campaign_id
+            LEFT JOIN phone_routing phr ON phr.phone_routing_id = p.phone_routing_id
             LEFT JOIN rubric_groups rg ON rg.rubric_group_id = p.rubric_group_id
             WHERE p.company_id = ? AND p.project_deleted_at IS NULL
-              AND (c.location_id = ? OR rg.location_id = ?)
+              AND (phr.location_id = ? OR rg.location_id = ?)
         """), (company_id, location_id, location_id))
         row = cur.fetchone()
         projects_count = row["cnt"] if IS_POSTGRES else row[0]
@@ -899,40 +899,40 @@ def department_deletion_impact(department_id):
 
 
 # ═══════════════════════════════════════════════════════════════
-# CAMPAIGNS  (per-location, accessible to all authenticated users)
+# PHONE ROUTING  (per-location, accessible to all authenticated users)
 # ═══════════════════════════════════════════════════════════════
 
 
-@api_bp.route("/campaigns", methods=["GET"])
+@api_bp.route("/phone_routing", methods=["GET"])
 @login_required
-def list_campaigns():
+def list_phone_routings():
     company_id, err = _require_company()
     if err: return err
 
     conn = get_conn()
     try:
         cur = conn.execute(q("""
-            SELECT c.campaign_id, c.campaign_name, c.location_id,
+            SELECT phr.phone_routing_id, phr.phone_routing_name, phr.location_id,
                    l.location_name
-            FROM campaigns c
-            JOIN locations l ON l.location_id = c.location_id
+            FROM phone_routing phr
+            JOIN locations l ON l.location_id = phr.location_id
             WHERE l.company_id = ? AND l.location_deleted_at IS NULL
-            ORDER BY c.campaign_name
+            ORDER BY phr.phone_routing_name
         """), (company_id,))
         return jsonify(_rows(cur))
     finally:
         conn.close()
 
 
-@api_bp.route("/campaigns", methods=["POST"])
+@api_bp.route("/phone_routing", methods=["POST"])
 @login_required
 @role_required("admin", "super_admin")
-def create_campaign():
+def create_phone_routing():
     company_id, err = _require_company()
     if err: return err
 
     body = _body()
-    err = _require(body, "campaign_name", "location_id")
+    err = _require(body, "phone_routing_name", "location_id")
     if err:
         return _err(err, 400)
 
@@ -942,106 +942,106 @@ def create_campaign():
         if not _get_location(conn, body["location_id"], company_id):
             return _err("Location not found in this company", 404)
 
-        campaign_id = _insert_returning(
+        phone_routing_id = _insert_returning(
             conn,
-            sql_pg="""INSERT INTO campaigns (location_id, campaign_name)
-                      VALUES (%s, %s) RETURNING campaign_id""",
-            sql_lite="INSERT INTO campaigns (location_id, campaign_name) VALUES (?, ?)",
-            params=(body["location_id"], body["campaign_name"]),
-            pk_col="campaign_id",
+            sql_pg="""INSERT INTO phone_routing (location_id, phone_routing_name)
+                      VALUES (%s, %s) RETURNING phone_routing_id""",
+            sql_lite="INSERT INTO phone_routing (location_id, phone_routing_name) VALUES (?, ?)",
+            params=(body["location_id"], body["phone_routing_name"]),
+            pk_col="phone_routing_id",
         )
         write_audit_log(
-            current_user.user_id, ACTION_CREATED, ENTITY_CAMPAIGN, campaign_id,
+            current_user.user_id, ACTION_CREATED, ENTITY_PHONE_ROUTING, phone_routing_id,
             metadata={"location_id": body["location_id"],
-                      "campaign_name": body["campaign_name"]},
+                      "phone_routing_name": body["phone_routing_name"]},
             conn=conn,
         )
         conn.commit()
-        return jsonify(_row_to_dict(_get_campaign(conn, campaign_id, company_id))), 201
+        return jsonify(_row_to_dict(_get_phone_routing(conn, phone_routing_id, company_id))), 201
     finally:
         conn.close()
 
 
-@api_bp.route("/campaigns/<int:campaign_id>", methods=["PUT"])
+@api_bp.route("/phone_routing/<int:phone_routing_id>", methods=["PUT"])
 @login_required
 @role_required("admin", "super_admin")
-def update_campaign(campaign_id):
+def update_phone_routing(phone_routing_id):
     company_id, err = _require_company()
     if err: return err
 
     body = _body()
-    if "campaign_name" not in body:
+    if "phone_routing_name" not in body:
         return _err("No fields to update", 400)
 
     conn = get_conn()
     try:
-        if not _get_campaign(conn, campaign_id, company_id):
-            return _err("Campaign not found", 404)
-        conn.execute(q("UPDATE campaigns SET campaign_name = ? WHERE campaign_id = ?"),
-                     (body["campaign_name"], campaign_id))
+        if not _get_phone_routing(conn, phone_routing_id, company_id):
+            return _err("Phone routing not found", 404)
+        conn.execute(q("UPDATE phone_routing SET phone_routing_name = ? WHERE phone_routing_id = ?"),
+                     (body["phone_routing_name"], phone_routing_id))
         write_audit_log(
-            current_user.user_id, ACTION_UPDATED, ENTITY_CAMPAIGN, campaign_id,
-            metadata={"campaign_name": body["campaign_name"]}, conn=conn,
+            current_user.user_id, ACTION_UPDATED, ENTITY_PHONE_ROUTING, phone_routing_id,
+            metadata={"phone_routing_name": body["phone_routing_name"]}, conn=conn,
         )
         conn.commit()
-        return jsonify(_row_to_dict(_get_campaign(conn, campaign_id, company_id)))
+        return jsonify(_row_to_dict(_get_phone_routing(conn, phone_routing_id, company_id)))
     finally:
         conn.close()
 
 
-@api_bp.route("/campaigns/<int:campaign_id>", methods=["DELETE"])
+@api_bp.route("/phone_routing/<int:phone_routing_id>", methods=["DELETE"])
 @login_required
 @role_required("admin", "super_admin")
-def delete_campaign(campaign_id):
+def delete_phone_routing(phone_routing_id):
     company_id, err = _require_company()
     if err: return err
 
     conn = get_conn()
     try:
-        if not _get_campaign(conn, campaign_id, company_id):
-            return _err("Campaign not found", 404)
+        if not _get_phone_routing(conn, phone_routing_id, company_id):
+            return _err("Phone routing not found", 404)
         try:
-            conn.execute(q("DELETE FROM campaigns WHERE campaign_id = ?"), (campaign_id,))
+            conn.execute(q("DELETE FROM phone_routing WHERE phone_routing_id = ?"), (phone_routing_id,))
             write_audit_log(
-                current_user.user_id, ACTION_DELETED, ENTITY_CAMPAIGN, campaign_id,
+                current_user.user_id, ACTION_DELETED, ENTITY_PHONE_ROUTING, phone_routing_id,
                 conn=conn,
             )
             conn.commit()
         except Exception as e:
             conn.rollback()
-            # If projects reference this campaign, the ON DELETE SET NULL on
-            # projects.campaign_id should keep this from erroring — but just in case:
+            # If projects reference this row, the ON DELETE SET NULL on
+            # projects.phone_routing_id should keep this from erroring — but just in case:
             if "foreign key" in str(e).lower():
-                return _err("Campaign is referenced by existing records", 409)
+                return _err("Phone routing is referenced by existing records", 409)
             raise
         return _ok()
     finally:
         conn.close()
 
 
-@api_bp.route("/campaigns/<int:campaign_id>/deletion-impact", methods=["GET"])
+@api_bp.route("/phone_routing/<int:phone_routing_id>/deletion-impact", methods=["GET"])
 @login_required
 @role_required("admin", "super_admin")
-def campaign_deletion_impact(campaign_id):
+def phone_routing_deletion_impact(phone_routing_id):
     company_id, err = _require_company()
     if err: return err
 
     conn = get_conn()
     try:
-        camp = _get_campaign(conn, campaign_id, company_id)
-        if not camp:
-            return _err("Campaign not found", 404)
+        phr = _get_phone_routing(conn, phone_routing_id, company_id)
+        if not phr:
+            return _err("Phone routing not found", 404)
 
         cur = conn.execute(q("""
             SELECT COUNT(*) AS cnt FROM projects
-            WHERE campaign_id = ? AND project_deleted_at IS NULL
-        """), (campaign_id,))
+            WHERE phone_routing_id = ? AND project_deleted_at IS NULL
+        """), (phone_routing_id,))
         row = cur.fetchone()
         projects_count = row["cnt"] if IS_POSTGRES else row[0]
 
         return jsonify({
             "deletable": True,
-            "name": dict(camp).get("campaign_name"),
+            "name": dict(phr).get("phone_routing_name"),
             "counts": {"projects": projects_count},
         })
     finally:
@@ -1061,22 +1061,22 @@ def list_projects():
 
     conn = get_conn()
     try:
-        # Location priority: campaign → rubric_group. A project without a
-        # campaign can still be single-location if its rubric group is tied to
-        # one, so fall back through the rubric_group location to avoid losing
-        # the lock on the grade form.
+        # Location priority: phone_routing → rubric_group. A project without a
+        # phone_routing can still be single-location if its rubric group is
+        # tied to one, so fall back through the rubric_group location to avoid
+        # losing the lock on the grade form.
         cur = conn.execute(q("""
-            SELECT p.project_id, p.project_name, p.campaign_id, p.rubric_group_id,
+            SELECT p.project_id, p.project_name, p.phone_routing_id, p.rubric_group_id,
                    p.project_start_date, p.project_end_date,
                    p.status_id, s.status_name,
                    p.project_all_locations,
-                   c.campaign_name,
-                   COALESCE(l_campaign.location_id,   l_rubric.location_id)   AS location_id,
-                   COALESCE(l_campaign.location_name, l_rubric.location_name) AS location_name
+                   phr.phone_routing_name,
+                   COALESCE(l_phr.location_id,   l_rubric.location_id)   AS location_id,
+                   COALESCE(l_phr.location_name, l_rubric.location_name) AS location_name
             FROM projects p
             LEFT JOIN statuses s ON s.status_id = p.status_id
-            LEFT JOIN campaigns c ON c.campaign_id = p.campaign_id
-            LEFT JOIN locations l_campaign ON l_campaign.location_id = c.location_id
+            LEFT JOIN phone_routing phr ON phr.phone_routing_id = p.phone_routing_id
+            LEFT JOIN locations l_phr ON l_phr.location_id = phr.location_id
             LEFT JOIN rubric_groups rg ON rg.rubric_group_id = p.rubric_group_id
             LEFT JOIN locations l_rubric ON l_rubric.location_id = rg.location_id
             WHERE p.company_id = ? AND p.project_deleted_at IS NULL
@@ -1116,26 +1116,26 @@ def create_project():
                 404,
             )
 
-        # If campaign_id provided, verify it belongs to this company
-        campaign_id = body.get("campaign_id")
-        if campaign_id is not None and not _get_campaign(conn, campaign_id, company_id):
-            return _err("campaign_id not found in this company", 404)
+        # If phone_routing_id provided, verify it belongs to this company
+        phone_routing_id = body.get("phone_routing_id")
+        if phone_routing_id is not None and not _get_phone_routing(conn, phone_routing_id, company_id):
+            return _err("phone_routing_id not found in this company", 404)
 
         project_id = _insert_returning(
             conn,
             sql_pg="""INSERT INTO projects
-                          (company_id, project_name, campaign_id, rubric_group_id,
+                          (company_id, project_name, phone_routing_id, rubric_group_id,
                            project_start_date, project_end_date, status_id)
                       VALUES (%s, %s, %s, %s, %s, %s, 1)
                       RETURNING project_id""",
             sql_lite="""INSERT INTO projects
-                            (company_id, project_name, campaign_id, rubric_group_id,
+                            (company_id, project_name, phone_routing_id, rubric_group_id,
                              project_start_date, project_end_date, status_id)
                         VALUES (?, ?, ?, ?, ?, ?, 1)""",
             params=(
                 company_id,
                 body["project_name"],
-                campaign_id,
+                phone_routing_id,
                 body["rubric_group_id"],
                 body["project_start_date"],
                 body.get("project_end_date"),
@@ -1146,7 +1146,7 @@ def create_project():
             current_user.user_id, ACTION_CREATED, ENTITY_PROJECT, project_id,
             metadata={"project_name": body["project_name"],
                       "rubric_group_id": body["rubric_group_id"],
-                      "campaign_id": campaign_id},
+                      "phone_routing_id": phone_routing_id},
             conn=conn,
         )
         conn.commit()
@@ -1163,7 +1163,7 @@ def update_project(project_id):
     if err: return err
 
     body = _body()
-    allowed = {"project_name", "campaign_id", "rubric_group_id",
+    allowed = {"project_name", "phone_routing_id", "rubric_group_id",
                "project_start_date", "project_end_date", "status_id"}
     fields = {k: body[k] for k in allowed if k in body}
     # Map the frontend 'all_locations' flag onto the backing column name and
@@ -1183,9 +1183,9 @@ def update_project(project_id):
             if not _get_rubric_group_in_company(conn, fields["rubric_group_id"], company_id):
                 return _err("rubric_group_id not found in this company", 404)
 
-        if "campaign_id" in fields and fields["campaign_id"] is not None:
-            if not _get_campaign(conn, fields["campaign_id"], company_id):
-                return _err("campaign_id not found in this company", 404)
+        if "phone_routing_id" in fields and fields["phone_routing_id"] is not None:
+            if not _get_phone_routing(conn, fields["phone_routing_id"], company_id):
+                return _err("phone_routing_id not found in this company", 404)
 
         sets = ", ".join(f"{k} = ?" for k in fields)
         params = list(fields.values()) + [project_id]
@@ -1275,7 +1275,7 @@ def project_deletion_impact(project_id):
 # ═══════════════════════════════════════════════════════════════
 #
 # Everything the hub page needs in one call: full project fields, joined
-# location + campaign + rubric group, rollups (call_count, avg_score), the
+# location + phone_routing + rubric group, rollups (call_count, avg_score), the
 # last 5 interactions, and top 3 respondents by average score. Tenant-scoped
 # via get_effective_company_id(); no_answer calls excluded from avg_score.
 STATUS_NO_ANSWER = 44
@@ -1293,20 +1293,20 @@ def get_project_summary(project_id):
             return _err("Project not found", 404)
 
         cur = conn.execute(q("""
-            SELECT p.project_id, p.project_name, p.campaign_id, p.rubric_group_id,
+            SELECT p.project_id, p.project_name, p.phone_routing_id, p.rubric_group_id,
                    p.project_start_date, p.project_end_date, p.status_id,
                    s.status_name,
                    p.project_all_locations,
-                   c.campaign_name,
-                   COALESCE(l_campaign.location_id,    l_rubric.location_id)    AS location_id,
-                   COALESCE(l_campaign.location_name,  l_rubric.location_name)  AS location_name,
-                   COALESCE(l_campaign.location_phone, l_rubric.location_phone) AS location_phone,
+                   phr.phone_routing_name,
+                   COALESCE(l_phr.location_id,    l_rubric.location_id)    AS location_id,
+                   COALESCE(l_phr.location_name,  l_rubric.location_name)  AS location_name,
+                   COALESCE(l_phr.location_phone, l_rubric.location_phone) AS location_phone,
                    rg.rg_name AS rubric_group_name,
                    rg.rg_grade_target
             FROM projects p
             LEFT JOIN statuses      s  ON s.status_id      = p.status_id
-            LEFT JOIN campaigns     c  ON c.campaign_id    = p.campaign_id
-            LEFT JOIN locations     l_campaign ON l_campaign.location_id = c.location_id
+            LEFT JOIN phone_routing phr ON phr.phone_routing_id = p.phone_routing_id
+            LEFT JOIN locations     l_phr ON l_phr.location_id = phr.location_id
             LEFT JOIN rubric_groups rg ON rg.rubric_group_id = p.rubric_group_id
             LEFT JOIN locations     l_rubric   ON l_rubric.location_id   = rg.location_id
             WHERE p.project_id = ? AND p.company_id = ?
@@ -1534,9 +1534,9 @@ def create_project_with_rubric():
                 return _err("location_id not found in this company", 404)
             rubric_location_id = body["location_id"]
 
-        campaign_id = body.get("campaign_id")
-        if campaign_id is not None and not _get_campaign(conn, campaign_id, company_id):
-            return _err("campaign_id not found in this company", 404)
+        phone_routing_id = body.get("phone_routing_id")
+        if phone_routing_id is not None and not _get_phone_routing(conn, phone_routing_id, company_id):
+            return _err("phone_routing_id not found in this company", 404)
 
         rubric_group_id = _insert_rubric_group(
             conn,
@@ -1562,20 +1562,20 @@ def create_project_with_rubric():
         project_id = _insert_returning(
             conn,
             sql_pg="""INSERT INTO projects
-                          (company_id, project_name, campaign_id, rubric_group_id,
+                          (company_id, project_name, phone_routing_id, rubric_group_id,
                            project_start_date, project_end_date, status_id,
                            project_all_locations)
                       VALUES (%s, %s, %s, %s, %s, %s, 1, %s)
                       RETURNING project_id""",
             sql_lite="""INSERT INTO projects
-                            (company_id, project_name, campaign_id, rubric_group_id,
+                            (company_id, project_name, phone_routing_id, rubric_group_id,
                              project_start_date, project_end_date, status_id,
                              project_all_locations)
                         VALUES (?, ?, ?, ?, ?, ?, 1, ?)""",
             params=(
                 company_id,
                 (body["project_name"] or "").strip(),
-                campaign_id,
+                phone_routing_id,
                 rubric_group_id,
                 body["project_start_date"],
                 body.get("project_end_date"),
@@ -1588,7 +1588,7 @@ def create_project_with_rubric():
             metadata={
                 "project_name":    body["project_name"],
                 "rubric_group_id": rubric_group_id,
-                "campaign_id":     campaign_id,
+                "phone_routing_id": phone_routing_id,
                 "all_locations":   all_locations,
                 "via":             "wizard",
             },

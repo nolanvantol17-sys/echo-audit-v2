@@ -142,14 +142,14 @@ def create_fixtures():
         department_id = cur.fetchone()["department_id"]
         created["department_id"] = department_id
 
-        # Campaign  (no status_id — table doesn't carry one)
+        # Phone routing  (no status_id — table doesn't carry one)
         cur = conn.execute(
-            "INSERT INTO campaigns (location_id, campaign_name) "
-            "VALUES (%s, %s) RETURNING campaign_id",
-            (location_id, f"Test Campaign {SUFFIX}"),
+            "INSERT INTO phone_routing (location_id, phone_routing_name) "
+            "VALUES (%s, %s) RETURNING phone_routing_id",
+            (location_id, f"Test Phone Routing {SUFFIX}"),
         )
-        campaign_id = cur.fetchone()["campaign_id"]
-        created["campaign_id"] = campaign_id
+        phone_routing_id = cur.fetchone()["phone_routing_id"]
+        created["phone_routing_id"] = phone_routing_id
 
         # Seed company defaults for settings/labels routes
         db.seed_company_defaults(company_id, conn=conn)
@@ -207,11 +207,11 @@ def create_fixtures():
         # Project
         cur = conn.execute(
             "INSERT INTO projects "
-            "(company_id, project_name, campaign_id, rubric_group_id, "
+            "(company_id, project_name, phone_routing_id, rubric_group_id, "
             " project_start_date, status_id) "
             "VALUES (%s, %s, %s, %s, %s, 1) RETURNING project_id",
             (created["company_id"], f"Test Project {SUFFIX}",
-             created["campaign_id"], rg_id, date.today()),
+             created["phone_routing_id"], rg_id, date.today()),
         )
         created["project_id"] = cur.fetchone()["project_id"]
         conn.commit()
@@ -431,30 +431,30 @@ def main():
         skip(P, "PUT",    "/api/departments/<id>", "create failed")
         skip(P, "DELETE", "/api/departments/<id>", "create failed")
 
-    # GET /api/campaigns
-    r = admin_c.get("/api/campaigns")
-    rec(P, "GET", "/api/campaigns", r.status_code, 200,
+    # GET /api/phone_routing
+    r = admin_c.get("/api/phone_routing")
+    rec(P, "GET", "/api/phone_routing", r.status_code, 200,
         f"count={len(body_of(r) or [])}")
 
-    r = admin_c.post("/api/campaigns", json={
+    r = admin_c.post("/api/phone_routing", json={
         "location_id": fx["location_id"],
-        "campaign_name": f"Camp-API-{SUFFIX}",
+        "phone_routing_name": f"PhR-API-{SUFFIX}",
     })
     b = body_of(r) or {}
-    created_camp = b.get("campaign_id")
-    rec(P, "POST", "/api/campaigns", r.status_code, (200, 201),
-        f"campaign_id={created_camp}",
-        outcome="PASS" if (r.status_code in (200, 201) and created_camp) else "FAIL")
+    created_phr = b.get("phone_routing_id")
+    rec(P, "POST", "/api/phone_routing", r.status_code, (200, 201),
+        f"phone_routing_id={created_phr}",
+        outcome="PASS" if (r.status_code in (200, 201) and created_phr) else "FAIL")
 
-    if created_camp:
-        r = admin_c.put(f"/api/campaigns/{created_camp}",
-                        json={"campaign_name": f"Camp-API-{SUFFIX}-v2"})
-        rec(P, "PUT", f"/api/campaigns/{created_camp}", r.status_code, 200, "")
-        r = admin_c.delete(f"/api/campaigns/{created_camp}")
-        rec(P, "DELETE", f"/api/campaigns/{created_camp}", r.status_code, 200, "")
+    if created_phr:
+        r = admin_c.put(f"/api/phone_routing/{created_phr}",
+                        json={"phone_routing_name": f"PhR-API-{SUFFIX}-v2"})
+        rec(P, "PUT", f"/api/phone_routing/{created_phr}", r.status_code, 200, "")
+        r = admin_c.delete(f"/api/phone_routing/{created_phr}")
+        rec(P, "DELETE", f"/api/phone_routing/{created_phr}", r.status_code, 200, "")
     else:
-        skip(P, "PUT",    "/api/campaigns/<id>", "create failed")
-        skip(P, "DELETE", "/api/campaigns/<id>", "create failed")
+        skip(P, "PUT",    "/api/phone_routing/<id>", "create failed")
+        skip(P, "DELETE", "/api/phone_routing/<id>", "create failed")
 
     # GET /api/projects
     r = admin_c.get("/api/projects")
@@ -465,7 +465,7 @@ def main():
         "project_name": f"Proj-API-{SUFFIX}",
         "rubric_group_id": fx["rubric_group_id"],
         "project_start_date": str(date.today()),
-        "campaign_id": fx["campaign_id"],
+        "phone_routing_id": fx["phone_routing_id"],
     })
     b = body_of(r) or {}
     created_proj = b.get("project_id")
@@ -539,11 +539,11 @@ def main():
             )
             co2_loc = cur.fetchone()["location_id"]
             cur = conn.execute(
-                "INSERT INTO campaigns (location_id, campaign_name) "
-                "VALUES (%s, 'OtherCamp') RETURNING campaign_id",
+                "INSERT INTO phone_routing (location_id, phone_routing_name) "
+                "VALUES (%s, 'OtherPhR') RETURNING phone_routing_id",
                 (co2_loc,),
             )
-            co2_camp = cur.fetchone()["campaign_id"]
+            co2_phr = cur.fetchone()["phone_routing_id"]
             cur = conn.execute(
                 "INSERT INTO rubric_groups (location_id, rg_name, rg_grade_target, status_id) "
                 "VALUES (%s, 'R', 'respondent', 1) RETURNING rubric_group_id",
@@ -551,10 +551,10 @@ def main():
             )
             co2_rg = cur.fetchone()["rubric_group_id"]
             cur = conn.execute(
-                "INSERT INTO projects (company_id, project_name, campaign_id, "
+                "INSERT INTO projects (company_id, project_name, phone_routing_id, "
                 "rubric_group_id, project_start_date, status_id) "
                 "VALUES (%s, 'OtherProj', %s, %s, %s, 1) RETURNING project_id",
-                (co2_id, co2_camp, co2_rg, date.today()),
+                (co2_id, co2_phr, co2_rg, date.today()),
             )
             co2_proj = cur.fetchone()["project_id"]
             conn.commit()
@@ -586,17 +586,17 @@ def main():
             f"other_co_projects={len(plist)} foreign_visible={foreign_visible}",
             outcome="PASS" if (r.status_code == 200
                                and not foreign_visible) else "FAIL")
-        # Campaign under the other location — the API currently has no GET by id,
-        # so we assert the list doesn't leak our test campaign.
-        r = co2_c.get("/api/campaigns")
+        # Phone routing under the other location — the API currently has no GET by id,
+        # so we assert the list doesn't leak our test phone routing.
+        r = co2_c.get("/api/phone_routing")
         clist = body_of(r) or []
-        foreign_camp_visible = any(c.get("campaign_id") == fx["campaign_id"]
-                                    for c in clist)
-        rec(P, "GET", "/api/campaigns (x-tenant scope)",
+        foreign_phr_visible = any(c.get("phone_routing_id") == fx["phone_routing_id"]
+                                   for c in clist)
+        rec(P, "GET", "/api/phone_routing (x-tenant scope)",
             r.status_code, 200,
-            f"foreign_visible={foreign_camp_visible}",
+            f"foreign_visible={foreign_phr_visible}",
             outcome="PASS" if (r.status_code == 200
-                               and not foreign_camp_visible) else "FAIL")
+                               and not foreign_phr_visible) else "FAIL")
         # Store for phase 3 x-tenant interaction test
         fx["co2_id"]    = co2_id
         fx["co2_admin"] = co2_admin

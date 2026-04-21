@@ -347,7 +347,7 @@ def teardown(fx):
         run_in("projects",                  "project_id",      proj_ids)
         run_in("rubric_items",              "rubric_group_id", rg_ids)
         run_in("rubric_groups",             "rubric_group_id", rg_ids)
-        run_in("campaigns",                 "location_id",     loc_ids)
+        run_in("phone_routing",             "location_id",     loc_ids)
         run_in("locations",                 "location_id",     loc_ids)
         run_in("audit_log",                 "actor_user_id",   user_ids)
         run_in("users",                     "user_id",         user_ids)

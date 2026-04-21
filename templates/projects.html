@@ -432,21 +432,21 @@
         </div>
       </div>
 
-      {# Step 4 — Campaign #}
+      {# Step 4 — Phone Routing #}
       <div class="wizard-step" data-step="4" hidden>
         <div class="field">
-          <label class="field-label" for="wiz-campaign">Campaign <span class="muted">(optional)</span></label>
-          <select id="wiz-campaign" class="field-select">
-            <option value="">No campaign</option>
+          <label class="field-label" for="wiz-phone-routing">Phone Routing <span class="muted">(optional)</span></label>
+          <select id="wiz-phone-routing" class="field-select">
+            <option value="">No phone routing</option>
           </select>
           <div style="margin-top:8px;">
-            <a href="#" id="wiz-new-campaign-link" class="text-small">+ Create new campaign</a>
+            <a href="#" id="wiz-new-phone-routing-link" class="text-small">+ Create new phone routing</a>
           </div>
-          <div id="wiz-new-campaign" style="margin-top:10px;display:none;gap:8px;align-items:stretch;">
-            <input type="text" id="wiz-new-campaign-name" class="field-input" style="flex:1;"
-                   placeholder="Campaign name">
-            <button type="button" class="btn btn-primary btn-sm" id="btn-save-campaign">Save</button>
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-cancel-campaign">Cancel</button>
+          <div id="wiz-new-phone-routing" style="margin-top:10px;display:none;gap:8px;align-items:stretch;">
+            <input type="text" id="wiz-new-phone-routing-name" class="field-input" style="flex:1;"
+                   placeholder="Phone routing name">
+            <button type="button" class="btn btn-primary btn-sm" id="btn-save-phone-routing">Save</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-cancel-phone-routing">Cancel</button>
           </div>
         </div>
       </div>
@@ -495,14 +495,14 @@
     {{ 'true' if user_role in ('admin', 'super_admin') else 'false' }};
 
   const WIZ_STEPS = [
-    "Name", "Rubric", "Location", "Campaign", "Dates", "Review",
+    "Name", "Rubric", "Location", "Phone Routing", "Dates", "Review",
   ];
 
   // Single IIFE-scoped state blob — no globals.
   const state = {
     projects:      [],
     locations:     [],
-    campaigns:     [],
+    phoneRoutings: [],
     wizard: {
       open:           false,
       step:           1,
@@ -518,7 +518,7 @@
       description:    "",
       script:         "",
       locationId:     "",
-      campaignId:     "",
+      phoneRoutingId: "",
       startDate:      "",
       endDate:        "",
       allLocations:   false,      // Step 3 "All Locations" choice
@@ -652,7 +652,7 @@
         '<div class="pc-name">' + EA.esc(p.project_name || "(untitled)") + '</div>' +
         '<div class="pc-meta">' +
           locLabel +
-          (p.campaign_name ? " · " + EA.esc(p.campaign_name) : "") +
+          (p.phone_routing_name ? " · " + EA.esc(p.phone_routing_name) : "") +
         '</div>' +
         '<div class="pc-meta">' + EA.esc(range) + '</div>' +
         '<div class="pc-pills">' +
@@ -712,7 +712,7 @@
     state.wizard.locationId   = state.wizard.allLocations
                                   ? ""
                                   : String(p.location_id || "");
-    state.wizard.campaignId   = p.campaign_id ? String(p.campaign_id) : "";
+    state.wizard.phoneRoutingId = p.phone_routing_id ? String(p.phone_routing_id) : "";
     state.wizard.startDate   = toDateInputValue(p.project_start_date);
     state.wizard.endDate     = toDateInputValue(p.project_end_date);
     $("#wiz-project-name").value = state.wizard.projectName;
@@ -726,7 +726,7 @@
                                    ? ALL_LOCATIONS_SENTINEL
                                    : state.wizard.locationId;
     onWizLocationChange();
-    $("#wiz-campaign").value = state.wizard.campaignId;
+    $("#wiz-phone-routing").value = state.wizard.phoneRoutingId;
     showStep(1);
   }
 
@@ -738,7 +738,7 @@
       isGenerating: false, currentStream: null,
       gradeTarget: "respondent",
       projectName: "", description: "", script: "",
-      locationId: "", campaignId: "",
+      locationId: "", phoneRoutingId: "",
       allLocations: false,
       startDate: new Date().toISOString().slice(0,10),
       endDate: "",
@@ -830,7 +830,7 @@
       const v = $("#wiz-location").value;
       return v === ALL_LOCATIONS_SENTINEL || !!v;
     }
-    if (s === 4) return true;   // campaign optional
+    if (s === 4) return true;   // phone routing optional
     if (s === 5) return !!$("#wiz-start").value;
     return true;
   }
@@ -860,26 +860,26 @@
       state.wizard.allLocations = (v === ALL_LOCATIONS_SENTINEL);
       state.wizard.locationId = state.wizard.allLocations ? "" : v;
     }
-    if (s === 4) state.wizard.campaignId = $("#wiz-campaign").value;
+    if (s === 4) state.wizard.phoneRoutingId = $("#wiz-phone-routing").value;
     if (s === 5) {
       state.wizard.startDate = $("#wiz-start").value;
       state.wizard.endDate   = $("#wiz-end").value;
     }
   }
 
-  // ── Lookups (locations, campaigns) ──────────────
+  // ── Lookups (locations, phone_routings) ──────────────
   async function loadLookupsForWizard() {
     try {
-      const [locs, camps] = await Promise.all([
+      const [locs, phrs] = await Promise.all([
         EA.fetchJSON("/api/locations"),
-        EA.fetchJSON("/api/campaigns"),
+        EA.fetchJSON("/api/phone_routing"),
       ]);
-      state.locations = locs || [];
-      state.campaigns = camps || [];
+      state.locations     = locs || [];
+      state.phoneRoutings = phrs || [];
       populateLocationSelect();
-      populateCampaignSelect();
+      populatePhoneRoutingSelect();
     } catch (err) {
-      EA.toast("Could not load locations/campaigns: " + (err.message || ""), "error");
+      EA.toast("Could not load locations/phone routings: " + (err.message || ""), "error");
     }
   }
 
@@ -925,49 +925,49 @@
       phoneEl.hidden = true;
     }
     noteEl.hidden = !isAll;
-    populateCampaignSelect();
+    populatePhoneRoutingSelect();
   }
 
-  function populateCampaignSelect() {
-    const sel = $("#wiz-campaign");
-    // All-locations mode → show every campaign (they're company-scoped);
-    // single-location mode → filter to campaigns at that location only.
+  function populatePhoneRoutingSelect() {
+    const sel = $("#wiz-phone-routing");
+    // All-locations mode → show every phone routing (they're company-scoped);
+    // single-location mode → filter to phone routings at that location only.
     let filtered;
     if (state.wizard.allLocations) {
-      filtered = state.campaigns.slice();
+      filtered = state.phoneRoutings.slice();
     } else {
       const locId = String(state.wizard.locationId || "");
       filtered = locId
-        ? state.campaigns.filter(c => String(c.location_id || "") === locId)
-        : state.campaigns.slice();
+        ? state.phoneRoutings.filter(phr => String(phr.location_id || "") === locId)
+        : state.phoneRoutings.slice();
     }
-    sel.innerHTML = '<option value="">No campaign</option>' +
-      filtered.map(function (c) {
-        return '<option value="' + c.campaign_id + '">' +
-                 EA.esc(c.campaign_name) + '</option>';
+    sel.innerHTML = '<option value="">No phone routing</option>' +
+      filtered.map(function (phr) {
+        return '<option value="' + phr.phone_routing_id + '">' +
+                 EA.esc(phr.phone_routing_name) + '</option>';
       }).join("");
-    if (state.wizard.campaignId) sel.value = state.wizard.campaignId;
+    if (state.wizard.phoneRoutingId) sel.value = state.wizard.phoneRoutingId;
   }
 
-  async function saveNewCampaign() {
-    const name = $("#wiz-new-campaign-name").value.trim();
+  async function saveNewPhoneRouting() {
+    const name = $("#wiz-new-phone-routing-name").value.trim();
     const locId = state.wizard.locationId || $("#wiz-location").value;
-    if (!name) { EA.toast("Campaign name required", "error"); return; }
+    if (!name) { EA.toast("Phone routing name required", "error"); return; }
     if (!locId) { EA.toast("Pick a location first", "error"); return; }
     try {
-      const created = await EA.fetchJSON("/api/campaigns", {
+      const created = await EA.fetchJSON("/api/phone_routing", {
         method: "POST",
-        body: { campaign_name: name, location_id: parseInt(locId, 10) },
+        body: { phone_routing_name: name, location_id: parseInt(locId, 10) },
       });
-      state.campaigns.push(created);
-      state.wizard.campaignId = String(created.campaign_id);
-      populateCampaignSelect();
-      $("#wiz-new-campaign").style.display = "none";
-      $("#wiz-new-campaign-name").value = "";
-      $("#wiz-new-campaign-link").style.display = "";
-      EA.toast("Campaign added", "success");
+      state.phoneRoutings.push(created);
+      state.wizard.phoneRoutingId = String(created.phone_routing_id);
+      populatePhoneRoutingSelect();
+      $("#wiz-new-phone-routing").style.display = "none";
+      $("#wiz-new-phone-routing-name").value = "";
+      $("#wiz-new-phone-routing-link").style.display = "";
+      EA.toast("Phone routing added", "success");
     } catch (err) {
-      EA.toast("Could not save campaign: " + (err.message || ""), "error");
+      EA.toast("Could not save phone routing: " + (err.message || ""), "error");
     }
   }
 
@@ -1165,13 +1165,13 @@
     captureStepValues();
     const w = state.wizard;
     const loc = state.locations.find(l => String(l.location_id) === String(w.locationId));
-    const camp = state.campaigns.find(c => String(c.campaign_id) === String(w.campaignId));
+    const phr = state.phoneRoutings.find(x => String(x.phone_routing_id) === String(w.phoneRoutingId));
     const locLabel = w.allLocations ? "All Locations" : (loc ? loc.location_name : "—");
     const rows = [
-      ["Project name", w.projectName || "—"],
-      ["Location",     locLabel],
-      ["Campaign",     camp ? camp.campaign_name : "(none)"],
-      ["Date range",   (w.startDate || "—") + " → " + (w.endDate || "ongoing")],
+      ["Project name",  w.projectName || "—"],
+      ["Location",      locLabel],
+      ["Phone Routing", phr ? phr.phone_routing_name : "(none)"],
+      ["Date range",    (w.startDate || "—") + " → " + (w.endDate || "ongoing")],
     ];
     if (!w.editingProjectId) {
       rows.push(
@@ -1201,7 +1201,7 @@
           method: "PUT",
           body: {
             project_name:       w.projectName,
-            campaign_id:        w.campaignId ? parseInt(w.campaignId, 10) : null,
+            phone_routing_id:   w.phoneRoutingId ? parseInt(w.phoneRoutingId, 10) : null,
             project_start_date: w.startDate || null,
             project_end_date:   w.endDate   || null,
             all_locations:      w.allLocations,
@@ -1236,7 +1236,7 @@
             project_name:         w.projectName,
             all_locations:        w.allLocations,
             location_id:          w.allLocations ? null : parseInt(w.locationId, 10),
-            campaign_id:          w.campaignId ? parseInt(w.campaignId, 10) : null,
+            phone_routing_id:     w.phoneRoutingId ? parseInt(w.phoneRoutingId, 10) : null,
             project_start_date:   w.startDate,
             project_end_date:     w.endDate || null,
             rubric_name:          w.rubricName || w.projectName,
@@ -1276,18 +1276,18 @@
       if (!state.wizard.rubricName) state.wizard.rubricName = "Custom Rubric";
       renderRubricList();
     });
-    $("#wiz-new-campaign-link").addEventListener("click", function (e) {
+    $("#wiz-new-phone-routing-link").addEventListener("click", function (e) {
       e.preventDefault();
       e.target.style.display = "none";
-      $("#wiz-new-campaign").style.display = "flex";
-      $("#wiz-new-campaign-name").focus();
+      $("#wiz-new-phone-routing").style.display = "flex";
+      $("#wiz-new-phone-routing-name").focus();
     });
-    $("#btn-cancel-campaign").addEventListener("click", function () {
-      $("#wiz-new-campaign").style.display = "none";
-      $("#wiz-new-campaign-name").value = "";
-      $("#wiz-new-campaign-link").style.display = "";
+    $("#btn-cancel-phone-routing").addEventListener("click", function () {
+      $("#wiz-new-phone-routing").style.display = "none";
+      $("#wiz-new-phone-routing-name").value = "";
+      $("#wiz-new-phone-routing-link").style.display = "";
     });
-    $("#btn-save-campaign").addEventListener("click", saveNewCampaign);
+    $("#btn-save-phone-routing").addEventListener("click", saveNewPhoneRouting);
     // Escape key maps to Cancel so users stuck in the modal can exit.
     document.addEventListener("keydown", function (e) {
       if (!state.wizard.open) return;
