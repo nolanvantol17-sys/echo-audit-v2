@@ -627,7 +627,13 @@
       setLocationLabel(false);
     }
     updateProjectFieldVisibility();
-    onProjectChange();
+    // Drive the campaign field directly from p.project_id rather than relying
+    // on projSel.value — the earlier onLocationChange() inside each branch
+    // resets the dropdown, and in the all-locations branch we reassign
+    // projSel.innerHTML + disabled but the follow-on onProjectChange() doesn't
+    // reliably see the new value in all browsers.
+    setCampaignFieldEnabled(true, "Loading campaigns…");
+    loadCampaignsForProject(p.project_id);
   }
 
   function renderLockStrip(p, allLocations) {
