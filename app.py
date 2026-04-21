@@ -62,6 +62,24 @@ CLIENT_NAME      = os.environ.get("CLIENT_NAME",      "Echo Audit")
 CLIENT_FULL_NAME = os.environ.get("CLIENT_FULL_NAME", "Echo Audit")
 
 
+# Static-asset cache-buster. Railway bumps file mtimes on redeploy, so the
+# version string turns over automatically; templates append it as ?v=<mtime>
+# alongside a long Cache-Control on /static/* so browsers skip the re-download
+# on every sidebar navigation.
+_STATIC_VERSION_CACHE = {}
+
+
+def _static_version(filename):
+    if filename in _STATIC_VERSION_CACHE:
+        return _STATIC_VERSION_CACHE[filename]
+    try:
+        v = str(int((Path(__file__).parent / "static" / filename).stat().st_mtime))
+    except OSError:
+        v = "0"
+    _STATIC_VERSION_CACHE[filename] = v
+    return v
+
+
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
@@ -110,6 +128,17 @@ def create_app():
         if request.path.startswith("/api/"):
             return jsonify({"error": "Unauthorized"}), 401
         return redirect(url_for("login"))
+
+    # Long-cache /static/* — templates pair this with a ?v=<mtime> cache-buster
+    # so redeploys invalidate the old asset. Without this, every sidebar nav
+    # re-downloads the shell (~94 KB) and the refresh icon spins on each click.
+    app.add_template_global(_static_version, name="static_v")
+
+    @app.after_request
+    def _set_static_cache_headers(resp):
+        if request.path.startswith("/static/"):
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return resp
 
     return app
 

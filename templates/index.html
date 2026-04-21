@@ -283,8 +283,11 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="{{ url_for('static', filename='dashboard_widget.js') }}"></script>
+<script defer src="{{ url_for('static', filename='audio_player.js') }}?v={{ static_v('audio_player.js') }}"></script>
+<script defer src="{{ url_for('static', filename='interaction_view.js') }}?v={{ static_v('interaction_view.js') }}"></script>
+<script defer src="{{ url_for('static', filename='interaction_panel.js') }}?v={{ static_v('interaction_panel.js') }}"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script defer src="{{ url_for('static', filename='dashboard_widget.js') }}?v={{ static_v('dashboard_widget.js') }}"></script>
 <script>
 (function () {
   "use strict";

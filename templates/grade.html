@@ -467,6 +467,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script defer src="{{ url_for('static', filename='audio_player.js') }}?v={{ static_v('audio_player.js') }}"></script>
 <script>
 (function () {
   "use strict";

@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ static_v('app.css') }}">
   <style>
     /* ── Project breadcrumb (persistent context bar) ───────── */
     .project-breadcrumb {
@@ -46,9 +46,10 @@
 </head>
 <body>
 
-{# ── Impersonation banner — populated at runtime from GET /api/me.
-     Hidden by default; base.html inline script toggles it on.
-     Persistent across every page per FE-5 spec. #}
+{# ── Impersonation banner — only rendered for super_admins, who are the
+     only role that can impersonate. Skipping it for regular users avoids
+     the /api/me fetch firing on every page nav for everyone. #}
+{% if user_role == 'super_admin' %}
 <div id="impersonation-banner" class="impersonation-banner" hidden>
   <span class="impersonation-dot"></span>
   <span class="impersonation-text">
@@ -56,6 +57,7 @@
   </span>
   <button type="button" id="imp-stop" class="impersonation-stop">Click to stop</button>
 </div>
+{% endif %}
 
 {#
   Per-request view of the URL path so nav highlighting checks are terse.
@@ -196,10 +198,10 @@
 
 </div>
 
-<script src="{{ url_for('static', filename='app.js') }}"></script>
-<script src="{{ url_for('static', filename='audio_player.js') }}"></script>
-<script src="{{ url_for('static', filename='interaction_view.js') }}"></script>
-<script src="{{ url_for('static', filename='interaction_panel.js') }}"></script>
+<script src="{{ url_for('static', filename='app.js') }}?v={{ static_v('app.js') }}"></script>
+{# audio_player.js / interaction_view.js / interaction_panel.js are loaded
+   per-page (extra_js block) on the ~4 pages that actually use them, so the
+   other half of the sidebar doesn't pay for them on every nav. #}
 <script>
   // ── Persistent project breadcrumb ────────────────────────
   // Stores the last-entered project in sessionStorage so the user sees the
@@ -309,9 +311,10 @@
     });
   })();
 
-  // Impersonation banner — check on every page load.
-  // A super_admin carrying impersonating_user_id in their session sees the
-  // banner everywhere; clicking "stop" clears it and returns to /app/platform.
+  {% if user_role == 'super_admin' %}
+  // Impersonation banner — only super_admins can impersonate, so the /api/me
+  // probe is gated to their page loads. Regular users never pay for the
+  // round-trip on every sidebar navigation.
   (function () {
     document.addEventListener("DOMContentLoaded", async function () {
       const banner = document.getElementById("impersonation-banner");
@@ -335,6 +338,7 @@
       } catch (_) { /* silent — /api/me always available when authed */ }
     });
   })();
+  {% endif %}
 </script>
 {% block extra_js %}{% endblock %}
 </body>
