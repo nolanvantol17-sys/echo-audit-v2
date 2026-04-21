@@ -10,6 +10,8 @@ get_effective_company_id() on every route except /api/companies
 """
 
 import logging
+from datetime import date, timedelta
+
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
 
@@ -21,6 +23,9 @@ from audit_log import (
     write_audit_log,
 )
 from auth import role_required
+from dashboard_helpers import (
+    _month_bounds, _report_url_for, _roll_up_locations, _trend_for_calls,
+)
 from db import get_conn, q, IS_POSTGRES
 from helpers import generate_temp_password, get_effective_company_id
 
@@ -1337,6 +1342,7 @@ def get_project_summary(project_id):
             SELECT
                 i.interaction_id, i.interaction_date, i.interaction_overall_score,
                 i.interaction_call_start_time, i.interaction_uploaded_at,
+                i.interaction_flags,
                 COALESCE(loc_c.location_name, loc_rg.location_name) AS location_name,
                 COALESCE(
                     r.respondent_name,
@@ -1357,9 +1363,17 @@ def get_project_summary(project_id):
         """), (project_id,))
         recent_calls = _rows(cur)
 
-        # Top 3 respondents for this project by average score.
+        # Top callers for this project, aggregated by respondent name (so the
+        # same person at multiple locations rolls up to one row). Month-scoped
+        # ranking matches the global /app dashboard. Each row is enriched with
+        # a project-scoped locations roll-up + last_call timestamp, a rolling
+        # 30-day trend, and a company-scoped Performance Reports deep-link.
+        # NULL / empty / 'Name Not Detected' names are excluded.
+        month_start, month_end = _month_bounds()
+        rolling_start = date.today() - timedelta(days=30)
+
         cur = conn.execute(q("""
-            SELECT r.respondent_id, r.respondent_name,
+            SELECT TRIM(r.respondent_name) AS respondent_name,
                    AVG(i.interaction_overall_score) AS avg_score,
                    COUNT(*) AS call_count
             FROM interactions i
@@ -1368,18 +1382,90 @@ def get_project_summary(project_id):
               AND i.interaction_deleted_at IS NULL
               AND i.status_id <> ?
               AND i.interaction_overall_score IS NOT NULL
-            GROUP BY r.respondent_id, r.respondent_name
+              AND i.interaction_date >= ?
+              AND i.interaction_date <  ?
+              AND r.respondent_name IS NOT NULL
+              AND TRIM(r.respondent_name) <> ''
+              AND TRIM(r.respondent_name) <> 'Name Not Detected'
+            GROUP BY TRIM(r.respondent_name)
             ORDER BY avg_score DESC
             LIMIT 3
-        """), (project_id, STATUS_NO_ANSWER))
+        """), (project_id, STATUS_NO_ANSWER, month_start, month_end))
+
         top_agents = []
         for row in _rows(cur):
+            name = row["respondent_name"]
             a = row.get("avg_score")
+
+            # Per-name month-scoped detail (project-scoped) → locations + last_call.
+            cur2 = conn.execute(q("""
+                SELECT
+                    l.location_name,
+                    i.interaction_date,
+                    i.interaction_call_start_time,
+                    i.interaction_uploaded_at
+                FROM interactions i
+                JOIN respondents r ON r.respondent_id = i.respondent_id
+                LEFT JOIN locations l ON l.location_id = r.location_id
+                WHERE i.project_id = ?
+                  AND i.interaction_deleted_at IS NULL
+                  AND i.status_id <> ?
+                  AND i.interaction_overall_score IS NOT NULL
+                  AND i.interaction_date >= ?
+                  AND i.interaction_date <  ?
+                  AND TRIM(r.respondent_name) = ?
+            """), (project_id, STATUS_NO_ANSWER, month_start, month_end, name))
+            month_calls = _rows(cur2)
+            locations = _roll_up_locations(month_calls)
+
+            ts_values = []
+            for r in month_calls:
+                ts = (r.get("interaction_call_start_time")
+                      or r.get("interaction_uploaded_at")
+                      or r.get("interaction_date"))
+                if ts is not None:
+                    ts_values.append(ts)
+            last_call = max(ts_values) if ts_values else None
+            last_call_iso = (last_call.isoformat()
+                             if hasattr(last_call, "isoformat")
+                             else (str(last_call) if last_call else None))
+
+            # Per-name rolling-30-day trend, project-scoped.
+            cur3 = conn.execute(q("""
+                SELECT
+                    i.interaction_date,
+                    i.interaction_overall_score
+                FROM interactions i
+                JOIN respondents r ON r.respondent_id = i.respondent_id
+                WHERE i.project_id = ?
+                  AND i.interaction_deleted_at IS NULL
+                  AND i.status_id <> ?
+                  AND i.interaction_overall_score IS NOT NULL
+                  AND i.interaction_date >= ?
+                  AND TRIM(r.respondent_name) = ?
+            """), (project_id, STATUS_NO_ANSWER, rolling_start, name))
+            trend = _trend_for_calls(_rows(cur3))
+
+            # PR resolution is COMPANY-scoped: performance_reports aren't
+            # project-scoped, and the deep-link goes to the global /app/reports
+            # page either way.
+            cur4 = conn.execute(q("""
+                SELECT pr.performance_report_id
+                FROM performance_reports pr
+                JOIN respondents r ON r.respondent_id = pr.respondent_id
+                WHERE r.company_id = ?
+                  AND TRIM(r.respondent_name) = ?
+            """), (company_id, name))
+            report_url = _report_url_for(name, _rows(cur4))
+
             top_agents.append({
-                "respondent_id":   row["respondent_id"],
-                "respondent_name": row["respondent_name"],
+                "respondent_name": name,
                 "avg_score":       round(float(a), 1) if a is not None else None,
                 "call_count":      row["call_count"],
+                "locations":       locations,
+                "trend":           trend,
+                "last_call":       last_call_iso,
+                "report_url":      report_url,
             })
 
         return jsonify({

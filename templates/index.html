@@ -36,10 +36,15 @@
     grid-template-columns: 24px minmax(0, 1fr) auto 18px auto;
     align-items: center;
     gap: 10px;
-    padding: 10px 0;
+    padding: 10px 8px;
+    margin: 0 -8px;
+    border-radius: 4px;
     border-bottom: 1px solid var(--border);
   }
   .leader-row:last-child { border-bottom: none; }
+  .leader-row.clickable { cursor: pointer; }
+  .leader-row.clickable:hover { background: var(--surface-2); }
+  .leader-row.no-report .leader-name { color: var(--muted); }
   .leader-rank {
     width: 24px; height: 24px;
     border-radius: 50%;
@@ -51,17 +56,15 @@
     font-weight: 600;
   }
   .leader-name-col { min-width: 0; line-height: 1.2; }
-  .leader-name-link, .leader-name-static {
+  .leader-name {
     display: block;
     font-size: 0.92rem;
     color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    text-decoration: none;
     font-weight: 500;
   }
-  .leader-name-link:hover { color: var(--accent); }
   .leader-locations {
     display: block;
     font-size: 0.72rem;
@@ -326,13 +329,6 @@
         ? '<span class="leader-locations" title="' + EA.esc(locs.join(", ")) + '">' + locStr + '</span>'
         : '';
 
-      // Name: link only when the backend resolved a deep-link URL. No URL
-      // means no performance report exists for this name yet — render plain.
-      const nameInner = r.report_url
-        ? ('<a class="leader-name-link" href="' + EA.esc(r.report_url) +
-           '" title="' + nameEsc + '">' + nameEsc + '</a>')
-        : ('<span class="leader-name-static" title="' + nameEsc + '">' + nameEsc + '</span>');
-
       const trend = r.trend || "none";
       const trendArrow = trend === "up" ? "↑"
                        : trend === "down" ? "↓"
@@ -345,10 +341,18 @@
       const callCount = r.call_count || 0;
       const lastCall = r.last_call ? EA.formatRelativeTime(r.last_call) : "";
 
+      // Row-level click: whole row navigates when a PR deep-link exists.
+      // Otherwise the row is non-interactive and visually muted.
+      const rowClass = r.report_url ? "leader-row clickable" : "leader-row no-report";
+      const dataHref = r.report_url ? ' data-href="' + EA.esc(r.report_url) + '"' : '';
+
       return (
-        '<div class="leader-row">' +
+        '<div class="' + rowClass + '"' + dataHref + '>' +
           '<span class="leader-rank">' + (i + 1) + '</span>' +
-          '<div class="leader-name-col">' + nameInner + locHtml + '</div>' +
+          '<div class="leader-name-col">' +
+            '<span class="leader-name" title="' + nameEsc + '">' + nameEsc + '</span>' +
+            locHtml +
+          '</div>' +
           '<span class="score-pill ' + cls + '">' + EA.formatScore(r.avg_score) + '</span>' +
           '<span class="leader-trend ' + trend + '" title="' + EA.esc(trendTitle) + '">' +
             trendArrow +
@@ -360,6 +364,11 @@
         '</div>'
       );
     }).join("");
+    box.querySelectorAll(".leader-row.clickable[data-href]").forEach((el) => {
+      el.addEventListener("click", () => {
+        window.location.href = el.dataset.href;
+      });
+    });
   }
 
   function renderRecent(rows) {
