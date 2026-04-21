@@ -808,6 +808,7 @@
   function setCampaignFieldEnabled(enabled, placeholderMsg) {
     const input = document.getElementById("gf-campaign");
     console.log("[DBG setCampaignFieldEnabled] enabled=", enabled, "placeholder=", placeholderMsg, "input found:", !!input);
+    console.trace("[DBG setCampaignFieldEnabled] CALLER STACK");
     if (!input) return;
     input.disabled = !enabled;
     if (!enabled) {
@@ -884,6 +885,17 @@
         }
       },
     });
+    const postMountInput = document.getElementById("gf-campaign");
+    console.log("[DBG mountCampaignCombo] AFTER mount: input.disabled=", postMountInput && postMountInput.disabled,
+                "input.value=", postMountInput && postMountInput.value,
+                "input.placeholder=", postMountInput && postMountInput.placeholder,
+                "wrapped parent class=", postMountInput && postMountInput.parentNode && postMountInput.parentNode.className);
+    setTimeout(function () {
+      const lateInput = document.getElementById("gf-campaign");
+      console.log("[DBG mountCampaignCombo] +500ms LATE state: input.disabled=", lateInput && lateInput.disabled,
+                  "input.value=", lateInput && lateInput.value,
+                  "input.placeholder=", lateInput && lateInput.placeholder);
+    }, 500);
   }
 
   function destroyCampaignCombo() {
