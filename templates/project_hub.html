@@ -718,7 +718,7 @@
 
   if (window.EA && EA.PageRouter) {
     EA.PageRouter.register({
-      match: /^\/app\/projects\/\d+$/,
+      match: function (u) { return /^\/app\/projects\/\d+$/.test(u.pathname); },
       init: init,
     });
   } else {
