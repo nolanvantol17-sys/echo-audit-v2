@@ -86,17 +86,40 @@ def _get_location_in_company(conn, location_id, company_id):
 def _get_rubric_group_in_company(conn, rubric_group_id, company_id, include_deleted=False):
     """Return the rubric_group row if it belongs to the given company.
 
-    Scope chain: rubric_group.location_id → locations.company_id. Industry
-    templates (location_id IS NULL) are intentionally excluded — they are
-    served separately via /api/rubric-templates.
+    Scope (either path qualifies):
+      1. Direct: rubric_group.location_id → locations.company_id (the normal
+         case for rubrics anchored to a specific location).
+      2. Project-anchored fallback: rubric_group.location_id IS NULL AND at
+         least one non-deleted project in `company_id` references the rubric.
+         Covers all-locations + V1-imported "snapshot" rubrics that have no
+         anchoring location row.
+
+    Industry templates (location_id IS NULL AND not referenced by any
+    in-company project) remain excluded — served separately via
+    /api/rubric-templates.
     """
     deleted_clause = "" if include_deleted else " AND rg.rg_deleted_at IS NULL"
     cur = conn.execute(
         q(f"""SELECT rg.* FROM rubric_groups rg
-              JOIN locations l ON l.location_id = rg.location_id
-              WHERE rg.rubric_group_id = ? AND l.company_id = ?
-                AND l.location_deleted_at IS NULL{deleted_clause}"""),
-        (rubric_group_id, company_id),
+              WHERE rg.rubric_group_id = ?
+                AND (
+                  EXISTS (
+                    SELECT 1 FROM locations l
+                    WHERE l.location_id = rg.location_id
+                      AND l.company_id = ?
+                      AND l.location_deleted_at IS NULL
+                  )
+                  OR (
+                    rg.location_id IS NULL
+                    AND EXISTS (
+                      SELECT 1 FROM projects p
+                      WHERE p.rubric_group_id = rg.rubric_group_id
+                        AND p.company_id = ?
+                        AND p.project_deleted_at IS NULL
+                    )
+                  )
+                ){deleted_clause}"""),
+        (rubric_group_id, company_id, company_id),
     )
     return _row_to_dict(cur.fetchone())
 
