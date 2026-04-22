@@ -629,7 +629,7 @@ def register_routes(app):
     @app.route("/app")
     @login_required
     def app_home():
-        return render_page("index.html")
+        return redirect(url_for("projects_page"))
 
     # ── Post-signup setup wizard ──
     # Walks a brand-new admin through creating one location, one rubric, and

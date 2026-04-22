@@ -81,7 +81,6 @@
   parent section. Post-swap highlights are reapplied by page_router.js.
 #}
 {% set _p = request.path %}
-{% set is_dashboard = (_p == '/app') %}
 {% set is_projects  = _p.startswith('/app/projects') or _p.startswith('/app/grade') %}
 {% set is_history   = _p.startswith('/app/history') %}
 {% set is_reports   = _p.startswith('/app/reports') %}
@@ -111,10 +110,6 @@
     </a>
 
     <nav class="sidebar-nav">
-      <a href="{{ url_for('app_home') }}"
-         class="nav-link {% if is_dashboard %}active{% endif %}" {{ _nsw }}>
-        <span class="nav-icon">◆</span> Dashboard
-      </a>
       <a href="{{ url_for('projects_page') }}"
          class="nav-link {% if is_projects %}active{% endif %}" {{ _nsw }}>
         <span class="nav-icon">▶</span> Projects
