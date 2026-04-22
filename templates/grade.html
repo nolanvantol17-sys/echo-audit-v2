@@ -570,14 +570,11 @@
   }
 
   async function applyLockedProject(projectId) {
-    console.log("[DBG applyLockedProject] called with projectId=", projectId, "state.allProjects.length=", (state.allProjects||[]).length);
     state.projectLocked = true;
     const p = (state.allProjects || []).find(
       (pp) => String(pp.project_id) === String(projectId)
     );
-    console.log("[DBG applyLockedProject] found p=", p);
     if (!p) {
-      console.log("[DBG applyLockedProject] EARLY RETURN — project not found in allProjects");
       state.projectLocked = false;
       $("#form-hint").textContent =
         "Could not find that project in your account — defaulting to manual selection.";
@@ -600,9 +597,7 @@
     const locSel  = $("#gf-location");
     const projSel = $("#gf-project");
 
-    console.log("[DBG applyLockedProject] allLocations=", allLocations, "p.location_id=", p.location_id);
     if (allLocations) {
-      console.log("[DBG applyLockedProject] BRANCH: all-locations");
       // Reviewer picks the location per call. Location stays enabled; project
       // dropdown becomes a single locked option so it can't be switched.
       locSel.disabled = false;
@@ -619,31 +614,30 @@
       renderLockStrip(p, /*allLocations=*/true);
       setLocationLabel(true);
     } else {
-      console.log("[DBG applyLockedProject] BRANCH: single-location");
-      // Single-location mode — lock both dropdowns (existing behavior).
+      // Single-location mode — lock both dropdowns. Build projSel directly
+      // as a single locked option (matching the all-locations branch) so we
+      // don't depend on renderProjectDropdown — which is now skipped under a
+      // project lock to keep the user's location change from clobbering the
+      // locked project + campaign field.
       if (p.location_id != null) {
         locSel.value = String(p.location_id);
         onLocationChange();
         locSel.disabled = true;
       }
-      projSel.value = String(p.project_id);
+      projSel.innerHTML =
+        '<option value="' + p.project_id + '" selected>' +
+          EA.esc(p.project_name || '') + '</option>';
       projSel.disabled = true;
-      console.log("[DBG applyLockedProject] single-loc set: projSel.value=", projSel.value, "projSel.disabled=", projSel.disabled);
       state.locationNameDisplay = p.location_name || "";
       renderLockStrip(p, /*allLocations=*/false);
       setLocationLabel(false);
     }
     updateProjectFieldVisibility();
     // Drive the campaign field directly from p.project_id rather than relying
-    // on projSel.value — the earlier onLocationChange() inside each branch
-    // resets the dropdown, and in the all-locations branch we reassign
-    // projSel.innerHTML + disabled but the follow-on onProjectChange() doesn't
-    // reliably see the new value in all browsers.
-    console.log("[DBG applyLockedProject] reached fix lines — about to enable campaign field for project", p.project_id);
+    // on projSel.value — neither branch fires onProjectChange after the lock
+    // is established, so we kick off the campaign load ourselves.
     setCampaignFieldEnabled(true, "Loading campaigns…");
-    console.log("[DBG applyLockedProject] after setCampaignFieldEnabled, gf-campaign.disabled=", document.getElementById("gf-campaign") && document.getElementById("gf-campaign").disabled);
     loadCampaignsForProject(p.project_id);
-    console.log("[DBG applyLockedProject] loadCampaignsForProject invoked (async, fire-and-forget)");
   }
 
   function renderLockStrip(p, allLocations) {
@@ -780,7 +774,10 @@
       phoneEl.textContent = "📞 No phone number on file";
       phoneEl.hidden = false;
     }
-    renderProjectDropdown(locId);
+    // Under a URL ?project_id= lock, the project dropdown is a single locked
+    // option — don't let a user-driven location change rebuild it (and re-enable
+    // it) and don't let the chained onProjectChange clobber the campaign field.
+    if (!state.projectLocked) renderProjectDropdown(locId);
     updateProjectFieldVisibility();
     $("#form-hint").textContent = "";
     refreshLocationIntel(locId);
@@ -807,11 +804,6 @@
   // recently created), or a stashed campaign_id from the grade context.
   function setCampaignFieldEnabled(enabled, placeholderMsg) {
     const input = document.getElementById("gf-campaign");
-    console.log("[DBG setCampaignFieldEnabled] enabled=", enabled, "placeholder=", placeholderMsg, "input found:", !!input);
-    if (!enabled && state.campaignCombo) {
-      console.error("[DBG !!!] setCampaignFieldEnabled(false) called AFTER combobox mounted — this is the bug!", new Error().stack);
-    }
-    console.trace("[DBG setCampaignFieldEnabled] CALLER STACK");
     if (!input) return;
     input.disabled = !enabled;
     if (!enabled) {
@@ -820,32 +812,26 @@
     } else if (placeholderMsg) {
       input.placeholder = placeholderMsg;
     }
-    console.log("[DBG setCampaignFieldEnabled] after set: disabled=", input.disabled, "placeholder=", input.placeholder);
   }
 
   async function loadCampaignsForProject(projectId, opts) {
-    console.log("[DBG loadCampaignsForProject] projectId=", projectId, "current state.campaignProjectId=", state.campaignProjectId, "has combo=", !!state.campaignCombo);
     opts = opts || {};
     const preferId = opts.preferId || null;
     const seq = ++state.campaignFetchSeq;
     if (!projectId) {
-      console.log("[DBG loadCampaignsForProject] EARLY RETURN — no projectId");
       destroyCampaignCombo();
       state.campaignProjectId = null;
       return;
     }
     if (String(state.campaignProjectId) === String(projectId) && state.campaignCombo) {
-      console.log("[DBG loadCampaignsForProject] EARLY RETURN — same project + combo already mounted");
       // Same project — just apply the preferred pre-selection if asked.
       if (preferId !== null) state.campaignCombo.setValue(preferId);
       return;
     }
-    console.log("[DBG loadCampaignsForProject] fetching /api/projects/" + projectId + "/campaigns");
     try {
       const list = await EA.fetchJSON(
         "/api/projects/" + encodeURIComponent(projectId) + "/campaigns"
       );
-      console.log("[DBG loadCampaignsForProject] fetch returned, list.length=", (list||[]).length, "seq match=", seq === state.campaignFetchSeq);
       if (seq !== state.campaignFetchSeq) return;  // stale response
       const items = (list || []).map(function (c) {
         return { id: c.campaign_id, label: c.campaign_name };
@@ -857,17 +843,15 @@
         : (items.length ? items[0].id : null);
       mountCampaignCombo(projectId, items, initial);
     } catch (err) {
-      console.log("[DBG loadCampaignsForProject] FETCH ERROR:", err && err.message);
       if (seq !== state.campaignFetchSeq) return;
       mountCampaignCombo(projectId, [], null);
     }
   }
 
   function mountCampaignCombo(projectId, items, initialId) {
-    console.log("[DBG mountCampaignCombo] projectId=", projectId, "items.length=", items.length, "input.disabled BEFORE mount=", document.getElementById("gf-campaign") && document.getElementById("gf-campaign").disabled);
     destroyCampaignCombo();
     const input = document.getElementById("gf-campaign");
-    if (!input) { console.log("[DBG mountCampaignCombo] EARLY RETURN — no input"); return; }
+    if (!input) return;
     state.campaignProjectId = projectId;
     state.campaignCombo = EA.Combobox.mount(input, {
       items: items,
@@ -887,23 +871,6 @@
           return null;
         }
       },
-    });
-    const postMountInput = document.getElementById("gf-campaign");
-    console.log("[DBG mountCampaignCombo] AFTER mount: input.disabled=", postMountInput && postMountInput.disabled,
-                "input.value=", postMountInput && postMountInput.value,
-                "input.placeholder=", postMountInput && postMountInput.placeholder,
-                "wrapped parent class=", postMountInput && postMountInput.parentNode && postMountInput.parentNode.className);
-    [500, 1500, 3000, 5000].forEach(function (ms) {
-      setTimeout(function () {
-        const lateInput = document.getElementById("gf-campaign");
-        const wrap = lateInput && lateInput.parentNode;
-        const wrapText = wrap ? (wrap.innerText || wrap.textContent || "").replace(/\s+/g, " ").trim().slice(0, 200) : null;
-        console.log("[DBG mountCampaignCombo] +" + ms + "ms LATE state:",
-                    "input.disabled=", lateInput && lateInput.disabled,
-                    "input.value=", lateInput && lateInput.value,
-                    "input.placeholder=", lateInput && lateInput.placeholder,
-                    "wrap.text=", wrapText);
-      }, ms);
     });
   }
 

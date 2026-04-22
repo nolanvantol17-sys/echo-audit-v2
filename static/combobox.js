@@ -43,14 +43,6 @@
 
     if (!inputEl) throw new Error("EA.Combobox.mount: missing input element");
 
-    console.log("[DBG combobox.mount] ENTRY input.id=", inputEl.id,
-                "input.disabled=", inputEl.disabled,
-                "input.placeholder=", inputEl.placeholder,
-                "input.value=", inputEl.value,
-                "opts.placeholder=", opts.placeholder,
-                "opts.items.length=", (opts.items||[]).length,
-                "opts.initialValue=", opts.initialValue);
-
     // Wrap the existing input so the list can be absolutely positioned
     // relative to it, independent of whatever grid layout the caller uses.
     const wrap = document.createElement("div");
@@ -302,11 +294,6 @@
     if (opts.initialValue !== undefined && opts.initialValue !== null) {
       setValue(opts.initialValue);
     }
-
-    console.log("[DBG combobox.mount] EXIT input.disabled=", inputEl.disabled,
-                "input.placeholder=", inputEl.placeholder,
-                "input.value=", inputEl.value,
-                "state.selected=", state.selected);
 
     function destroy() {
       inputEl.removeEventListener("input", onInput);
