@@ -294,10 +294,21 @@ Examples of BAD clarifying questions (do not ask these — you can determine the
 - Did the agent mention the company name?
 - How long was the hold time?
 
+CLOSED-FORM ONLY — the reviewer answers via a wizard with buttons. Open-text questions are forbidden.
+
 Constraints:
 - Maximum 5 questions. Return an empty array if the transcript is sufficient to grade everything.
-- Each question must include: question, reason (why you can't tell from transcript), format (one of: yes_no, scale_1_10, multiple_choice), and options (only for multiple_choice, 2–4 distinct outcomes).
-- yes_no is genuinely binary ("Did X happen?"). Degree/quality goes in scale_1_10.
+- Each question must include: question, reason (why you can't tell from the transcript), format, and options.
+- format MUST be one of:
+    - "yes_no"           — strictly binary ("Did X happen?"). options must be exactly [].
+    - "yes_no_unclear"   — binary, but the reviewer might genuinely not know
+                           ("Was this a first-time caller?"). options must be exactly [].
+    - "multiple_choice"  — 3 to 5 mutually exclusive concrete outcomes. options
+                           is an array of 3–5 short answer-button strings (NOT
+                           full sentences). Use this when there are a small,
+                           known set of plausible answers.
+- DO NOT ask open-ended, scaled, or numeric questions. If you cannot phrase a
+  question as one of the three formats above, omit it.
 
 Respond with a valid JSON object in exactly this format — no extra text before or after:
 {{
@@ -453,13 +464,26 @@ def calculate_total(scores: dict, rubric_criteria: list = None) -> float:
 
 # ── Clarifying-question validation ─────────────────────────────
 
+# Closed-form formats produced by the new prompt. scale_1_10 is intentionally
+# NOT in this set — if Claude returns it (or any other legacy/invalid shape)
+# the reviewer-facing UI has no widget for it, so we coerce to skip_only.
+_CLOSED_FORM_FORMATS = ("yes_no", "yes_no_unclear", "multiple_choice")
+_MC_MIN_OPTIONS = 3
+_MC_MAX_OPTIONS = 5
+
 
 def validate_clarifying_questions(questions):
-    """Server-side validation: fix format mismatches on clarifying questions.
+    """Closed-form-only validation for the wizard UI.
 
-    Forces multiple_choice when options are present, drops red-flag yes_no
-    questions down to scale_1_10, and guarantees every entry has one of the
-    three allowed formats.
+    Each question is coerced into one of:
+        yes_no | yes_no_unclear | multiple_choice | skip_only
+
+    Anything Claude returns that does not cleanly fit (open-text, scale_1_10,
+    multiple_choice with too few/too many/garbage options, missing format,
+    red-flag yes_no, etc.) is downgraded to skip_only — the reviewer sees
+    the question + reason as read-only context and clicks Skip to advance.
+    The original question text and reason are always preserved so the
+    reviewer can still factor them in mentally.
     """
     if not questions or not isinstance(questions, list):
         return []
@@ -467,15 +491,44 @@ def validate_clarifying_questions(questions):
     for qn in questions:
         if not isinstance(qn, dict) or not qn.get("question"):
             continue
+
         fmt = (qn.get("format") or "").lower().strip()
+        # Map legacy variants Claude has returned in the past.
         if fmt == "scale_1_5":
             fmt = "scale_1_10"
-        if fmt == "yes_no" and _YES_NO_RED_FLAGS.search(qn["question"]):
-            fmt = "scale_1_10"
-        if fmt not in ("yes_no", "scale_1_10", "multiple_choice"):
-            fmt = "yes_no"
-        if fmt == "multiple_choice" and not qn.get("options"):
-            fmt = "scale_1_10"
-        qn["format"] = fmt
+
+        # Normalize options to a list-of-clean-strings, regardless of format.
+        opts_raw = qn.get("options") or []
+        if not isinstance(opts_raw, list):
+            opts_raw = []
+        opts_clean = [str(o).strip() for o in opts_raw if str(o).strip()]
+
+        # Apply rules in order. First match wins; fallthrough → skip_only.
+        coerced_fmt = None
+        coerced_opts = []
+
+        if fmt == "yes_no":
+            # Quality/degree questions phrased as yes/no are useless — skip them.
+            if _YES_NO_RED_FLAGS.search(qn["question"]):
+                coerced_fmt = "skip_only"
+            else:
+                coerced_fmt = "yes_no"
+
+        elif fmt == "yes_no_unclear":
+            coerced_fmt = "yes_no_unclear"
+
+        elif fmt == "multiple_choice":
+            if _MC_MIN_OPTIONS <= len(opts_clean) <= _MC_MAX_OPTIONS:
+                coerced_fmt = "multiple_choice"
+                coerced_opts = opts_clean
+            else:
+                coerced_fmt = "skip_only"
+
+        else:
+            # Unknown / open-text / scale_1_10 / missing → skip_only.
+            coerced_fmt = "skip_only"
+
+        qn["format"] = coerced_fmt
+        qn["options"] = coerced_opts
         valid.append(qn)
     return valid

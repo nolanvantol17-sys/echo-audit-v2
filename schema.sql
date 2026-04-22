@@ -630,13 +630,19 @@ CREATE TABLE clarifying_questions (
     cq_text                TEXT NOT NULL,
     cq_ai_reason           TEXT NOT NULL,
     cq_response_format     TEXT NOT NULL,
-    cq_answer_value        TEXT,
+    cq_options             TEXT,            -- JSON array of MC options; NULL for non-MC
+    cq_answer_value        TEXT,            -- "__SKIPPED__" sentinel = explicitly skipped; NULL = never asked
     cq_order               INTEGER NOT NULL,
     cq_created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     cq_updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
+    -- 'scale_1_10' kept for backward compat with historical rows; the current
+    -- prompt only produces yes_no, yes_no_unclear, multiple_choice, skip_only.
     CONSTRAINT chk_cq_response_format
-        CHECK (cq_response_format IN ('yes_no', 'scale_1_10', 'multiple_choice'))
+        CHECK (cq_response_format IN (
+            'yes_no', 'yes_no_unclear', 'multiple_choice', 'skip_only',
+            'scale_1_10'
+        ))
 );
 
 CREATE INDEX idx_cq_interaction_id ON clarifying_questions (interaction_id);

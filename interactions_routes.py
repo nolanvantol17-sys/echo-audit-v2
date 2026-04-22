@@ -56,6 +56,12 @@ STATUS_GRADED                 = 43
 STATUS_NO_ANSWER              = 44
 STATUS_SUBMITTED              = 45
 
+# Sentinel value persisted in clarifying_questions.cq_answer_value when the
+# reviewer explicitly clicked Skip in the wizard. Distinct from NULL, which
+# means the question was never asked / never answered. Filtered out before
+# context_answers is sent to Claude so the sentinel never leaks into prompts.
+CQ_SKIPPED_SENTINEL = "__SKIPPED__"
+
 
 # ── Response helpers ────────────────────────────────────────────
 
@@ -618,23 +624,34 @@ def _save_clarifying_questions(conn, interaction_id, questions):
 
     Called immediately after get_clarifying_questions() returns, before the
     reviewer has answered anything. cq_answer_value stays NULL until the
-    reviewer submits answers via the regrade endpoint.
+    reviewer submits answers via the regrade endpoint; "__SKIPPED__" is the
+    sentinel for explicitly-skipped questions, distinct from never-answered.
+
+    For multiple_choice rows we persist the validated option list as a JSON
+    array string in cq_options so the wizard can render answer buttons
+    without re-asking Claude. Other formats store NULL.
     """
     conn.execute(
         q("DELETE FROM clarifying_questions WHERE interaction_id = ?"),
         (interaction_id,),
     )
     for idx, cq in enumerate(questions or []):
+        fmt = cq.get("format") or "skip_only"
+        opts = cq.get("options") or []
+        cq_options_json = (
+            json.dumps(opts) if fmt == "multiple_choice" and opts else None
+        )
         conn.execute(
             q("""INSERT INTO clarifying_questions (
                     interaction_id, cq_text, cq_ai_reason, cq_response_format,
-                    cq_answer_value, cq_order
-                 ) VALUES (?, ?, ?, ?, NULL, ?)"""),
+                    cq_options, cq_answer_value, cq_order
+                 ) VALUES (?, ?, ?, ?, ?, NULL, ?)"""),
             (
                 interaction_id,
                 cq.get("question") or "",
                 cq.get("reason") or "",
-                cq.get("format") or "yes_no",
+                fmt,
+                cq_options_json,
                 idx,
             ),
         )
@@ -645,7 +662,10 @@ def _apply_clarifying_answers(conn, interaction_id, answers):
 
     `answers` is a {question_text: answer_value} dict as submitted from the UI.
     We match each row by cq_text and update its cq_answer_value. Rows without
-    a matching answer keep cq_answer_value = NULL.
+    a matching answer keep cq_answer_value = NULL (never asked / not yet
+    answered). The literal string CQ_SKIPPED_SENTINEL ("__SKIPPED__") is a
+    distinct value meaning "reviewer explicitly skipped" — it is persisted
+    verbatim so the audit trail can distinguish it from never-answered.
     """
     if not answers:
         return
@@ -658,6 +678,22 @@ def _apply_clarifying_answers(conn, interaction_id, answers):
                   WHERE interaction_id = ? AND cq_text = ?"""),
             (str(value), interaction_id, question_text),
         )
+
+
+def _strip_skipped_answers(answers):
+    """Return answers dict with skipped + empty entries removed.
+
+    Used right before grade_with_claude so Claude never sees the sentinel
+    string as if it were a substantive reviewer answer. Skipped questions
+    are persisted to the DB (see _apply_clarifying_answers) but contribute
+    nothing to the grading prompt.
+    """
+    if not answers:
+        return {}
+    return {
+        k: v for k, v in answers.items()
+        if v is not None and str(v).strip() and str(v) != CQ_SKIPPED_SENTINEL
+    }
 
 
 def _build_grade_response(interaction_id, grade_result, total_score, flags, transcript=None):
@@ -1458,11 +1494,14 @@ def regrade_with_answers(interaction_id):
         is_initial_grade = interaction["status_id"] != STATUS_GRADED
 
         # Persist the reviewer's answers on the existing CQ rows so they're
-        # visible in history and can be inspected later.
+        # visible in history and can be inspected later. Skipped answers are
+        # persisted as the sentinel; only substantive answers reach Claude.
         _apply_clarifying_answers(conn, interaction_id, context_answers)
         conn.commit()
     finally:
         conn.close()
+
+    grading_context = _strip_skipped_answers(context_answers)
 
     try:
         response = _grade_and_persist(
@@ -1472,7 +1511,7 @@ def regrade_with_answers(interaction_id):
             respondent_user_id=respondent_user_id,
             location_id=location_id,
             transcript=transcript,
-            context_answers=context_answers,
+            context_answers=grading_context,
             criteria=criteria,
             script_text=script_text,
             context_text=context_text,
