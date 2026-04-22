@@ -37,6 +37,7 @@
   const EA = window.EA;
   const INTERACTION_ID = {{ interaction_id|int }};
   const CAN_REGRADE = {{ 'true' if user_role in ('manager','admin','super_admin') else 'false' }};
+  const CAN_HARD_DELETE = {{ 'true' if user_role in ('admin','super_admin') else 'false' }};
 
   const $ = function (s) { return document.querySelector(s); };
 
@@ -61,7 +62,9 @@
     try {
       const data = await EA.fetchJSON("/api/interactions/" + INTERACTION_ID);
       current = data;
-      EA.InteractionView.render($("#detail-wrap"), current, { readOnly: false, canRegrade: CAN_REGRADE });
+      EA.InteractionView.render($("#detail-wrap"), current, {
+        readOnly: false, canRegrade: CAN_REGRADE, canHardDelete: CAN_HARD_DELETE,
+      });
       $("#detail-actions").hidden = false;
       wireActions();
     } catch (err) {
@@ -86,6 +89,17 @@
     // replaced innerHTML so its reference changes each time).
     const btnContext = document.getElementById("btn-context-regrade");
     if (btnContext) btnContext.addEventListener("click", onContextRegrade);
+
+    // Danger-zone delete lives inside InteractionView's markup, so re-query
+    // and re-bind every render alongside the context button above.
+    const btnHardDel = $('[data-role="hard-delete-interaction"]');
+    if (btnHardDel) btnHardDel.addEventListener("click", function () {
+      EA.hardDeleteInteractionFlow(INTERACTION_ID, {
+        onSuccess: function () {
+          setTimeout(function () { window.location.href = "/app/history"; }, 600);
+        },
+      });
+    });
   }
 
   async function onDelete() {
@@ -126,7 +140,9 @@
       // Refetch so we get the normalized DB view (joined names, etc.).
       const refreshed = await EA.fetchJSON("/api/interactions/" + INTERACTION_ID);
       current = refreshed;
-      EA.InteractionView.render($("#detail-wrap"), current, { readOnly: false, canRegrade: CAN_REGRADE });
+      EA.InteractionView.render($("#detail-wrap"), current, {
+        readOnly: false, canRegrade: CAN_REGRADE, canHardDelete: CAN_HARD_DELETE,
+      });
       wireActions();
 
       // Show a prominent before-and-after banner at the top.

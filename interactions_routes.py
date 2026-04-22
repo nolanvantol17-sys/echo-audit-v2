@@ -1774,3 +1774,212 @@ def delete_interaction(interaction_id):
         raise
     finally:
         conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+# Hard-delete — irreversibly removes an interaction and all
+# children (rubric scores, clarifying questions, audio, audit_log
+# entries). Records a deletion receipt in interaction_deletions.
+#
+# admin: own-tenant only.
+# super_admin: cross-tenant allowed.
+# ═══════════════════════════════════════════════════════════════
+
+
+def _scalar_count(conn, sql, params):
+    cur = conn.execute(q(sql), params)
+    row = cur.fetchone()
+    if row is None:
+        return 0
+    try:
+        return int(row[0])
+    except Exception:
+        d = _row_to_dict(row)
+        return int(next(iter(d.values())) if d else 0)
+
+
+def _load_interaction_for_hard_delete(conn, interaction_id):
+    """Return interaction row joined with project.company_id.
+
+    super_admin sees all tenants; admin must match own tenant. Returns
+    (interaction_dict, owning_company_id, owning_project_id) or
+    (None, None, None) when not found / out of tenant scope.
+    """
+    cur = conn.execute(
+        q("""SELECT i.*, p.company_id AS owning_company_id,
+                    p.project_id AS owning_project_id
+             FROM interactions i
+             JOIN projects p ON p.project_id = i.project_id
+             WHERE i.interaction_id = ?"""),
+        (interaction_id,),
+    )
+    row = _row_to_dict(cur.fetchone())
+    if not row:
+        return (None, None, None)
+
+    # super_admin bypasses tenant gate; admin must match.
+    if current_user.role != "super_admin":
+        actor_company_id = get_effective_company_id()
+        if actor_company_id is None or row["owning_company_id"] != actor_company_id:
+            return (None, None, None)
+
+    return (row, row["owning_company_id"], row["owning_project_id"])
+
+
+@interactions_bp.route(
+    "/interactions/<int:interaction_id>/hard-delete-impact", methods=["GET"]
+)
+@login_required
+@role_required("admin", "super_admin")
+def hard_deletion_impact(interaction_id):
+    """Pre-flight: report what hard-deleting this interaction will destroy.
+
+    Powers the strong-confirm dialog — counts must reflect what the actual
+    DELETE will cascade so the user sees an honest preview.
+    """
+    conn = get_conn()
+    try:
+        interaction, _owning_company_id, _owning_project_id = (
+            _load_interaction_for_hard_delete(conn, interaction_id)
+        )
+        if not interaction:
+            return _err("Interaction not found", 404)
+
+        rubric_scores = _scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM interaction_rubric_scores WHERE interaction_id = ?",
+            (interaction_id,),
+        )
+        clarifying_questions = _scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM clarifying_questions WHERE interaction_id = ?",
+            (interaction_id,),
+        )
+        audit_entries = _scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM audit_log "
+            "WHERE audit_log_target_entity_type_id = ? AND al_target_entity_id = ?",
+            (ENTITY_INTERACTION, str(interaction_id)),
+        )
+
+        # Audio size — best-effort; varies by storage backend.
+        audio_url = interaction.get("interaction_audio_url")
+        audio_bytes = 0
+        audio_present = False
+        if IS_POSTGRES:
+            audio_data = interaction.get("interaction_audio_data")
+            if audio_data is not None:
+                audio_present = True
+                try:
+                    audio_bytes = len(audio_data) if hasattr(audio_data, "__len__") else 0
+                except Exception:
+                    audio_bytes = 0
+        else:
+            if audio_url and not str(audio_url).startswith("db://"):
+                try:
+                    p = Path(audio_url)
+                    if p.exists():
+                        audio_present = True
+                        audio_bytes = p.stat().st_size
+                except OSError:
+                    pass
+
+        return jsonify({
+            "interaction_id":        interaction_id,
+            "rubric_scores":         rubric_scores,
+            "clarifying_questions":  clarifying_questions,
+            "audit_entries":         audit_entries,
+            "audio_present":         audio_present,
+            "audio_bytes":           audio_bytes,
+        })
+    finally:
+        conn.close()
+
+
+@interactions_bp.route(
+    "/interactions/<int:interaction_id>/hard", methods=["DELETE"]
+)
+@login_required
+@role_required("admin", "super_admin")
+def hard_delete_interaction(interaction_id):
+    """Irreversibly delete the interaction. Records a deletion receipt
+    in interaction_deletions before cascading the row out.
+
+    Order inside the txn:
+      1. Lookup with super_admin / admin tenant branching.
+      2. INSERT interaction_deletions (returns deletion_id).
+      3. DELETE FROM audit_log entries targeting this interaction.
+         (al_target_entity_id has no FK so no automatic cascade.)
+      4. DELETE FROM interactions — cascades IRS + CQs + audio bytes,
+         nulls api_call_log.interaction_id and voip_call_queue.interaction_id.
+      5. Commit.
+      6. Best-effort post-commit unlink of SQLite on-disk audio (failure
+         is logged, not raised — DB is the source of truth).
+    """
+    conn = get_conn()
+    try:
+        interaction, owning_company_id, owning_project_id = (
+            _load_interaction_for_hard_delete(conn, interaction_id)
+        )
+        if not interaction:
+            return _err("Interaction not found", 404)
+
+        # Capture audio path before the row vanishes — needed for SQLite cleanup.
+        sqlite_audio_path = None
+        if not IS_POSTGRES:
+            audio_url = interaction.get("interaction_audio_url")
+            if audio_url and not str(audio_url).startswith("db://"):
+                sqlite_audio_path = audio_url
+
+        # 1. Insert deletion receipt.
+        if IS_POSTGRES:
+            cur = conn.execute(
+                "INSERT INTO interaction_deletions "
+                "(interaction_id_was, deleted_by_user_id, company_id, project_id) "
+                "VALUES (%s, %s, %s, %s) RETURNING deletion_id",
+                (interaction_id, current_user.user_id,
+                 owning_company_id, owning_project_id),
+            )
+            deletion_id = cur.fetchone()[0]
+        else:
+            cur = conn.execute(
+                "INSERT INTO interaction_deletions "
+                "(interaction_id_was, deleted_by_user_id, company_id, project_id) "
+                "VALUES (?, ?, ?, ?)",
+                (interaction_id, current_user.user_id,
+                 owning_company_id, owning_project_id),
+            )
+            deletion_id = cur.lastrowid
+
+        # 2. Sweep audit_log — al_target_entity_id is TEXT, no FK.
+        conn.execute(
+            q("DELETE FROM audit_log WHERE audit_log_target_entity_type_id = ? "
+              "AND al_target_entity_id = ?"),
+            (ENTITY_INTERACTION, str(interaction_id)),
+        )
+
+        # 3. Delete the interaction — cascades take care of children.
+        conn.execute(
+            q("DELETE FROM interactions WHERE interaction_id = ?"),
+            (interaction_id,),
+        )
+
+        conn.commit()
+
+        # 4. Post-commit: best-effort SQLite audio unlink. DB is canonical.
+        if sqlite_audio_path:
+            try:
+                Path(sqlite_audio_path).unlink()
+            except OSError as e:
+                logger.warning(
+                    "hard_delete: SQLite audio unlink failed for interaction %s "
+                    "(deletion_id=%s, path=%s): %s",
+                    interaction_id, deletion_id, sqlite_audio_path, e,
+                )
+
+        return jsonify({"ok": True, "deletion_id": deletion_id})
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()

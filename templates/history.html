@@ -141,6 +141,21 @@
   // ── Bootstrap ────────────────────────────────────────
   async function init() {
     wireFilters();
+
+    // Hard-deletes initiated from the side panel fire this event after the
+    // server confirms the row is gone. Drop the row from local state so the
+    // table doesn't show a stale entry that 404s on next click.
+    window.addEventListener("ea:interaction-deleted", function (e) {
+      const iid = e && e.detail && Number(e.detail.interaction_id);
+      if (!iid) return;
+      const before = state.all.length;
+      state.all = state.all.filter(function (r) { return Number(r.interaction_id) !== iid; });
+      if (state.all.length !== before) {
+        state.shown = Math.min(state.shown, state.all.length);
+        render();
+      }
+    });
+
     // Locations + projects can load in parallel — neither depends on the other.
     // loadHistory waits for both so the project_id query-param pre-filter
     // (set inside loadProjects) is in effect when the first fetch fires.

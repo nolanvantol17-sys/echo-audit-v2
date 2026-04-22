@@ -209,7 +209,25 @@
       self.scoreEl.textContent =
         (data.status_id === 44) ? "N/A" : EA.formatScore(data.interaction_overall_score);
 
-      EA.InteractionView.render(self.body, data, { readOnly: true });
+      const role = (window.EA_USER && window.EA_USER.role) || null;
+      const canHardDelete = (role === "admin" || role === "super_admin");
+      EA.InteractionView.render(self.body, data, {
+        readOnly: true,
+        canHardDelete: canHardDelete,
+      });
+
+      // Wire the danger-zone button. The view itself is pure markup —
+      // panel-mode close-on-success is our concern, not the view's.
+      if (canHardDelete) {
+        const delBtn = self.body.querySelector('[data-role="hard-delete-interaction"]');
+        if (delBtn) {
+          delBtn.addEventListener("click", function () {
+            EA.hardDeleteInteractionFlow(self.currentId, {
+              onSuccess: function () { close(); },
+            });
+          });
+        }
+      }
     } catch (err) {
       if (!state || state !== self || self.currentId !== iid) return;
       EA.showError(self.body, err.message || "Failed to load interaction.");

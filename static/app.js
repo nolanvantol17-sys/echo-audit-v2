@@ -334,7 +334,7 @@
   function strongConfirmDialog(opts) {
     opts = opts || {};
     const title          = opts.title || "Confirm";
-    const intro          = opts.intro || "This cannot be undone.";
+    const intro          = (opts.intro != null) ? opts.intro : "This cannot be undone.";
     const requiredPhrase = String(opts.requiredPhrase || "");
     const promptLabel    = opts.promptLabel || "Type the name to confirm:";
     const okLabel        = opts.okLabel  || "Delete";
@@ -346,6 +346,13 @@
     };
     const target = norm(requiredPhrase);
 
+    // intro can be a plain string (escaped) or a DOM node (appended verbatim).
+    // Callers pass nodes when they need structured markup like counts/lists.
+    const introIsNode = (intro && typeof intro !== "string");
+    const introHtml = introIsNode
+      ? '<div data-role="strong-confirm-intro" style="margin-bottom:10px;"></div>'
+      : '<div class="muted" style="margin-bottom:10px;">' + esc(intro) + '</div>';
+
     return new Promise(function (resolve) {
       document.querySelectorAll(".modal-backdrop").forEach(function (n) { n.remove(); });
 
@@ -355,7 +362,7 @@
         '<div class="modal" role="dialog" aria-modal="true">' +
           '<h3 class="modal-title">' + esc(title) + '</h3>' +
           '<div class="modal-body">' +
-            '<div class="muted" style="margin-bottom:10px;">' + esc(intro) + '</div>' +
+            introHtml +
             '<div class="muted text-small" style="margin-bottom:6px;">' + esc(promptLabel) + '</div>' +
             '<div style="font-weight:600;margin-bottom:8px;">' + esc(requiredPhrase) + '</div>' +
             '<input type="text" id="strong-confirm-in" class="field-input" autocomplete="off" autocapitalize="off" spellcheck="false">' +
@@ -366,6 +373,10 @@
           '</div>' +
         '</div>';
       document.body.appendChild(backdrop);
+
+      if (introIsNode) {
+        backdrop.querySelector('[data-role="strong-confirm-intro"]').appendChild(intro);
+      }
 
       const input  = backdrop.querySelector("#strong-confirm-in");
       const okBtn  = backdrop.querySelector('[data-act="ok"]');

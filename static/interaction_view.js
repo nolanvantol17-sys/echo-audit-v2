@@ -14,9 +14,20 @@
                       is independently role-gated server-side. Pass the
                       result of a Jinja-time role check on the page that
                       hosts the render call. Default false.
+         canHardDelete — when true, render the danger-zone "Delete
+                      permanently" affordance. UI gate only; the DELETE
+                      /api/interactions/<id>/hard endpoint is independently
+                      role-gated (admin + super_admin) server-side. Default
+                      false. Caller queries `[data-role="hard-delete-interaction"]`
+                      post-render and wires it to EA.hardDeleteInteractionFlow.
 
    Pure rendering — no event wiring. Callers attach handlers by querying the
    host after render (e.g. document.getElementById('btn-context-regrade')).
+
+   Also exposes EA.hardDeleteInteractionFlow(interactionId, opts):
+     Pre-fetches deletion impact, shows two-step strong-confirm dialog,
+     issues DELETE on success, dispatches `ea:interaction-deleted` event,
+     and invokes opts.onSuccess. Use to wire the danger-zone button.
    ======================================================================== */
 
 (function () {
@@ -27,6 +38,7 @@
     opts = opts || {};
     const readOnly = !!opts.readOnly;
     const canRegrade = !!opts.canRegrade;
+    const canHardDelete = !!opts.canHardDelete;
     const d = data;
     const interactionId = d.interaction_id;
 
@@ -124,6 +136,22 @@
 
     const contextPanelHtml = (!readOnly && canRegrade) ? renderContextPanel(d) : '';
 
+    const hardDeleteHtml = canHardDelete
+      ? '<div class="panel" style="margin-top:18px;border-color:rgba(220,38,38,0.35);">' +
+          '<div class="panel-title" style="color:#ef4444;">Danger zone</div>' +
+          '<div class="muted text-small" style="margin-bottom:10px;">' +
+            'Permanently delete this interaction and everything attached to it ' +
+            '(rubric scores, clarifying questions, audio file, audit-log entries). ' +
+            'A deletion receipt is preserved for accountability — the content itself is not.' +
+          '</div>' +
+          '<button type="button" class="btn btn-danger btn-sm" ' +
+            'data-role="hard-delete-interaction" ' +
+            'data-interaction-id="' + EA.esc(String(interactionId)) + '">' +
+            'Delete permanently…' +
+          '</button>' +
+        '</div>'
+      : '';
+
     host.innerHTML =
       regradedBanner +
       hero +
@@ -146,7 +174,8 @@
       cqHtml +
       contextPanelHtml +
       (transcriptHtml ? '<div style="margin-top:14px;">' + transcriptHtml + '</div>' : '') +
-      audioHtml;
+      audioHtml +
+      hardDeleteHtml;
 
     EA.AudioPlayer.attachAll(host);
   }
@@ -227,8 +256,146 @@
     );
   }
 
+  // ── Hard-delete flow ─────────────────────────────────────────
+  // Pre-fetches deletion impact, builds the structured "what's destroyed /
+  // what survives" intro as a DOM node, runs strongConfirmDialog with the
+  // typed phrase "DELETE", then issues the DELETE. On success: dispatches
+  // a window-level "ea:interaction-deleted" CustomEvent so other open views
+  // (history page) can drop the row, then invokes opts.onSuccess.
+  //
+  // Errors during the impact fetch surface via EA.toast and abort the flow
+  // (no destructive call is issued without a valid impact preview).
+
+  function pluralize(n, singular, plural) {
+    return (n === 1) ? singular : (plural || (singular + "s"));
+  }
+
+  function formatBytes(bytes) {
+    if (!bytes || bytes < 1024) return (bytes || 0) + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  }
+
+  function audioLabel(impact) {
+    if (!impact.audio_present) return "no audio file";
+    if (impact.audio_bytes > 0) return "audio file (" + formatBytes(impact.audio_bytes) + ")";
+    return "audio file";
+  }
+
+  function buildHardDeleteIntro(interactionId, impact) {
+    const root = document.createElement("div");
+
+    const lead = document.createElement("div");
+    lead.className = "muted";
+    lead.style.marginBottom = "10px";
+    lead.textContent = "You are about to permanently delete interaction #" +
+      interactionId + ".";
+    root.appendChild(lead);
+
+    // What's destroyed
+    const destroyedHdr = document.createElement("div");
+    destroyedHdr.style.fontWeight = "600";
+    destroyedHdr.style.marginBottom = "4px";
+    destroyedHdr.textContent = "What will be destroyed:";
+    root.appendChild(destroyedHdr);
+
+    const destroyedList = document.createElement("ul");
+    destroyedList.className = "bullet-list";
+    destroyedList.style.marginBottom = "12px";
+    [
+      "The interaction record itself",
+      impact.rubric_scores + " " +
+        pluralize(impact.rubric_scores, "rubric score", "rubric scores"),
+      impact.clarifying_questions + " " +
+        pluralize(impact.clarifying_questions, "clarifying question", "clarifying questions"),
+      impact.audit_entries + " " +
+        pluralize(impact.audit_entries, "audit-log entry", "audit-log entries"),
+      "The " + audioLabel(impact),
+    ].forEach(function (text) {
+      const li = document.createElement("li");
+      li.textContent = text;
+      destroyedList.appendChild(li);
+    });
+    root.appendChild(destroyedList);
+
+    // What survives
+    const survivesHdr = document.createElement("div");
+    survivesHdr.style.fontWeight = "600";
+    survivesHdr.style.marginBottom = "4px";
+    survivesHdr.textContent = "What survives for accountability:";
+    root.appendChild(survivesHdr);
+
+    const survivesList = document.createElement("ul");
+    survivesList.className = "bullet-list";
+    survivesList.style.marginBottom = "12px";
+    [
+      "A deletion record: who deleted it, when, and which interaction id",
+      "No content from the interaction (transcript, scores, audio) is kept",
+    ].forEach(function (text) {
+      const li = document.createElement("li");
+      li.textContent = text;
+      survivesList.appendChild(li);
+    });
+    root.appendChild(survivesList);
+
+    const warning = document.createElement("div");
+    warning.style.color = "#ef4444";
+    warning.style.fontWeight = "600";
+    warning.textContent = "This action cannot be undone.";
+    root.appendChild(warning);
+
+    return root;
+  }
+
+  async function hardDeleteInteractionFlow(interactionId, opts) {
+    opts = opts || {};
+    const iid = Number(interactionId);
+    if (!iid || isNaN(iid)) return;
+
+    let impact;
+    try {
+      impact = await EA.fetchJSON(
+        "/api/interactions/" + iid + "/hard-delete-impact"
+      );
+    } catch (err) {
+      if (EA.toast) EA.toast("Could not load deletion preview: " + (err.message || err), "error");
+      return;
+    }
+
+    const intro = buildHardDeleteIntro(iid, impact);
+
+    const confirmed = await EA.strongConfirmDialog({
+      title:          "Delete interaction permanently",
+      intro:          intro,
+      requiredPhrase: "DELETE",
+      promptLabel:    'Type DELETE to confirm:',
+      okLabel:        "Delete permanently",
+      cancelLabel:    "Cancel",
+      variant:        "danger",
+    });
+    if (!confirmed) return;
+
+    try {
+      await EA.fetchJSON("/api/interactions/" + iid + "/hard", { method: "DELETE" });
+    } catch (err) {
+      if (EA.toast) EA.toast("Delete failed: " + (err.message || err), "error");
+      return;
+    }
+
+    if (EA.toast) EA.toast("Interaction deleted.", "success");
+    window.dispatchEvent(new CustomEvent("ea:interaction-deleted", {
+      detail: { interaction_id: iid },
+    }));
+    if (typeof opts.onSuccess === "function") {
+      try { opts.onSuccess(); } catch (e) {
+        if (window.console) console.error("[hardDeleteInteractionFlow] onSuccess threw:", e);
+      }
+    }
+  }
+
   window.EA = window.EA || {};
   window.EA.InteractionView = {
     render: render,
   };
+  window.EA.hardDeleteInteractionFlow = hardDeleteInteractionFlow;
 })();

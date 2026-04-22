@@ -400,6 +400,18 @@ _ADDITIVE_MIGRATIONS = [
                    FOR EACH ROW EXECUTE FUNCTION set_th_updated_at();
            END IF;
        END $$""",
+    """CREATE TABLE IF NOT EXISTS interaction_deletions (
+        deletion_id          SERIAL PRIMARY KEY,
+        interaction_id_was   INTEGER     NOT NULL,
+        deleted_by_user_id   INTEGER     REFERENCES users (user_id) ON DELETE SET NULL,
+        deleted_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        company_id           INTEGER     NOT NULL,
+        project_id           INTEGER
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_interaction_deletions_deleted_at "
+    "ON interaction_deletions (deleted_at)",
+    "CREATE INDEX IF NOT EXISTS idx_interaction_deletions_company_id "
+    "ON interaction_deletions (company_id)",
 ]
 
 

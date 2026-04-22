@@ -223,6 +223,15 @@
 
 </div>
 
+<script>
+  // Tiny global so panel/popover JS can role-gate without each caller passing
+  // the value down. Server-side decorators remain the source of truth — this
+  // only controls UI visibility.
+  window.EA_USER = {
+    role:    {{ (current_user.role if current_user.is_authenticated else None) | tojson }},
+    user_id: {{ (current_user.user_id if current_user.is_authenticated else None) | tojson }}
+  };
+</script>
 <script src="{{ url_for('static', filename='app.js') }}?v={{ static_v('app.js') }}"></script>
 <script src="{{ url_for('static', filename='page_router.js') }}?v={{ static_v('page_router.js') }}"></script>
 {# audio_player.js / interaction_view.js / interaction_panel.js are loaded
