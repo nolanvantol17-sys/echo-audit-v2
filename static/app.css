@@ -477,6 +477,7 @@ button { font-family: inherit; }
 .btn-danger:hover:not(:disabled) { background: #dc2626; }
 .btn-success { background: var(--success); color: white; }
 .btn-sm { padding: 5px 10px; font-size: 0.8rem; }
+.btn-lg { padding: 12px 22px; font-size: 1rem; }
 
 /* ── Form primitives ─────────────────────────────────────── */
 .form-grid {
