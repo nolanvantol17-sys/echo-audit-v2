@@ -393,7 +393,7 @@
           <div id="record-duration" class="muted text-small" style="margin-top:6px;text-align:center;"></div>
           <div class="hstack-wrap" style="margin-top:12px;justify-content:center;">
             <button type="button" class="btn btn-ghost btn-sm" id="btn-record-redo">Re-record</button>
-            <button type="button" class="btn btn-primary btn-sm btn-record-use" id="btn-record-use">Use This Recording</button>
+            <button type="button" class="btn btn-ghost btn-sm btn-record-use" id="btn-record-use">Use This Recording</button>
           </div>
         </div>
       </div>
@@ -508,6 +508,7 @@
     activePanel:          "record", // which audio source is showing
     cqWizard:             null,    // active CQ wizard handle (createCqWizard)
     projectLocked:        false,   // true when ?project_id= URL lock is in effect
+    recordingConfirmed:   false,   // two-click morph: 1st click confirms preview, 2nd click submits
   };
 
   const $ = function (sel) { return document.querySelector(sel); };
@@ -806,6 +807,8 @@
   // Pre-selects the first item (most recently used, falling back to most
   // recently created), or a stashed campaign_id from the grade context.
   function setCampaignFieldEnabled(enabled, placeholderMsg) {
+    console.log("[DBG setCampaignFieldEnabled]", { enabled: enabled, placeholderMsg: placeholderMsg });
+    console.trace("[DBG setCampaignFieldEnabled trace]");
     const input = document.getElementById("gf-campaign");
     if (!input) return;
     input.disabled = !enabled;
@@ -852,6 +855,10 @@
   }
 
   function mountCampaignCombo(projectId, items, initialId) {
+    console.log("[DBG mountCampaignCombo] projectId=", projectId,
+                "items=", items.length, "initialId=", initialId,
+                "campaignProjectId(before)=", state.campaignProjectId);
+    console.trace("[DBG mountCampaignCombo trace]");
     destroyCampaignCombo();
     const input = document.getElementById("gf-campaign");
     if (!input) return;
@@ -875,9 +882,13 @@
         }
       },
     });
+    console.log("[DBG mountCampaignCombo done] campaignProjectId(after)=", state.campaignProjectId);
   }
 
   function destroyCampaignCombo() {
+    console.log("[DBG destroyCampaignCombo] campaignProjectId(before)=", state.campaignProjectId,
+                "comboExists=", !!state.campaignCombo);
+    console.trace("[DBG destroyCampaignCombo trace]");
     if (state.campaignCombo) {
       try { state.campaignCombo.destroy(); } catch (_) {}
       state.campaignCombo = null;
@@ -1146,6 +1157,8 @@
   function onProjectChange() {
     const projSel = $("#gf-project");
     const pid = projSel ? projSel.value : "";
+    console.log("[DBG onProjectChange] pid=", pid);
+    console.trace("[DBG onProjectChange trace]");
     if (pid) {
       setCampaignFieldEnabled(true, "Loading campaigns…");
       loadCampaignsForProject(pid);
@@ -1206,6 +1219,10 @@
   }
 
   function switchTab(which) {
+    console.log("[DBG switchTab] which=", which,
+                "campaignProjectId=", state.campaignProjectId,
+                "comboExists=", !!state.campaignCombo,
+                "campaignDisabled=", document.getElementById("gf-campaign") && document.getElementById("gf-campaign").disabled);
     state.activePanel = which;
     $("#panel-upload").hidden = which !== "upload";
     $("#panel-record").hidden = which !== "record";
@@ -1421,14 +1438,27 @@
     $("#record-active").hidden  = true;
     $("#record-idle").hidden    = false;
     $("#record-wrap").classList.remove("confirmed");
+    state.recordingConfirmed = false;
+    const useBtn = $("#btn-record-use");
+    useBtn.textContent = "Use This Recording";
+    useBtn.classList.remove("btn-primary");
+    useBtn.classList.add("btn-ghost");
     $("#form-hint").textContent = "";
   }
 
   function confirmLiveRecording() {
     if (!state.liveRecordingBlob) return;
+    if (state.recordingConfirmed) {
+      $("#grade-form").requestSubmit();
+      return;
+    }
+    state.recordingConfirmed = true;
     $("#record-wrap").classList.add("confirmed");
-    $("#btn-record-use").textContent = "✓ Ready to submit";
-    $("#form-hint").textContent = "Recording ready — click Submit to grade.";
+    const useBtn = $("#btn-record-use");
+    useBtn.textContent = "Submit for grading";
+    useBtn.classList.remove("btn-ghost");
+    useBtn.classList.add("btn-primary");
+    $("#form-hint").textContent = "";
   }
 
   function cleanupLiveRecording(reset) {
@@ -1457,7 +1487,11 @@
       $("#record-active").hidden = true;
       $("#record-preview").hidden = true;
       $("#record-wrap").classList.remove("confirmed");
-      $("#btn-record-use").textContent = "Use This Recording";
+      const useBtn = $("#btn-record-use");
+      useBtn.textContent = "Use This Recording";
+      useBtn.classList.remove("btn-primary");
+      useBtn.classList.add("btn-ghost");
+      state.recordingConfirmed = false;
       $("#record-permission-error").hidden = true;
       state.callStartTime       = null;
       state.callEndTime         = null;
