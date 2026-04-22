@@ -1311,7 +1311,8 @@ def list_campaigns(project_id):
         cur = conn.execute(q("""
             SELECT c.campaign_id, c.project_id, c.campaign_name,
                    c.campaign_created_at, c.campaign_updated_at,
-                   MAX(i.interaction_created_at) AS last_used_at
+                   MAX(i.interaction_created_at) AS last_used_at,
+                   COUNT(DISTINCT i.interaction_id) AS usage_count
             FROM campaigns c
             LEFT JOIN interactions i
                    ON i.campaign_id = c.campaign_id
@@ -1323,7 +1324,8 @@ def list_campaigns(project_id):
         """) if IS_POSTGRES else q("""
             SELECT c.campaign_id, c.project_id, c.campaign_name,
                    c.campaign_created_at, c.campaign_updated_at,
-                   MAX(i.interaction_created_at) AS last_used_at
+                   MAX(i.interaction_created_at) AS last_used_at,
+                   COUNT(DISTINCT i.interaction_id) AS usage_count
             FROM campaigns c
             LEFT JOIN interactions i
                    ON i.campaign_id = c.campaign_id
@@ -1386,6 +1388,53 @@ def create_campaign(project_id):
         return jsonify(_row_to_dict(
             _get_campaign_in_company(conn, campaign_id, company_id)
         )), 201
+    finally:
+        conn.close()
+
+
+@api_bp.route("/campaigns/<int:campaign_id>", methods=["PUT"])
+@login_required
+@role_required("admin", "super_admin")
+def update_campaign(campaign_id):
+    """Rename a campaign. Case-insensitive duplicate guard scoped to live
+    campaigns in the same project; tombstoned rows don't block."""
+    company_id, err = _require_company()
+    if err: return err
+
+    body = _body()
+    name = (body.get("campaign_name") or "").strip()
+    if not name:
+        return _err("Missing campaign_name", 400)
+
+    conn = get_conn()
+    try:
+        camp = _get_campaign_in_company(conn, campaign_id, company_id)
+        if not camp:
+            return _err("Campaign not found", 404)
+        project_id = camp["project_id"]
+
+        dup = conn.execute(
+            q("""SELECT campaign_id FROM campaigns
+                 WHERE project_id = ? AND campaign_deleted_at IS NULL
+                   AND LOWER(campaign_name) = LOWER(?)
+                   AND campaign_id <> ?"""),
+            (project_id, name, campaign_id),
+        ).fetchone()
+        if dup:
+            return _err("A campaign with that name already exists in this project", 409)
+
+        conn.execute(
+            q("UPDATE campaigns SET campaign_name = ? WHERE campaign_id = ?"),
+            (name, campaign_id),
+        )
+        write_audit_log(
+            current_user.user_id, ACTION_UPDATED, ENTITY_CAMPAIGN, campaign_id,
+            metadata={"campaign_name": name}, conn=conn,
+        )
+        conn.commit()
+        return jsonify(_row_to_dict(
+            _get_campaign_in_company(conn, campaign_id, company_id)
+        ))
     finally:
         conn.close()
 
