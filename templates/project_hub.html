@@ -62,44 +62,72 @@
   }
   .hub-meta .meta-value { color: var(--text); }
 
-  .rubric-section {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 20px 22px;
-  }
-  .rubric-section-header {
+  /* ── Tab strip + panels ───────────────────────────────── */
+  #hub-tabs { margin-top: 4px; }
+  /* The .tabs / .tab-btn classes themselves come from app.css. We just need
+     a tiny bit of breathing room between the tab bar and the panel below. */
+  #hub-tabs .tabs { margin-bottom: 14px; }
+
+  /* ── Rubric panel (Rubric tab) ────────────────────────── */
+  #rubric-panel { padding: 20px 22px; }
+  .rubric-editor-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .rubric-snapshot-note {
+    font-size: 0.8rem;
+    color: var(--muted);
+    background: var(--surface-2);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 8px 12px;
     margin-bottom: 14px;
+    line-height: 1.45;
   }
-  .rubric-readonly-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .rubric-readonly-row {
+  .rubric-row {
     display: grid;
-    grid-template-columns: 1fr 140px 60px;
+    grid-template-columns: 28px 1fr auto;
     gap: 12px;
     padding: 10px 12px;
     background: var(--surface-2);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     align-items: center;
+    margin-bottom: 8px;
   }
-  .rubric-readonly-row .rr-name { font-weight: 600; color: var(--text); font-size: 0.92rem; }
-  .rubric-readonly-row .rr-type,
-  .rubric-readonly-row .rr-weight { color: var(--muted); font-size: 0.82rem; }
-  .rubric-readonly-row .rr-guidance {
-    grid-column: 1 / -1;
+  .rubric-row.readonly { grid-template-columns: 1fr; }
+  .rubric-row-main { min-width: 0; }
+  .rubric-row-title {
+    font-weight: 600;
+    color: var(--text);
+    font-size: 0.92rem;
+    margin-bottom: 4px;
+  }
+  .rubric-row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .rubric-row-guidance {
+    margin-top: 6px;
     color: var(--muted);
     font-size: 0.82rem;
-    padding-top: 4px;
-    border-top: 1px dashed var(--border);
     line-height: 1.5;
+    padding-top: 6px;
+    border-top: 1px dashed var(--border);
   }
+  .rubric-row-actions {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .rubric-guidance-preview { margin: 0 0 8px 0; }
 
   /* ── Project Settings popover ───────────────────────── */
   .settings-wrap { position: relative; display: inline-block; }
@@ -167,24 +195,32 @@
   </div>
 </div>
 
-{% include '_dashboard_stats.html' %}
-
-{% with show_view_all=True,
-        view_all_history_href='/app/history?project_id=' ~ project_id,
-        view_all_reports_href='/app/reports?project_id=' ~ project_id %}
-{% include '_dashboard_analytics.html' %}
-{% endwith %}
-
-<section class="rubric-section">
-  <div class="rubric-section-header">
-    <div class="panel-title">Rubric</div>
+<div id="hub-tabs" data-tabs>
+  <div class="tabs">
+    <button type="button" class="tab-btn" data-tab="dashboard">Dashboard</button>
+    <button type="button" class="tab-btn" data-tab="rubric">Rubric</button>
   </div>
-  <div id="rubric-readonly" class="rubric-readonly-list">
-    <div class="skeleton" style="height:52px;"></div>
-    <div class="skeleton" style="height:52px;"></div>
-    <div class="skeleton" style="height:52px;"></div>
-  </div>
-</section>
+
+  <section class="tab-panel" data-tab-panel="dashboard">
+    {% include '_dashboard_stats.html' %}
+
+    {% with show_view_all=True,
+            view_all_history_href='/app/history?project_id=' ~ project_id,
+            view_all_reports_href='/app/reports?project_id=' ~ project_id %}
+    {% include '_dashboard_analytics.html' %}
+    {% endwith %}
+  </section>
+
+  <section class="tab-panel" data-tab-panel="rubric" hidden>
+    <section class="panel" id="rubric-panel">
+      <div id="rubric-editor-mount">
+        <div class="skeleton" style="height:52px;margin-bottom:8px;"></div>
+        <div class="skeleton" style="height:52px;margin-bottom:8px;"></div>
+        <div class="skeleton" style="height:52px;"></div>
+      </div>
+    </section>
+  </section>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -194,30 +230,43 @@
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script defer src="{{ url_for('static', filename='dashboard_widget.js') }}?v={{ static_v('dashboard_widget.js') }}"></script>
 <script defer src="{{ url_for('static', filename='dashboard_summary.js') }}?v={{ static_v('dashboard_summary.js') }}"></script>
+<script defer src="{{ url_for('static', filename='tabs.js') }}?v={{ static_v('tabs.js') }}"></script>
+<script defer src="{{ url_for('static', filename='rubric_editor.js') }}?v={{ static_v('rubric_editor.js') }}"></script>
 <script>
 (function () {
   "use strict";
   const EA = window.EA;
   const PROJECT_ID = {{ project_id }};
+  const IS_ADMIN = {{ 'true' if user_role in ('admin', 'super_admin') else 'false' }};
   const $ = (s) => document.querySelector(s);
 
-  const state = { summary: null, rubricItems: [] };
+  const state = { summary: null };
   let widgetHandle = null;
+  let tabsHandle   = null;
+  let editorHandle = null;
+  let editorMounted = false;
 
   async function init() {
     $("#btn-start-grading").href = "/app/grade?project_id=" + PROJECT_ID;
     const popoverTeardown = wireSettingsPopover();
     // Summary loads first so we can read project_all_locations to decide
     // whether to hide the Locations filter / View-by-location mode on the
-    // chart widget for single-location projects.
+    // chart widget for single-location projects, AND so the Rubric tab has
+    // the rubric_group_id + rg_grade_target ready when first activated.
     await loadSummary();
     bootDashboardWidget(state.summary || {});
-    await loadRubric();
+    initTabs();
     return {
       teardown() {
         try { popoverTeardown(); } catch (_) {}
         if (widgetHandle && typeof widgetHandle.destroy === "function") {
           try { widgetHandle.destroy(); } catch (_) {}
+        }
+        if (editorHandle && typeof editorHandle.destroy === "function") {
+          try { editorHandle.destroy(); } catch (_) {}
+        }
+        if (tabsHandle && typeof tabsHandle.destroy === "function") {
+          try { tabsHandle.destroy(); } catch (_) {}
         }
       },
     };
@@ -238,6 +287,42 @@
       opts.hideViewByModes = ["location"];
     }
     widgetHandle = EA.DashboardWidget.init(opts);
+  }
+
+  // ── Tabs (Dashboard / Rubric) ────────────────────────────
+  // Default to Dashboard so the first impression is unchanged. The Rubric
+  // editor mounts lazily on first activation — users who never open the tab
+  // never pay the /items round-trip.
+  function initTabs() {
+    const container = document.getElementById("hub-tabs");
+    if (!container || !window.EA || !EA.Tabs) return;
+    tabsHandle = EA.Tabs.init({
+      container:  container,
+      defaultTab: "dashboard",
+      onActivate: function (name) {
+        if (name === "rubric" && !editorMounted) mountRubricEditor();
+      },
+    });
+  }
+
+  function mountRubricEditor() {
+    const mount = document.getElementById("rubric-editor-mount");
+    if (!mount) return;
+    editorMounted = true;
+    if (!state.summary || !state.summary.rubric_group_id) {
+      mount.innerHTML = '<div class="muted">This project has no rubric attached.</div>';
+      return;
+    }
+    if (!window.EA || !EA.RubricEditor) {
+      mount.innerHTML = '<div class="section-error">Rubric editor failed to load.</div>';
+      return;
+    }
+    editorHandle = EA.RubricEditor.mount({
+      container:     mount,
+      rubricGroupId: state.summary.rubric_group_id,
+      gradeTarget:   state.summary.rg_grade_target || "respondent",
+      isAdmin:       IS_ADMIN,
+    });
   }
 
   // ── Project Settings popover (Edit + Delete) ─────────────
@@ -303,7 +388,8 @@
       renderSummary(s);
     } catch (err) {
       $("#hub-title").textContent = "Project not found";
-      $("#hub-subtitle").textContent = err.message || "";
+      const subtitle = document.getElementById("hub-subtitle");
+      if (subtitle) subtitle.textContent = err.message || "";
     }
   }
 
@@ -358,53 +444,6 @@
       row("Location",      locName) +
       row("Phone Routing", phrName) +
       row(activeLabel,     activeValue);
-  }
-
-  async function loadRubric() {
-    // We derive rubric_group_id from the summary response, so wait for it.
-    let attempts = 0;
-    while (!state.summary && attempts++ < 30) {
-      await new Promise(r => setTimeout(r, 100));
-    }
-    if (!state.summary || !state.summary.rubric_group_id) {
-      $("#rubric-readonly").innerHTML =
-        '<div class="muted">This project has no rubric attached.</div>';
-      return;
-    }
-    try {
-      const rgId = state.summary.rubric_group_id;
-      const items = await EA.fetchJSON("/api/rubric-groups/" + rgId + "/items");
-      state.rubricItems = items || [];
-      renderRubric();
-    } catch (err) {
-      $("#rubric-readonly").innerHTML =
-        '<div class="muted">Could not load rubric: ' + EA.esc(err.message || "") + '</div>';
-    }
-  }
-
-  const TYPE_LABELS = {
-    out_of_10:      "1–10 scale",
-    yes_no:         "Yes / No",
-    yes_no_pending: "Yes / No / Pending",
-  };
-
-  function renderRubric() {
-    const el = $("#rubric-readonly");
-    if (!state.rubricItems.length) {
-      el.innerHTML = '<div class="muted">No rubric items yet.</div>';
-      return;
-    }
-    el.innerHTML = state.rubricItems.map(function (r) {
-      const guidance = r.ri_scoring_guidance || "";
-      return '<div class="rubric-readonly-row">' +
-        '<div class="rr-name">' + EA.esc(r.ri_name || "—") + '</div>' +
-        '<div class="rr-type">' + EA.esc(TYPE_LABELS[r.ri_score_type] || r.ri_score_type || "—") + '</div>' +
-        '<div class="rr-weight" style="text-align:right;">w ' + (r.ri_weight != null ? r.ri_weight : "—") + '</div>' +
-        (guidance
-          ? '<div class="rr-guidance">' + EA.esc(guidance) + '</div>'
-          : '') +
-      '</div>';
-    }).join("");
   }
 
   if (window.EA && EA.PageRouter) {
