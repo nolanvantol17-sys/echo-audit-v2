@@ -10,7 +10,7 @@
 </div>
 
 {# ── General ────────────────────────────────────────── #}
-<details class="collapsible settings-section" open>
+<details class="collapsible settings-section">
   <summary>General</summary>
   <div class="collapsible-body">
     <div class="section-desc">Customize how entities are labeled throughout the app.</div>
@@ -48,7 +48,7 @@
 </details>
 
 {# ── Grading ────────────────────────────────────────── #}
-<details class="collapsible settings-section" open>
+<details class="collapsible settings-section">
   <summary>Grading</summary>
   <div class="collapsible-body">
     <div class="section-desc">Behavioral toggles that affect the grading flow.</div>
@@ -188,7 +188,7 @@
 {% endif %}
 
 {# ── Account ───────────────────────────────────────── #}
-<details id="account" class="collapsible settings-section" open>
+<details id="account" class="collapsible settings-section">
   <summary>Account</summary>
   <div class="collapsible-body">
     <div class="section-desc">Your own profile and password.</div>
@@ -273,6 +273,7 @@
   document.addEventListener("DOMContentLoaded", init);
 
   async function init() {
+    document.querySelectorAll("details").forEach(function (d) { d.open = false; });
     wireGeneral();
     wireAccount();
     wireBulkUpload();
