@@ -504,6 +504,7 @@
     callDurationSeconds:  null,    // integer, derived from start/end
     intelFetchSeq:        0,       // race guard for location intel fetches
     activePanel:          "record", // which audio source is showing
+    cqWizard:             null,    // active CQ wizard handle (createCqWizard)
     projectLocked:        false,   // true when ?project_id= URL lock is in effect
   };
 
@@ -1731,6 +1732,7 @@
 
     section.hidden = false;
     $("#grade-form-section").hidden = true;
+    teardownCqWizard();
     const cs = document.getElementById("clarifying-section");
     if (cs) { cs.hidden = true; }
     EA.AudioPlayer.attachAll(section);
@@ -1792,39 +1794,14 @@
       '</ul>';
   }
 
-  function renderCqRow(q, i) {
-    const fmt = q.format || q.cq_response_format || "yes_no";
-    let input = "";
-    if (fmt === "yes_no") {
-      input =
-        '<button type="button" class="cq-yesno-btn" data-value="Yes">Yes</button>' +
-        '<button type="button" class="cq-yesno-btn" data-value="No">No</button>';
-    } else if (fmt === "scale_1_10") {
-      input =
-        '<input type="range" min="1" max="10" value="5" class="cq-slider">' +
-        '<span class="cq-slider-value">5</span>';
-    } else if (fmt === "multiple_choice") {
-      const opts = (q.options || []).map(function (o, j) {
-        return (
-          '<label class="cq-radio">' +
-            '<input type="radio" name="cq-' + i + '" value="' + EA.esc(o) + '">' +
-            EA.esc(o) +
-          '</label>'
-        );
-      }).join("");
-      input = opts || '<span class="muted">No options provided.</span>';
-    }
-    const question = q.question || q.cq_text || "";
-    const reason = q.reason || q.cq_ai_reason || "";
-    return (
-      '<div class="cq-row" data-idx="' + i + '" data-fmt="' + fmt +
-           '" data-question="' + EA.esc(question) + '">' +
-        '<div class="cq-question">' + EA.esc(question) + '</div>' +
-        (reason ? '<div class="cq-reason">' + EA.esc(reason) + '</div>' : '') +
-        '<div class="cq-answer">' + input + '</div>' +
-      '</div>'
-    );
-  }
+  // ── Clarifying-questions wizard ─────────────────────────────
+  // One question at a time, auto-advance on answer click. State lives in a
+  // closure — there is no persistent draft; each /api/grade response starts
+  // a fresh wizard. The server expects context_answers as
+  //   { cq_text: "user answer" | CQ_SKIPPED }
+  // Keys omitted from the payload mean "never asked / never answered" and
+  // are stored as NULL in cq_answer_value (vs. CQ_SKIPPED = explicit skip).
+  const CQ_SKIPPED = "__SKIPPED__";
 
   function renderClarifyingScreen(interactionId, cqs) {
     // cqs should be non-empty — the server auto-grades when there are no
@@ -1833,66 +1810,223 @@
       submitAnswersAndGrade(interactionId, {});
       return;
     }
+
+    teardownCqWizard();  // belt-and-suspenders: drop any stale listener
+
     const section = document.getElementById("clarifying-section");
     const list    = document.getElementById("clarifying-list");
-    list.innerHTML = cqs.map(renderCqRow).join("");
+    list.innerHTML = "";
+
+    // The wizard owns its own submit (auto-advance on last answer).
+    // Hide the legacy footer that held "Submit & Grade" + the missing-answer
+    // hint so neither competes with the wizard chrome.
+    const submitBtn = document.getElementById("btn-submit-answers");
+    if (submitBtn && submitBtn.parentElement) submitBtn.parentElement.hidden = true;
+    document.getElementById("clarifying-hint").textContent = "";
+
+    const wizard = createCqWizard(interactionId, cqs);
+    list.appendChild(wizard.element);
+    state.cqWizard = wizard;
 
     $("#grade-form-section").hidden = true;
     $("#grade-result-section").hidden = true;
     section.hidden = false;
-    document.getElementById("clarifying-hint").textContent = "";
-    wireClarifyingInputs();
-
-    const submitBtn = document.getElementById("btn-submit-answers");
-    submitBtn.onclick = function () {
-      const answers = collectClarifyingAnswers();
-      if (answers === null) {
-        document.getElementById("clarifying-hint").textContent =
-          "Answer every question before submitting.";
-        return;
-      }
-      submitAnswersAndGrade(interactionId, answers);
-    };
+    wizard.start();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function wireClarifyingInputs() {
-    document.querySelectorAll("#clarifying-list .cq-row").forEach(function (row) {
-      const fmt = row.dataset.fmt;
-      if (fmt === "yes_no") {
-        row.querySelectorAll(".cq-yesno-btn").forEach(function (btn) {
-          btn.addEventListener("click", function () {
-            row.querySelectorAll(".cq-yesno-btn").forEach(function (b) {
-              b.classList.toggle("selected", b === btn);
-            });
-            row.dataset.value = btn.dataset.value;
-          });
-        });
-      } else if (fmt === "scale_1_10") {
-        const slider = row.querySelector(".cq-slider");
-        const out    = row.querySelector(".cq-slider-value");
-        slider.addEventListener("input", function () {
-          out.textContent = slider.value;
-          row.dataset.value = slider.value;
-        });
-        row.dataset.value = "5";
-      } else if (fmt === "multiple_choice") {
-        row.querySelectorAll('input[type="radio"]').forEach(function (r) {
-          r.addEventListener("change", function () { row.dataset.value = r.value; });
-        });
-      }
-    });
+  function teardownCqWizard() {
+    if (state.cqWizard && typeof state.cqWizard.destroy === "function") {
+      try { state.cqWizard.destroy(); } catch (_) {}
+    }
+    state.cqWizard = null;
   }
 
-  function collectClarifyingAnswers() {
-    const answers = {};
-    let missing = false;
-    document.querySelectorAll("#clarifying-list .cq-row").forEach(function (row) {
-      const val = row.dataset.value;
-      if (val === undefined || val === "") missing = true;
-      else answers[row.dataset.question] = val;
-    });
-    return missing ? null : answers;
+  function createCqWizard(interactionId, questions) {
+    const root = document.createElement("div");
+    root.className = "cq-wizard";
+
+    let currentIdx = 0;
+    const answers = {};            // { cq_text: answer_value }
+    const skipped = new Set();     // Set<cq_text> — explicit skips
+    let keyHandler = null;
+    let submitting = false;
+
+    function destroy() {
+      if (keyHandler) {
+        document.removeEventListener("keydown", keyHandler);
+        keyHandler = null;
+      }
+    }
+
+    function buildPayload() {
+      const out = {};
+      questions.forEach(function (q) {
+        const text = q.question || q.cq_text || "";
+        if (!text) return;
+        if (skipped.has(text)) {
+          out[text] = CQ_SKIPPED;
+        } else if (Object.prototype.hasOwnProperty.call(answers, text)) {
+          out[text] = answers[text];
+        }
+        // Otherwise omit → server stores NULL (never answered).
+      });
+      return out;
+    }
+
+    async function finish() {
+      if (submitting) return;
+      submitting = true;
+      destroy();
+      await submitAnswersAndGrade(interactionId, buildPayload());
+    }
+
+    function advance() {
+      if (currentIdx >= questions.length - 1) {
+        finish();
+      } else {
+        currentIdx += 1;
+        renderCurrent();
+      }
+    }
+
+    function answer(text, value) {
+      answers[text] = value;
+      skipped.delete(text);
+      advance();
+    }
+
+    function skipCurrent() {
+      const q = questions[currentIdx];
+      const text = q.question || q.cq_text || "";
+      if (text) {
+        skipped.add(text);
+        delete answers[text];
+      }
+      advance();
+    }
+
+    async function skipAll() {
+      const ok = await EA.confirmDialog({
+        title: "Skip remaining questions?",
+        body:  "Skip all remaining follow-ups? The grade will be based on " +
+               "the transcript alone, without your context refinement.",
+        okLabel:     "Skip all and grade",
+        cancelLabel: "Continue answering",
+      });
+      if (!ok) return;
+      for (let i = currentIdx; i < questions.length; i++) {
+        const t = questions[i].question || questions[i].cq_text || "";
+        if (t) {
+          skipped.add(t);
+          delete answers[t];
+        }
+      }
+      finish();
+    }
+
+    function optionsForQuestion(q, fmt) {
+      if (fmt === "yes_no") return ["Yes", "No"];
+      if (fmt === "yes_no_unclear") return ["Yes", "No", "Unclear"];
+      if (fmt === "multiple_choice") {
+        let opts = q.options;
+        if (typeof opts === "string") {
+          try { opts = JSON.parse(opts); } catch (_) { opts = []; }
+        }
+        if (!Array.isArray(opts)) opts = [];
+        return opts.slice(0, 5);
+      }
+      // skip_only and legacy scale_1_10 → no buttons
+      return [];
+    }
+
+    function renderCurrent() {
+      const q = questions[currentIdx];
+      const fmt = String(q.format || q.cq_response_format || "yes_no").toLowerCase();
+      const text = q.question || q.cq_text || "";
+      const reason = q.reason || q.cq_ai_reason || "";
+      const total = questions.length;
+      const pct = Math.round(((currentIdx + 1) / total) * 100);
+      const opts = optionsForQuestion(q, fmt);
+
+      let optionsHtml;
+      if (!opts.length) {
+        optionsHtml =
+          '<div class="cq-wizard-noop muted text-small">' +
+            'No options to choose — use Skip to continue.' +
+          '</div>';
+      } else {
+        optionsHtml = opts.map(function (o, i) {
+          return (
+            '<button type="button" class="cq-wizard-option" data-value="' +
+              EA.esc(o) + '">' +
+              '<span class="cq-wizard-key">' + (i + 1) + '</span>' +
+              '<span class="cq-wizard-label">' + EA.esc(o) + '</span>' +
+            '</button>'
+          );
+        }).join("");
+      }
+
+      root.innerHTML =
+        '<div class="cq-wizard-header">' +
+          '<span class="cq-wizard-progress">Question ' + (currentIdx + 1) +
+            ' of ' + total + '</span>' +
+          '<button type="button" class="btn btn-ghost cq-wizard-skip-all" ' +
+            'title="Skip all remaining (Esc)">Skip all follow-ups</button>' +
+        '</div>' +
+        '<div class="cq-wizard-bar" role="progressbar" aria-valuemin="0" ' +
+          'aria-valuemax="100" aria-valuenow="' + pct + '">' +
+          '<div class="cq-wizard-bar-fill" style="width:' + pct + '%"></div>' +
+        '</div>' +
+        '<div class="cq-wizard-body">' +
+          '<div class="cq-wizard-text">' + EA.esc(text) + '</div>' +
+          (reason ? '<div class="cq-wizard-reason">' + EA.esc(reason) + '</div>' : '') +
+          '<div class="cq-wizard-options">' + optionsHtml + '</div>' +
+        '</div>' +
+        '<div class="cq-wizard-footer">' +
+          '<button type="button" class="btn btn-ghost cq-wizard-skip" ' +
+            'title="Skip this question (S)">Skip this question</button>' +
+        '</div>';
+
+      root.querySelectorAll(".cq-wizard-option").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          answer(text, btn.dataset.value);
+        });
+      });
+      root.querySelector(".cq-wizard-skip").addEventListener("click", skipCurrent);
+      root.querySelector(".cq-wizard-skip-all").addEventListener("click", skipAll);
+    }
+
+    function onKey(e) {
+      // Don't intercept while a confirm dialog is open — it has its own keys.
+      if (document.querySelector(".modal-backdrop")) return;
+      // Don't intercept while typing in an input/textarea/contentEditable.
+      const t = e.target;
+      const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
+      if (tag === "input" || tag === "textarea" || (t && t.isContentEditable)) return;
+
+      if (e.key >= "1" && e.key <= "5") {
+        const idx = Number(e.key) - 1;
+        const btns = root.querySelectorAll(".cq-wizard-option");
+        if (btns[idx]) { e.preventDefault(); btns[idx].click(); }
+      } else if (e.key === "s" || e.key === "S") {
+        e.preventDefault();
+        skipCurrent();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        skipAll();
+      }
+    }
+
+    return {
+      element: root,
+      start: function () {
+        renderCurrent();
+        keyHandler = onKey;
+        document.addEventListener("keydown", keyHandler);
+      },
+      destroy: destroy,
+    };
   }
 
   async function submitAnswersAndGrade(interactionId, answers) {
@@ -2092,6 +2226,7 @@
     window.gradeComplete = false;
     $("#grade-result-section").hidden = true;
     $("#grade-result-section").innerHTML = "";
+    teardownCqWizard();
     const cs = document.getElementById("clarifying-section");
     if (cs) {
       cs.hidden = true;
