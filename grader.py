@@ -139,12 +139,50 @@ def transcribe(audio_path, keyterms_prompt: list | None = None) -> str:
     }
     cleaned_terms = [t for t in (keyterms_prompt or []) if t and t.strip()]
     if cleaned_terms:
-        config_kwargs["keyterms_prompt"] = cleaned_terms
-        logger.info("transcribe: applying %d keyterms_prompt entries", len(cleaned_terms))
+        # AssemblyAI universal-2 caps keyterms_prompt at 200 WORDS (not entries).
+        # Multi-word phrases push the total over the limit even with a modest
+        # entry count. Truncate in input order; followup needed for priority.
+        capped, total_words = [], 0
+        for t in cleaned_terms:
+            wc = len(t.split())
+            if total_words + wc > 200:
+                break
+            capped.append(t)
+            total_words += wc
+        if len(capped) < len(cleaned_terms):
+            logger.warning(
+                "transcribe: capped keyterms_prompt %d→%d entries (%d words, AAI 200-word limit)",
+                len(cleaned_terms), len(capped), total_words,
+            )
+        config_kwargs["keyterms_prompt"] = capped
+        logger.info(
+            "transcribe: applying %d keyterms_prompt entries (%d words)",
+            len(capped), total_words,
+        )
 
-    config = aai.TranscriptionConfig(**config_kwargs)
     transcriber = aai.Transcriber()
-    transcript = transcriber.transcribe(str(audio_path), config=config)
+
+    def _do_transcribe(kwargs):
+        return transcriber.transcribe(
+            str(audio_path), config=aai.TranscriptionConfig(**kwargs)
+        )
+
+    try:
+        transcript = _do_transcribe(config_kwargs)
+    except Exception as e:
+        # Defensive fallback: if AAI rejects the request with a keyterms-related
+        # error (e.g. limit changed upstream, or our cap missed an edge case),
+        # retry once without keyterms so the user's grade still proceeds.
+        msg = str(e)
+        if "keyterms_prompt" in msg and "keyterms_prompt" in config_kwargs:
+            logger.warning(
+                "transcribe: AAI rejected keyterms_prompt (%s); retrying without hints",
+                msg,
+            )
+            retry_kwargs = {k: v for k, v in config_kwargs.items() if k != "keyterms_prompt"}
+            transcript = _do_transcribe(retry_kwargs)
+        else:
+            raise
 
     if transcript.status == aai.TranscriptStatus.error:
         raise RuntimeError(f"{transcript.error}")
