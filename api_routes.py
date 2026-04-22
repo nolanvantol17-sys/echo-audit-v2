@@ -1519,20 +1519,47 @@ def get_project_summary(project_id):
             project["location_name"]  = "All Locations"
             project["location_phone"] = None
 
-        # Rollups — call_count includes everything except soft-deleted; avg_score
-        # excludes no-answer rows and null scores.
+        # Monthly stat cards — mirrors /api/dashboard shape so the hub's stat
+        # strip lines up with the landing's (Total Calls / Avg Score / Below
+        # 5.0 / Unanswered). Scoped to this project. Month-scoped is the
+        # canonical framing; Below 5.0 + Unanswered are only meaningful
+        # against a bounded window.
+        month_start, month_end = _month_bounds()
+
         cur = conn.execute(q("""
             SELECT
-                COUNT(*) AS call_count,
-                AVG(CASE WHEN i.status_id <> ? AND i.interaction_overall_score IS NOT NULL
-                         THEN i.interaction_overall_score END) AS avg_score
+                COUNT(*) AS total_calls,
+                AVG(i.interaction_overall_score) AS avg_score,
+                COUNT(CASE WHEN i.interaction_overall_score < 5.0 THEN 1 END)
+                    AS below_threshold
             FROM interactions i
-            WHERE i.project_id = ? AND i.interaction_deleted_at IS NULL
-        """), (STATUS_NO_ANSWER, project_id))
-        rollup = _row_to_dict(cur.fetchone()) or {}
-        avg = rollup.get("avg_score")
-        avg_score = round(float(avg), 1) if avg is not None else None
-        call_count = rollup.get("call_count") or 0
+            WHERE i.project_id = ?
+              AND i.interaction_deleted_at IS NULL
+              AND i.status_id <> ?
+              AND i.interaction_date >= ?
+              AND i.interaction_date <  ?
+        """), (project_id, STATUS_NO_ANSWER, month_start, month_end))
+        scored_row = _row_to_dict(cur.fetchone()) or {}
+        stat_avg_raw = scored_row.get("avg_score")
+        stat_avg = round(float(stat_avg_raw), 1) if stat_avg_raw is not None else None
+
+        cur = conn.execute(q("""
+            SELECT COUNT(*) AS cnt FROM interactions i
+            WHERE i.project_id = ?
+              AND i.interaction_deleted_at IS NULL
+              AND i.status_id = ?
+              AND i.interaction_date >= ?
+              AND i.interaction_date <  ?
+        """), (project_id, STATUS_NO_ANSWER, month_start, month_end))
+        noans_row = _row_to_dict(cur.fetchone()) or {}
+        no_answer_count = noans_row.get("cnt") or 0
+
+        stat_cards = {
+            "total_calls":     scored_row.get("total_calls") or 0,
+            "avg_score":       stat_avg,
+            "below_threshold": scored_row.get("below_threshold") or 0,
+            "no_answer_count": no_answer_count,
+        }
 
         # Recent calls — last 5 for this project. Per-call location comes
         # from the interaction's stamped location_id (source of truth), so
@@ -1565,7 +1592,6 @@ def get_project_summary(project_id):
         # a project-scoped locations roll-up + last_call timestamp, a rolling
         # 30-day trend, and a company-scoped Performance Reports deep-link.
         # NULL / empty / 'Name Not Detected' names are excluded.
-        month_start, month_end = _month_bounds()
         rolling_start = date.today() - timedelta(days=30)
 
         cur = conn.execute(q("""
@@ -1666,8 +1692,7 @@ def get_project_summary(project_id):
 
         return jsonify({
             **project,
-            "call_count":   call_count,
-            "avg_score":    avg_score,
+            "stat_cards":   stat_cards,
             "recent_calls": recent_calls,
             "top_agents":   top_agents,
         })

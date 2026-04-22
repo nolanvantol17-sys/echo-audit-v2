@@ -1,0 +1,185 @@
+{# ── Dashboard analytics block ─────────────────────────────────────
+   Score-trend chart (DashboardWidget) + Top Callers / Recent Grades
+   leaderboards. Owns the shared CSS for this block AND for
+   _dashboard_stats.html (`.dash3`, `.dash3-stats`).
+
+   Args (via {% with %}):
+     show_view_all         bool, default False
+         Shows small "View all →" links in the panel headers.
+     view_all_history_href str, default "/app/history"
+         Where the Recent Grades "View all" link points.
+     view_all_reports_href str, default "/app/reports"
+         Where the Top Callers "View all" link points.
+   #}
+<style>
+  .dash3 { display: flex; flex-direction: column; gap: 16px; }
+  .dash3-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+  .dash3-stats.has-projects { grid-template-columns: repeat(5, 1fr); }
+  .dash3-stats .stat-card { min-width: 0; padding: 14px 16px; }
+  .dash3-stats .stat-label { font-size: 0.78rem; }
+  .dash3-stats .stat-value { font-size: 1.7rem; }
+
+  .dash3-bottom {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .dash3-bottom .panel { padding: 16px 18px; }
+
+  .panel-title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+  }
+  .panel-title-row .panel-title { margin-bottom: 0; }
+  .panel-view-all {
+    font-size: 0.78rem;
+    color: var(--muted);
+    text-decoration: none;
+    border-bottom: 1px dotted transparent;
+  }
+  .panel-view-all:hover {
+    color: var(--text);
+    border-bottom-color: var(--border);
+  }
+
+  .leader-row {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) auto 18px auto;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 8px;
+    margin: 0 -8px;
+    border-radius: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .leader-row:last-child { border-bottom: none; }
+  .leader-row.clickable { cursor: pointer; }
+  .leader-row.clickable:hover { background: var(--surface-2); }
+  .leader-row.no-report .leader-name { color: var(--muted); }
+  .leader-rank {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--surface-2);
+    color: var(--muted);
+    text-align: center;
+    line-height: 24px;
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+  .leader-name-col { min-width: 0; line-height: 1.2; }
+  .leader-name {
+    display: block;
+    font-size: 0.92rem;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  .leader-locations {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-top: 1px;
+  }
+  .leader-locations .more { font-style: italic; }
+  .leader-trend { text-align: center; font-size: 0.95rem; line-height: 1; }
+  .leader-trend.up   { color: var(--success); }
+  .leader-trend.down { color: var(--danger); }
+  .leader-trend.flat,
+  .leader-trend.none { color: var(--muted); }
+  .leader-meta {
+    font-size: 0.74rem;
+    color: var(--muted);
+    text-align: right;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+  .leader-meta .leader-last { display: block; font-size: 0.7rem; }
+
+  .recent-item {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .recent-item:last-child { border-bottom: none; }
+  .recent-item:hover { background: var(--surface-2); }
+  .recent-date { font-size: 0.8rem; color: var(--muted); width: 84px; flex-shrink: 0; }
+  .recent-name {
+    flex: 1;
+    font-size: 0.92rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .recent-trail { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+
+  .flag-pill-mini {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: var(--warning-bg, rgba(245, 158, 11, 0.12));
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    color: #fbbf24;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  @media (max-width: 768px) {
+    .dash3-stats,
+    .dash3-stats.has-projects { grid-template-columns: repeat(2, 1fr); }
+    .dash3-stats .stat-value { font-size: 1.4rem; }
+    .dash3-bottom { grid-template-columns: 1fr; }
+  }
+</style>
+
+{# ── Analytics chart widget ── #}
+<div id="dash-chart-wrap" style="margin-top: 22px;" hidden>
+  <div id="dashboard-widget"></div>
+</div>
+
+{# ── Top Callers + Recent Grades ── #}
+<div id="dash-bottom" class="dash3-bottom" style="margin-top: 16px;" hidden>
+  <section class="panel">
+    <div class="panel-title-row">
+      <div class="panel-title">Top Callers</div>
+      {% if show_view_all %}
+      <a class="panel-view-all" href="{{ view_all_reports_href or '/app/reports' }}">View all →</a>
+      {% endif %}
+    </div>
+    <div id="leaderboard">
+      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+    </div>
+  </section>
+  <section class="panel">
+    <div class="panel-title-row">
+      <div class="panel-title">Recent Grades</div>
+      {% if show_view_all %}
+      <a class="panel-view-all" href="{{ view_all_history_href or '/app/history' }}">View all →</a>
+      {% endif %}
+    </div>
+    <div id="recent-wrap">
+      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+    </div>
+  </section>
+</div>

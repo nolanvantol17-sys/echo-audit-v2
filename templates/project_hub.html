@@ -62,152 +62,6 @@
   }
   .hub-meta .meta-value { color: var(--text); }
 
-  .hub-stats {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 14px;
-    margin-bottom: 22px;
-  }
-  @media (max-width: 720px) { .hub-stats { grid-template-columns: 1fr; } }
-  .hub-stat {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 16px 18px;
-  }
-  .hub-stat-label { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
-  .hub-stat-value { font-size: 1.5rem; font-weight: 700; color: var(--text); margin-top: 4px; }
-  .hub-stat-value.good { color: var(--success); }
-  .hub-stat-value.warn { color: var(--warning); }
-  .hub-stat-value.bad  { color: var(--danger); }
-
-  .hub-action-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 14px;
-    margin-bottom: 26px;
-  }
-  @media (max-width: 960px) { .hub-action-grid { grid-template-columns: 1fr; } }
-
-  .hub-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 18px;
-    display: flex;
-    flex-direction: column;
-    min-height: 240px;
-  }
-  .hub-card-title { font-size: 1rem; font-weight: 700; margin-bottom: 8px; }
-  .hub-card-body  { flex: 1; color: var(--muted); font-size: 0.88rem; }
-  .hub-card-body table { width: 100%; border-collapse: collapse; }
-  .hub-card-body table td { padding: 6px 0; border-bottom: 1px dashed var(--border); font-size: 0.85rem; color: var(--text); }
-  .hub-card-body table tr:last-child td { border-bottom: none; }
-  .hub-card-footer { margin-top: 12px; display: flex; gap: 8px; }
-
-  /* ── Top Callers leaderboard (ported from index.html) ───────── */
-  .leader-row {
-    display: grid;
-    grid-template-columns: 24px minmax(0, 1fr) auto 18px auto;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 8px;
-    margin: 0 -8px;
-    border-radius: 4px;
-    border-bottom: 1px solid var(--border);
-  }
-  .leader-row:last-child { border-bottom: none; }
-  .leader-row.clickable { cursor: pointer; }
-  .leader-row.clickable:hover { background: var(--surface-2); }
-  .leader-row.no-report .leader-name { color: var(--muted); }
-  .leader-rank {
-    width: 24px; height: 24px;
-    border-radius: 50%;
-    background: var(--surface-2);
-    color: var(--muted);
-    text-align: center;
-    line-height: 24px;
-    font-size: 0.78rem;
-    font-weight: 600;
-  }
-  .leader-name-col { min-width: 0; line-height: 1.2; }
-  .leader-name {
-    display: block;
-    font-size: 0.92rem;
-    color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-weight: 500;
-  }
-  .leader-locations {
-    display: block;
-    font-size: 0.72rem;
-    color: var(--muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    margin-top: 1px;
-  }
-  .leader-locations .more { font-style: italic; }
-  .leader-trend {
-    text-align: center;
-    font-size: 0.95rem;
-    line-height: 1;
-  }
-  .leader-trend.up   { color: var(--success); }
-  .leader-trend.down { color: var(--danger); }
-  .leader-trend.flat,
-  .leader-trend.none { color: var(--muted); }
-  .leader-meta {
-    font-size: 0.74rem;
-    color: var(--muted);
-    text-align: right;
-    line-height: 1.2;
-    white-space: nowrap;
-  }
-  .leader-meta .leader-last { display: block; font-size: 0.7rem; }
-
-  /* ── Recent Grades rows (ported from index.html) ────────────── */
-  .recent-item {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 10px 0;
-    border-bottom: 1px solid var(--border);
-    cursor: pointer;
-  }
-  .recent-item:last-child { border-bottom: none; }
-  .recent-item:hover { background: var(--surface-2); }
-  .recent-date { font-size: 0.8rem; color: var(--muted); width: 84px; flex-shrink: 0; }
-  .recent-name {
-    flex: 1;
-    font-size: 0.92rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-  .recent-trail {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-shrink: 0;
-  }
-  .flag-pill-mini {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    background: var(--warning-bg, rgba(245, 158, 11, 0.12));
-    border: 1px solid rgba(245, 158, 11, 0.3);
-    color: #fbbf24;
-    border-radius: 999px;
-    padding: 2px 8px;
-    font-size: 0.7rem;
-    font-weight: 600;
-    line-height: 1;
-  }
-
   .rubric-section {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -295,81 +149,31 @@
     <div class="page-title" id="hub-title">Loading…</div>
     <div id="hub-meta" class="hub-meta"></div>
   </div>
-  <div class="settings-wrap">
-    <button type="button" class="btn btn-ghost" id="btn-project-settings"
-            aria-haspopup="menu" aria-expanded="false">Project Settings ▾</button>
-    <div id="settings-popover" class="settings-popover" role="menu" hidden>
-      <button type="button" role="menuitem" id="btn-settings-edit">Edit project…</button>
-      {% if user_role in ('admin', 'super_admin') %}
-      <div class="settings-divider"></div>
-      <button type="button" role="menuitem" class="danger" id="btn-settings-delete">
-        Delete project…
-      </button>
-      {% endif %}
+  <div style="display:flex; gap:8px; align-items:center;">
+    <a href="#" class="btn btn-primary" id="btn-start-grading" data-no-swap>Start Grading</a>
+    <div class="settings-wrap">
+      <button type="button" class="btn btn-ghost" id="btn-project-settings"
+              aria-haspopup="menu" aria-expanded="false">Project Settings ▾</button>
+      <div id="settings-popover" class="settings-popover" role="menu" hidden>
+        <button type="button" role="menuitem" id="btn-settings-edit">Edit project…</button>
+        {% if user_role in ('admin', 'super_admin') %}
+        <div class="settings-divider"></div>
+        <button type="button" role="menuitem" class="danger" id="btn-settings-delete">
+          Delete project…
+        </button>
+        {% endif %}
+      </div>
     </div>
   </div>
 </div>
 
-<section id="hub-stats" class="hub-stats">
-  <div class="hub-stat">
-    <div class="hub-stat-label">Total Calls</div>
-    <div class="hub-stat-value" id="stat-calls">
-      <div class="skeleton" style="height:28px;width:70px;"></div>
-    </div>
-  </div>
-  <div class="hub-stat">
-    <div class="hub-stat-label">Average Score</div>
-    <div class="hub-stat-value" id="stat-avg">
-      <div class="skeleton" style="height:28px;width:70px;"></div>
-    </div>
-  </div>
-  <div class="hub-stat">
-    <div class="hub-stat-label">Active Since</div>
-    <div class="hub-stat-value" id="stat-since">
-      <div class="skeleton" style="height:28px;width:120px;"></div>
-    </div>
-  </div>
-</section>
+{% include '_dashboard_stats.html' %}
 
-<section class="hub-action-grid">
-  <div class="hub-card">
-    <div class="hub-card-title">Grade a Call</div>
-    <div class="hub-card-body">
-      Record or upload a new call. Project and location are pre-selected for you.
-    </div>
-    <div class="hub-card-footer">
-      <a href="#" class="btn btn-primary" id="btn-start-grading" data-no-swap>Start Grading</a>
-    </div>
-  </div>
-
-  <div class="hub-card">
-    <div class="hub-card-title">Past Grades</div>
-    <div class="hub-card-body" id="recent-calls-body">
-      <div class="skeleton" style="height:18px;margin:6px 0;"></div>
-      <div class="skeleton" style="height:18px;margin:6px 0;"></div>
-      <div class="skeleton" style="height:18px;margin:6px 0;"></div>
-    </div>
-    <div class="hub-card-footer">
-      <a href="#" class="btn btn-ghost btn-sm" id="btn-view-all-history">View All</a>
-    </div>
-  </div>
-
-  <div class="hub-card">
-    <div class="hub-card-title">Performance Reports</div>
-    <div class="hub-card-body" id="top-agents-body">
-      <div class="skeleton" style="height:18px;margin:6px 0;"></div>
-      <div class="skeleton" style="height:18px;margin:6px 0;"></div>
-      <div class="skeleton" style="height:18px;margin:6px 0;"></div>
-    </div>
-    <div class="hub-card-footer">
-      <a href="#" class="btn btn-ghost btn-sm" id="btn-view-all-reports">View All</a>
-    </div>
-  </div>
-</section>
-
-<section style="margin-bottom: 26px;">
-  <div id="project-analytics-widget"></div>
-</section>
+{% with show_view_all=True,
+        view_all_history_href='/app/history?project_id=' ~ project_id,
+        view_all_reports_href='/app/reports?project_id=' ~ project_id %}
+{% include '_dashboard_analytics.html' %}
+{% endwith %}
 
 <section class="rubric-section">
   <div class="rubric-section-header">
@@ -389,6 +193,7 @@
 <script defer src="{{ url_for('static', filename='interaction_panel.js') }}?v={{ static_v('interaction_panel.js') }}"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script defer src="{{ url_for('static', filename='dashboard_widget.js') }}?v={{ static_v('dashboard_widget.js') }}"></script>
+<script defer src="{{ url_for('static', filename='dashboard_summary.js') }}?v={{ static_v('dashboard_summary.js') }}"></script>
 <script>
 (function () {
   "use strict";
@@ -397,18 +202,17 @@
   const $ = (s) => document.querySelector(s);
 
   const state = { summary: null, rubricItems: [] };
+  let widgetHandle = null;
 
   async function init() {
-    $("#btn-start-grading").href   = "/app/grade?project_id="    + PROJECT_ID;
-    $("#btn-view-all-history").href = "/app/history?project_id="  + PROJECT_ID;
-    $("#btn-view-all-reports").href = "/app/reports?project_id="  + PROJECT_ID;
+    $("#btn-start-grading").href = "/app/grade?project_id=" + PROJECT_ID;
     const popoverTeardown = wireSettingsPopover();
-    const widgetHandle = EA.DashboardWidget.init({
-      container: document.getElementById("project-analytics-widget"),
-      projectId: PROJECT_ID,
-      defaultViewBy: "date",
-    });
-    await Promise.all([loadSummary(), loadRubric()]);
+    // Summary loads first so we can read project_all_locations to decide
+    // whether to hide the Locations filter / View-by-location mode on the
+    // chart widget for single-location projects.
+    await loadSummary();
+    bootDashboardWidget(state.summary || {});
+    await loadRubric();
     return {
       teardown() {
         try { popoverTeardown(); } catch (_) {}
@@ -417,6 +221,23 @@
         }
       },
     };
+  }
+
+  function bootDashboardWidget(summary) {
+    const container = document.getElementById("dashboard-widget");
+    if (!container) return;
+    document.getElementById("dash-chart-wrap").hidden = false;
+    const opts = {
+      container:     container,
+      projectId:     PROJECT_ID,
+      defaultViewBy: "date",
+    };
+    // Single-location projects: hide locations filter + by-location mode.
+    if (!summary.project_all_locations) {
+      opts.hideFilters     = ["locations"];
+      opts.hideViewByModes = ["location"];
+    }
+    widgetHandle = EA.DashboardWidget.init(opts);
   }
 
   // ── Project Settings popover (Edit + Delete) ─────────────
@@ -492,17 +313,11 @@
     renderBreadcrumb(s, projectName);
     renderMeta(s);
 
-    $("#stat-calls").textContent = (s.call_count != null) ? s.call_count : "—";
-    const avg = s.avg_score;
-    const avgEl = $("#stat-avg");
-    avgEl.textContent = (avg == null) ? "—" : avg;
-    avgEl.className = "hub-stat-value " +
-      (avg == null ? "" : (avg > 7 ? "good" : (avg >= 5 ? "warn" : "bad")));
-    $("#stat-since").textContent = s.project_start_date
-      ? EA.formatDate(s.project_start_date) : "—";
-
-    renderRecentCalls(s.recent_calls || []);
-    renderTopAgents(s.top_agents || []);
+    document.getElementById("dash-summary").hidden = false;
+    document.getElementById("dash-bottom").hidden = false;
+    EA.DashboardSummary.renderStats(s.stat_cards || {});
+    EA.DashboardSummary.renderLeaderboard(s.top_agents || []);
+    EA.DashboardSummary.renderRecent(s.recent_calls || []);
   }
 
   // Breadcrumb: Location › Phone Routing › Project. Location and Phone
@@ -543,131 +358,6 @@
       row("Location",      locName) +
       row("Phone Routing", phrName) +
       row(activeLabel,     activeValue);
-  }
-
-  function renderRecentCalls(calls) {
-    const el = $("#recent-calls-body");
-    if (!calls.length) {
-      el.innerHTML = '<div class="muted">No calls yet. Grade your first one.</div>';
-      return;
-    }
-    el.innerHTML = calls.slice(0, 5).map(function (c) {
-      const cls = EA.scoreClass(c.interaction_overall_score);
-      const full = c.respondent_name || "—";
-      const name = full.length > 30 ? (full.slice(0, 29) + "…") : full;
-
-      const ts = c.interaction_call_start_time || c.interaction_uploaded_at || c.interaction_date;
-      const rel = ts ? EA.formatRelativeTime(ts) : "—";
-      const callTime = EA.formatCallTime(
-        c.interaction_call_start_time, c.interaction_uploaded_at, null,
-      );
-      const dateCell = (callTime && callTime !== "—")
-        ? ('<span class="recent-date" style="display:flex;flex-direction:column;line-height:1.15;">' +
-             EA.esc(rel) +
-             '<span class="muted text-small" style="font-size:0.7rem;">' + EA.esc(callTime) + '</span>' +
-           '</span>')
-        : '<span class="recent-date">' + EA.esc(rel) + '</span>';
-
-      const locName = c.location_name || "";
-      const nameStack = locName
-        ? ('<span class="recent-name" style="display:flex;flex-direction:column;line-height:1.15;" title="' + EA.esc(full) + '">' +
-             EA.esc(name) +
-             '<span class="muted text-small" style="font-size:0.7rem;">' + EA.esc(locName) + '</span>' +
-           '</span>')
-        : ('<span class="recent-name" title="' + EA.esc(full) + '">' + EA.esc(name) + '</span>');
-
-      const flagsText = c.interaction_flags || "";
-      const flagCount = (flagsText.match(/🚩/g) || []).length;
-      const flagPill = flagCount
-        ? '<span class="flag-pill-mini" title="' + flagCount +
-            ' flag' + (flagCount === 1 ? '' : 's') + ' on this call">🚩 ' + flagCount + '</span>'
-        : '';
-
-      return (
-        '<div class="recent-item" data-iid="' + EA.esc(c.interaction_id) + '">' +
-          dateCell + nameStack +
-          '<span class="recent-trail">' +
-            '<span class="score-pill ' + cls + '">' + EA.formatScore(c.interaction_overall_score) + '</span>' +
-            flagPill +
-          '</span>' +
-        '</div>'
-      );
-    }).join("");
-    el.querySelectorAll(".recent-item[data-iid]").forEach((row) => {
-      row.addEventListener("click", () => {
-        const iid = row.dataset.iid;
-        if (window.EA && EA.InteractionPanel && typeof EA.InteractionPanel.open === "function") {
-          EA.InteractionPanel.open(iid);
-        } else {
-          window.location.href = "/app/history/" + encodeURIComponent(iid);
-        }
-      });
-    });
-  }
-
-  function renderTopAgents(agents) {
-    const el = $("#top-agents-body");
-    if (!agents.length) {
-      el.innerHTML = '<div class="muted">No respondents this month.</div>';
-      return;
-    }
-    el.innerHTML = agents.slice(0, 3).map(function (a, i) {
-      const cls = EA.scoreClass(a.avg_score);
-      const fullName = a.respondent_name || "—";
-      const nameEsc = EA.esc(fullName);
-
-      const locs = Array.isArray(a.locations) ? a.locations : [];
-      let locStr = "";
-      if (locs.length === 1) {
-        locStr = EA.esc(locs[0]);
-      } else if (locs.length === 2) {
-        locStr = EA.esc(locs[0]) + ", " + EA.esc(locs[1]);
-      } else if (locs.length > 2) {
-        locStr = EA.esc(locs[0]) + ", " + EA.esc(locs[1]) +
-                 ' <span class="more">+' + (locs.length - 2) + " more</span>";
-      }
-      const locHtml = locStr
-        ? '<span class="leader-locations" title="' + EA.esc(locs.join(", ")) + '">' + locStr + '</span>'
-        : '';
-
-      const trend = a.trend || "none";
-      const trendArrow = trend === "up" ? "↑"
-                       : trend === "down" ? "↓"
-                       : trend === "flat" ? "→" : "";
-      const trendTitle = trend === "up"   ? "Trending up (last 30 days)"
-                      : trend === "down" ? "Trending down (last 30 days)"
-                      : trend === "flat" ? "Steady (last 30 days)"
-                      : "Not enough data for a 30-day trend";
-
-      const callCount = a.call_count || 0;
-      const lastCall = a.last_call ? EA.formatRelativeTime(a.last_call) : "";
-
-      const rowClass = a.report_url ? "leader-row clickable" : "leader-row no-report";
-      const dataHref = a.report_url ? ' data-href="' + EA.esc(a.report_url) + '"' : '';
-
-      return (
-        '<div class="' + rowClass + '"' + dataHref + '>' +
-          '<span class="leader-rank">' + (i + 1) + '</span>' +
-          '<div class="leader-name-col">' +
-            '<span class="leader-name" title="' + nameEsc + '">' + nameEsc + '</span>' +
-            locHtml +
-          '</div>' +
-          '<span class="score-pill ' + cls + '">' + EA.formatScore(a.avg_score) + '</span>' +
-          '<span class="leader-trend ' + trend + '" title="' + EA.esc(trendTitle) + '">' +
-            trendArrow +
-          '</span>' +
-          '<span class="leader-meta">' +
-            callCount + ' call' + (callCount === 1 ? '' : 's') +
-            (lastCall ? '<span class="leader-last">' + EA.esc(lastCall) + '</span>' : '') +
-          '</span>' +
-        '</div>'
-      );
-    }).join("");
-    el.querySelectorAll(".leader-row.clickable[data-href]").forEach((row) => {
-      row.addEventListener("click", () => {
-        window.location.href = row.dataset.href;
-      });
-    });
   }
 
   async function loadRubric() {

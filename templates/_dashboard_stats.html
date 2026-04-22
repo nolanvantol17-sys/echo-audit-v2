@@ -1,0 +1,35 @@
+{# ── Dashboard stat strip ──────────────────────────────────────────
+   Paired with _dashboard_analytics.html — that partial owns the
+   .dash3 / .dash3-stats scoped CSS. Include both on any page that
+   uses this strip, or extract the CSS here if you need stats alone.
+
+   Args (via {% with %}):
+     include_active_projects  bool, default False
+         Landing only: adds a 5th "Active Projects" card.
+   #}
+<div id="dash-summary" class="dash3" hidden style="margin-bottom: 18px;">
+  <div class="dash3-stats {% if include_active_projects %}has-projects{% endif %}">
+    <div class="stat-card">
+      <span class="stat-label">Total Calls</span>
+      <span class="stat-value" id="stat-total">—</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Average Score</span>
+      <span class="stat-value" id="stat-avg">—</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Below 5.0</span>
+      <span class="stat-value stat-accent-danger" id="stat-below">—</span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Unanswered</span>
+      <span class="stat-value stat-accent-warning" id="stat-noans">—</span>
+    </div>
+    {% if include_active_projects %}
+    <div class="stat-card">
+      <span class="stat-label">Active Projects</span>
+      <span class="stat-value" id="stat-projects">—</span>
+    </div>
+    {% endif %}
+  </div>
+</div>

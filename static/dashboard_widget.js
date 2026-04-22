@@ -10,6 +10,10 @@
        container: HTMLElement,        // required: empty host node
        projectId: number | null,      // optional: scope to one project
        defaultViewBy: "date" | "caller" | "location" | "phone_routing",
+       hideFilters: ["locations"],    // optional: array of filter keys to hide
+                                      //   ("locations", "callers", "phone_routings")
+       hideViewByModes: ["location"], // optional: array of view_by options
+                                      //   to hide from the dropdown
      });
 
    Self-contained — relies only on window.EA + Chart.js (already loaded by
@@ -577,6 +581,23 @@
     const loadingEl   = root.querySelector(".daw-chart-loading");
     const emptyEl     = root.querySelector(".daw-chart-empty");
     const viewBySel   = root.querySelector(".daw-view-by");
+
+    // Optional: hide specific multi-select filters by data-key.
+    // The filter's state stays at its "All …" default, so the widget
+    // behaves as if no filter was applied.
+    const hideFilters = Array.isArray(opts.hideFilters) ? opts.hideFilters : [];
+    hideFilters.forEach((key) => {
+      const btn = root.querySelector('[data-key="' + key + '"]');
+      if (btn) btn.hidden = true;
+    });
+
+    // Optional: hide View By modes (e.g. "location" on a single-location
+    // project where per-location grouping is meaningless).
+    const hideViewByModes = Array.isArray(opts.hideViewByModes) ? opts.hideViewByModes : [];
+    hideViewByModes.forEach((mode) => {
+      const opt = viewBySel.querySelector('option[value="' + mode + '"]');
+      if (opt) opt.remove();
+    });
 
     viewBySel.value = defaultViewBy;
     titleEl.textContent = chartTitleFor(defaultViewBy);

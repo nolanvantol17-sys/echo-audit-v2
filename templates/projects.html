@@ -311,129 +311,12 @@
   .wizard-summary .sum-label { color: var(--muted); text-transform: uppercase; font-size: 0.74rem; letter-spacing: 0.04em; padding-top: 2px; }
   .wizard-summary .sum-value { color: var(--text); }
 
-  /* ── Merged dashboard summary (Phase 1 — ported from index.html) ── */
-  .dash3 { display: flex; flex-direction: column; gap: 16px; }
-  .dash3-stats {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 12px;
-  }
-  .dash3-stats .stat-card { min-width: 0; padding: 14px 16px; }
-  .dash3-stats .stat-label { font-size: 0.78rem; }
-  .dash3-stats .stat-value { font-size: 1.7rem; }
-
-  .dash3-bottom {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-  }
-  .dash3-bottom .panel { padding: 16px 18px; }
-
-  .leader-row {
-    display: grid;
-    grid-template-columns: 24px minmax(0, 1fr) auto 18px auto;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 8px;
-    margin: 0 -8px;
-    border-radius: 4px;
-    border-bottom: 1px solid var(--border);
-  }
-  .leader-row:last-child { border-bottom: none; }
-  .leader-row.clickable { cursor: pointer; }
-  .leader-row.clickable:hover { background: var(--surface-2); }
-  .leader-row.no-report .leader-name { color: var(--muted); }
-  .leader-rank {
-    width: 24px; height: 24px;
-    border-radius: 50%;
-    background: var(--surface-2);
-    color: var(--muted);
-    text-align: center;
-    line-height: 24px;
-    font-size: 0.78rem;
-    font-weight: 600;
-  }
-  .leader-name-col { min-width: 0; line-height: 1.2; }
-  .leader-name {
-    display: block;
-    font-size: 0.92rem;
-    color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-weight: 500;
-  }
-  .leader-locations {
-    display: block;
-    font-size: 0.72rem;
-    color: var(--muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    margin-top: 1px;
-  }
-  .leader-locations .more { font-style: italic; }
-  .leader-trend { text-align: center; font-size: 0.95rem; line-height: 1; }
-  .leader-trend.up   { color: var(--success); }
-  .leader-trend.down { color: var(--danger); }
-  .leader-trend.flat,
-  .leader-trend.none { color: var(--muted); }
-  .leader-meta {
-    font-size: 0.74rem;
-    color: var(--muted);
-    text-align: right;
-    line-height: 1.2;
-    white-space: nowrap;
-  }
-  .leader-meta .leader-last { display: block; font-size: 0.7rem; }
-
-  .recent-item {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 10px 0;
-    border-bottom: 1px solid var(--border);
-    cursor: pointer;
-  }
-  .recent-item:last-child { border-bottom: none; }
-  .recent-item:hover { background: var(--surface-2); }
-  .recent-date { font-size: 0.8rem; color: var(--muted); width: 84px; flex-shrink: 0; }
-  .recent-name {
-    flex: 1;
-    font-size: 0.92rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-  .recent-trail { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-
-  .flag-pill-mini {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    background: var(--warning-bg, rgba(245, 158, 11, 0.12));
-    border: 1px solid rgba(245, 158, 11, 0.3);
-    color: #fbbf24;
-    border-radius: 999px;
-    padding: 2px 8px;
-    font-size: 0.7rem;
-    font-weight: 600;
-    line-height: 1;
-  }
-
   /* Projects section header — button right-aligned, no label */
   .projects-section-header {
     display: flex;
     justify-content: flex-end;
     align-items: center;
     margin-bottom: 12px;
-  }
-
-  @media (max-width: 768px) {
-    .dash3-stats { grid-template-columns: repeat(2, 1fr); }
-    .dash3-stats .stat-value { font-size: 1.4rem; }
-    .dash3-bottom { grid-template-columns: 1fr; }
   }
 </style>
 {% endblock %}
@@ -445,31 +328,9 @@
   </div>
 </div>
 
-{# ── Compact stat strip — hidden until /api/dashboard reports total_calls > 0 ── #}
-<div id="dash-summary" class="dash3" hidden style="margin-bottom: 18px;">
-  <div class="dash3-stats">
-    <div class="stat-card">
-      <span class="stat-label">Total Calls</span>
-      <span class="stat-value" id="stat-total">—</span>
-    </div>
-    <div class="stat-card">
-      <span class="stat-label">Average Score</span>
-      <span class="stat-value" id="stat-avg">—</span>
-    </div>
-    <div class="stat-card">
-      <span class="stat-label">Below 5.0</span>
-      <span class="stat-value stat-accent-danger" id="stat-below">—</span>
-    </div>
-    <div class="stat-card">
-      <span class="stat-label">Unanswered</span>
-      <span class="stat-value stat-accent-warning" id="stat-noans">—</span>
-    </div>
-    <div class="stat-card">
-      <span class="stat-label">Active Projects</span>
-      <span class="stat-value" id="stat-projects">—</span>
-    </div>
-  </div>
-</div>
+{% with include_active_projects=True %}
+{% include '_dashboard_stats.html' %}
+{% endwith %}
 
 <section id="projects-section">
   <div class="projects-section-header">
@@ -484,30 +345,7 @@
   </div>
 </section>
 
-{# ── Analytics chart widget — below projects, hidden in zero-state ── #}
-<div id="dash-chart-wrap" style="margin-top: 22px;" hidden>
-  <div id="dashboard-widget"></div>
-</div>
-
-{# ── Top Callers + Recent Grades — bottom row, hidden in zero-state ── #}
-<div id="dash-bottom" class="dash3-bottom" style="margin-top: 16px;" hidden>
-  <section class="panel">
-    <div class="panel-title">Top Callers</div>
-    <div id="leaderboard">
-      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
-      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
-      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
-    </div>
-  </section>
-  <section class="panel">
-    <div class="panel-title">Recent Grades</div>
-    <div id="recent-wrap">
-      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
-      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
-      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
-    </div>
-  </section>
-</div>
+{% include '_dashboard_analytics.html' %}
 
 {# ── Wizard modal (hidden until New Project clicked) ── #}
 <div id="wizard-backdrop" class="wizard-backdrop" hidden>
@@ -663,6 +501,7 @@
 <script defer src="{{ url_for('static', filename='interaction_panel.js') }}?v={{ static_v('interaction_panel.js') }}"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script defer src="{{ url_for('static', filename='dashboard_widget.js') }}?v={{ static_v('dashboard_widget.js') }}"></script>
+<script defer src="{{ url_for('static', filename='dashboard_summary.js') }}?v={{ static_v('dashboard_summary.js') }}"></script>
 <script>
 (function () {
   "use strict";
@@ -728,7 +567,7 @@
     }
   }
 
-  // ── Dashboard summary (Phase 1 — merged from index.html) ──
+  // ── Dashboard summary (tenant-scoped) ──
   // Hidden in zero-state so a brand-new tenant sees the empty projects grid
   // as the page's primary call-to-action without analytics chrome above it.
   let widgetHandle = null;
@@ -745,148 +584,12 @@
         container: document.getElementById("dashboard-widget"),
         defaultViewBy: "date",
       });
-      renderStats(d.stat_cards || {});
-      renderLeaderboard(d.leaderboard || []);
-      renderRecent(d.recent_interactions || []);
+      EA.DashboardSummary.renderStats(d.stat_cards || {});
+      EA.DashboardSummary.renderLeaderboard(d.leaderboard || []);
+      EA.DashboardSummary.renderRecent(d.recent_interactions || []);
     } catch (err) {
       console.warn("Dashboard summary load failed:", err);
     }
-  }
-
-  function renderStats(s) {
-    s = s || {};
-    const num = (v, fallback = 0) => (v === null || v === undefined) ? fallback : v;
-    document.getElementById("stat-total").textContent    = num(s.total_calls, 0);
-    document.getElementById("stat-avg").textContent      =
-      (s.avg_score === null || s.avg_score === undefined) ? "—" : EA.formatScore(s.avg_score);
-    document.getElementById("stat-below").textContent    = num(s.below_threshold, 0);
-    document.getElementById("stat-noans").textContent    = num(s.no_answer_count, 0);
-    document.getElementById("stat-projects").textContent = num(s.active_projects, 0);
-  }
-
-  function renderLeaderboard(rows) {
-    const box = document.getElementById("leaderboard");
-    if (!rows || !rows.length) {
-      box.innerHTML = '<div class="empty-state">No graded calls this month.</div>';
-      return;
-    }
-    box.innerHTML = rows.slice(0, 3).map((r, i) => {
-      const cls = EA.scoreClass(r.avg_score);
-      const fullName = r.respondent_name || "—";
-      const nameEsc = EA.esc(fullName);
-
-      const locs = Array.isArray(r.locations) ? r.locations : [];
-      let locStr = "";
-      if (locs.length === 1) {
-        locStr = EA.esc(locs[0]);
-      } else if (locs.length === 2) {
-        locStr = EA.esc(locs[0]) + ", " + EA.esc(locs[1]);
-      } else if (locs.length > 2) {
-        locStr = EA.esc(locs[0]) + ", " + EA.esc(locs[1]) +
-                 ' <span class="more">+' + (locs.length - 2) + " more</span>";
-      }
-      const locHtml = locStr
-        ? '<span class="leader-locations" title="' + EA.esc(locs.join(", ")) + '">' + locStr + '</span>'
-        : '';
-
-      const trend = r.trend || "none";
-      const trendArrow = trend === "up" ? "↑"
-                       : trend === "down" ? "↓"
-                       : trend === "flat" ? "→" : "";
-      const trendTitle = trend === "up"   ? "Trending up (last 30 days)"
-                      : trend === "down" ? "Trending down (last 30 days)"
-                      : trend === "flat" ? "Steady (last 30 days)"
-                      : "Not enough data for a 30-day trend";
-
-      const callCount = r.call_count || 0;
-      const lastCall = r.last_call ? EA.formatRelativeTime(r.last_call) : "";
-
-      const rowClass = r.report_url ? "leader-row clickable" : "leader-row no-report";
-      const dataHref = r.report_url ? ' data-href="' + EA.esc(r.report_url) + '"' : '';
-
-      return (
-        '<div class="' + rowClass + '"' + dataHref + '>' +
-          '<span class="leader-rank">' + (i + 1) + '</span>' +
-          '<div class="leader-name-col">' +
-            '<span class="leader-name" title="' + nameEsc + '">' + nameEsc + '</span>' +
-            locHtml +
-          '</div>' +
-          '<span class="score-pill ' + cls + '">' + EA.formatScore(r.avg_score) + '</span>' +
-          '<span class="leader-trend ' + trend + '" title="' + EA.esc(trendTitle) + '">' +
-            trendArrow +
-          '</span>' +
-          '<span class="leader-meta">' +
-            callCount + ' call' + (callCount === 1 ? '' : 's') +
-            (lastCall ? '<span class="leader-last">' + EA.esc(lastCall) + '</span>' : '') +
-          '</span>' +
-        '</div>'
-      );
-    }).join("");
-    box.querySelectorAll(".leader-row.clickable[data-href]").forEach((el) => {
-      el.addEventListener("click", () => {
-        window.location.href = el.dataset.href;
-      });
-    });
-  }
-
-  function renderRecent(rows) {
-    const box = document.getElementById("recent-wrap");
-    if (!rows || !rows.length) {
-      box.innerHTML = '<div class="empty-state">No grades yet.</div>';
-      return;
-    }
-    box.innerHTML = rows.slice(0, 5).map((r) => {
-      const cls = EA.scoreClass(r.interaction_overall_score);
-      const full = r.respondent_name || "—";
-      const name = full.length > 30 ? (full.slice(0, 29) + "…") : full;
-
-      const ts = r.interaction_call_start_time || r.interaction_uploaded_at || r.interaction_date;
-      const rel = ts ? EA.formatRelativeTime(ts) : "—";
-      const callTime = EA.formatCallTime(
-        r.interaction_call_start_time, r.interaction_uploaded_at, null,
-      );
-      const dateCell = (callTime && callTime !== "—")
-        ? ('<span class="recent-date" style="display:flex;flex-direction:column;line-height:1.15;">' +
-             EA.esc(rel) +
-             '<span class="muted text-small" style="font-size:0.7rem;">' + EA.esc(callTime) + '</span>' +
-           '</span>')
-        : '<span class="recent-date">' + EA.esc(rel) + '</span>';
-
-      const locName = r.location_name || "";
-      const nameStack = locName
-        ? ('<span class="recent-name" style="display:flex;flex-direction:column;line-height:1.15;" title="' + EA.esc(full) + '">' +
-             EA.esc(name) +
-             '<span class="muted text-small" style="font-size:0.7rem;">' + EA.esc(locName) + '</span>' +
-           '</span>')
-        : ('<span class="recent-name" title="' + EA.esc(full) + '">' + EA.esc(name) + '</span>');
-
-      const flagsText = r.interaction_flags || "";
-      const flagCount = (flagsText.match(/🚩/g) || []).length;
-      const flagPill = flagCount
-        ? '<span class="flag-pill-mini" title="' + flagCount +
-            ' flag' + (flagCount === 1 ? '' : 's') + ' on this call">🚩 ' + flagCount + '</span>'
-        : '';
-
-      return (
-        '<div class="recent-item" data-iid="' + EA.esc(r.interaction_id) + '">' +
-          dateCell + nameStack +
-          '<span class="recent-trail">' +
-            '<span class="score-pill ' + cls + '">' + EA.formatScore(r.interaction_overall_score) + '</span>' +
-            flagPill +
-          '</span>' +
-        '</div>'
-      );
-    }).join("");
-    box.querySelectorAll(".recent-item[data-iid]").forEach((el) => {
-      el.addEventListener("click", () => {
-        const iid = el.dataset.iid;
-        if (window.EA && EA.InteractionPanel && typeof EA.InteractionPanel.open === "function") {
-          EA.InteractionPanel.open(iid);
-        } else {
-          window.location.href = "/app/history/" + encodeURIComponent(iid);
-        }
-      });
-    });
   }
 
   async function loadProjects() {
