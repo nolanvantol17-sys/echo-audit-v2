@@ -113,11 +113,6 @@
     letter-spacing: 1px;
   }
   .record-wrap .app-audio { width: 100%; }
-  .record-wrap.confirmed .btn-record-use {
-    background: var(--success);
-    border-color: var(--success);
-    pointer-events: none;
-  }
 
   /* ── Property intel card (shown when a location is selected) ── */
   .intel-card {
@@ -297,10 +292,13 @@
     align-items: center;
     gap: 12px;
   }
-  /* Upload panel: Log Unanswered button below the dropzone */
-  .upload-action-row {
+  /* Per-panel action row (contextual Submit + Log Unanswered) */
+  .panel-action-row {
     display: flex;
     justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
     margin-top: 12px;
   }
 </style>
@@ -415,7 +413,8 @@
       </label>
       <input id="audio-file" name="audio" type="file"
              accept=".mp3,.mp4,.m4a,.wav,.aac,.ogg,.flac,.webm" hidden>
-      <div class="upload-action-row">
+      <div class="panel-action-row">
+        <button type="button" class="btn btn-primary" id="btn-upload-submit" hidden>Submit for grading</button>
         <button type="button" class="btn btn-ghost" id="btn-no-answer-upload">Log Unanswered Call</button>
       </div>
     </div>
@@ -427,6 +426,9 @@
         <div class="skeleton" style="height:16px;margin:10px 0;"></div>
       </div>
       <input type="hidden" id="voip-queue-id">
+      <div class="panel-action-row">
+        <button type="button" class="btn btn-primary" id="btn-voip-submit" hidden>Submit for grading</button>
+      </div>
     </div>
 
     {# Secondary audio source links — built dynamically by renderSourceLinks().
@@ -437,9 +439,7 @@
        collapse to a single muted line; the full card expands when data exists. #}
     <div id="location-intel-card" class="intel-card compact" hidden></div>
 
-    <div class="hstack-wrap" style="margin-top:20px;">
-      <button type="submit" class="btn btn-primary" id="grade-submit">Submit for grading</button>
-      <span class="spacer"></span>
+    <div class="hstack-wrap" style="margin-top:20px;justify-content:center;">
       <span class="text-small muted" id="form-hint"></span>
     </div>
   </form>
@@ -1103,6 +1103,7 @@
           if (hidden) hidden.value = "";
           EA.toast("The selected queued call is no longer pending.", "info");
         }
+        setVoipSubmitVisible(false);
         return;
       }
       const head =
@@ -1133,6 +1134,7 @@
           state.selectedQueueId = tr.dataset.queueId;
           $("#voip-queue-id").value = tr.dataset.queueId;
           if (tr.dataset.date) $("#gf-date").value = tr.dataset.date.slice(0,10);
+          setVoipSubmitVisible(true);
         });
       });
       if (previouslySelected) {
@@ -1140,14 +1142,18 @@
                                      CSS.escape(String(previouslySelected)) + '"]');
         if (tr) {
           tr.style.background = "var(--accent-soft)";
+          setVoipSubmitVisible(true);
         } else {
           // Selected call no longer pending — drop the stale selection so
           // the user doesn't accidentally submit against a missing queue id.
           state.selectedQueueId = null;
           const hidden = $("#voip-queue-id");
           if (hidden) hidden.value = "";
+          setVoipSubmitVisible(false);
           EA.toast("The selected queued call is no longer pending.", "info");
         }
+      } else {
+        setVoipSubmitVisible(false);
       }
     } catch (err) {
       box.innerHTML = '<div class="section-error">' + EA.esc(err.message) + '</div>';
@@ -1206,6 +1212,14 @@
     $("#btn-record-redo") .addEventListener("click", resetLiveRecording);
     $("#btn-record-use")  .addEventListener("click", confirmLiveRecording);
 
+    // Contextual submit buttons (one per audio source panel). All route
+    // through requestSubmit() so the form's onSubmit handler is the single
+    // source of truth for validation + dispatch.
+    const upBtn  = document.getElementById("btn-upload-submit");
+    const voBtn  = document.getElementById("btn-voip-submit");
+    if (upBtn) upBtn.addEventListener("click", function () { $("#grade-form").requestSubmit(); });
+    if (voBtn) voBtn.addEventListener("click", function () { $("#grade-form").requestSubmit(); });
+
     // Submit
     $("#grade-form").addEventListener("submit", onSubmit);
     // Two copies of "Log Unanswered Call" — one in the Record panel, one in
@@ -1233,6 +1247,7 @@
     if (which !== "voip")   {
       state.selectedQueueId = null;
       const vq = $("#voip-queue-id"); if (vq) vq.value = "";
+      setVoipSubmitVisible(false);
     }
     if (which !== "upload") { clearAudioFile(); }
 
@@ -1281,6 +1296,8 @@
     $("#dz-meta").textContent = humanSize(file.size) + " · " + (file.type || "audio");
     $("#dropzone").classList.add("has-file");
     $("#form-hint").textContent = "";
+    const upBtn = document.getElementById("btn-upload-submit");
+    if (upBtn) upBtn.hidden = false;
   }
   function clearAudioFile() {
     state.audioFile = null;
@@ -1288,6 +1305,15 @@
     $("#dropzone-placeholder").hidden = false;
     $("#dropzone-filled").hidden = true;
     $("#dropzone").classList.remove("has-file");
+    const upBtn = document.getElementById("btn-upload-submit");
+    if (upBtn) upBtn.hidden = true;
+  }
+
+  // VoIP queue: the contextual submit button is bound to whether a row is
+  // selected. Called after every state.selectedQueueId mutation.
+  function setVoipSubmitVisible(v) {
+    const btn = document.getElementById("btn-voip-submit");
+    if (btn) btn.hidden = !v;
   }
   function humanSize(bytes) {
     if (bytes < 1024) return bytes + " B";
@@ -1545,7 +1571,15 @@
     const locOpt = locSel.options[locSel.selectedIndex];
     state.locationNameDisplay = locOpt ? (locOpt.text || "").trim() : "";
 
-    const submitBtn = document.getElementById("grade-submit");
+    // Disable whichever contextual submit button drove this submission so
+    // double-clicks during the in-flight upload are dropped. Each audio
+    // source panel owns its own button (see Diff A); pick the one that
+    // matches the active tab.
+    const submitBtnId =
+      activeTab === "record" ? "btn-record-use" :
+      activeTab === "voip"   ? "btn-voip-submit" :
+                               "btn-upload-submit";
+    const submitBtn = document.getElementById(submitBtnId);
     if (submitBtn && submitBtn.disabled) return;   // already in flight
     if (submitBtn) submitBtn.disabled = true;
 
@@ -2332,6 +2366,7 @@
     clearAudioFile();
     cleanupLiveRecording(true);
     state.selectedQueueId = null;
+    setVoipSubmitVisible(false);
     state.currentInteraction = null;
     state.callerNameDisplay = "";
     state.locationNameDisplay = "";
