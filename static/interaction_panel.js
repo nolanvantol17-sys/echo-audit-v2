@@ -2,8 +2,12 @@
    interaction_panel.js — Right-slide-in side panel for interaction detail.
 
    Exposes:
-     EA.InteractionPanel.open(interactionId)
+     EA.InteractionPanel.open(interactionId, { onClose })
      EA.InteractionPanel.close()
+
+   onClose fires once after teardown, regardless of which close path ran
+   (X / Esc / backdrop / popstate). Re-arming via a second open() call
+   replaces the callback; the previous one never fires.
 
    Behavior:
      - Fetches GET /api/interactions/<id> and renders via EA.InteractionView
@@ -36,13 +40,17 @@
   // Single live panel instance (null when closed).
   let state = null;
 
-  async function open(interactionId) {
+  async function open(interactionId, opts) {
+    opts = opts || {};
     const iid = Number(interactionId);
     if (!iid || isNaN(iid)) return;
 
     // Already open — re-fetch into the existing panel rather than stacking.
     if (state) {
       state.currentId = iid;
+      // Re-arm onClose to the latest caller's callback; the previous one
+      // never fires (we're re-pointing, not closing).
+      state.onClose = opts.onClose || null;
       updateUrl(iid, /*replace=*/true);
       setHeaderLoading(state, iid);
       await loadInto(state);
@@ -50,6 +58,7 @@
     }
 
     state = buildPanel(iid);
+    state.onClose = opts.onClose || null;
     document.body.appendChild(state.backdrop);
 
     updateUrl(iid, /*replace=*/false);
@@ -73,6 +82,11 @@
     if (!state) return;
     opts = opts || {};
 
+    // Pull the callback off state BEFORE teardown so a re-entrant close
+    // (e.g. callback synchronously triggers another close) can't double-fire.
+    const cb = state.onClose;
+    state.onClose = null;
+
     document.removeEventListener("keydown", state.onKey);
     window.removeEventListener("popstate", state.onPopstate);
 
@@ -91,6 +105,12 @@
     if (!opts.skipUrlUpdate) clearUrl();
 
     state = null;
+
+    if (cb) {
+      try { cb(); } catch (e) {
+        if (window.console) console.error("[InteractionPanel] onClose threw:", e);
+      }
+    }
   }
 
   function buildPanel(iid) {
@@ -135,6 +155,7 @@
       currentId: iid,
       onKey: null,
       onPopstate: null,
+      onClose: null,
     };
 
     self.onKey = function (e) {

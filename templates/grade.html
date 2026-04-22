@@ -1580,7 +1580,7 @@
         renderClarifyingScreen(result.interaction_id, result.clarifying_questions || []);
       } else {
         overlay.close();
-        renderGradeResult(result);
+        openGradeResultPanel(result.interaction_id);
       }
     } catch (err) {
       overlay.close();
@@ -1615,6 +1615,31 @@
     const lower = s.toLowerCase();
     if (lower === "unknown" || lower === "name not provided") return "Not detected";
     return s;
+  }
+
+  // Phase 2c: grade success now lands in EA.InteractionPanel instead of the
+  // inline result section. We do the same teardown that renderGradeResult
+  // used to (hide form, kill the CQ wizard, hide clarifying section), then
+  // open the panel and arm an onClose hook that re-prepares the form for
+  // the next grade — saving caller-only sticky context first so resetForm's
+  // applyGradeContext call can rehydrate the caller dropdown.
+  function openGradeResultPanel(interactionId) {
+    $("#grade-form-section").hidden = true;
+    teardownCqWizard();
+    const cs = document.getElementById("clarifying-section");
+    if (cs) { cs.hidden = true; }
+
+    // Suppress the beforeunload "unsaved changes" prompt — the grade is
+    // saved server-side; closing the panel is not a data-loss event.
+    window.gradeComplete = true;
+    EA.toast("Grade complete — score saved.", "success");
+
+    EA.InteractionPanel.open(interactionId, {
+      onClose: function () {
+        saveGradeContextSticky();
+        resetForm();
+      },
+    });
   }
 
   function renderGradeResult(result, opts) {
@@ -2037,7 +2062,7 @@
         { method: "POST", body: { context_answers: answers || {} } }
       );
       overlay.close();
-      renderGradeResult(result);
+      openGradeResultPanel(result.interaction_id);
     } catch (err) {
       overlay.close();
       EA.toast(err.message || "Grading failed", "error");
@@ -2173,6 +2198,23 @@
       }));
     } catch (_) { /* private mode etc. — non-fatal */ }
   }
+  // Phase 2c: caller-only sticky payload written when the inline result
+  // panel closes. Project / location / campaign are intentionally NOT
+  // saved — the user re-picks the location-driven cascade for each grade.
+  // Marked with sticky:true so applyGradeContext can route it down a
+  // separate branch instead of misinterpreting it as the legacy shape.
+  function saveGradeContextSticky() {
+    const callerSel = $("#gf-caller");
+    const callerId  = callerSel ? (callerSel.value || "") : "";
+    if (!callerId) return;
+    try {
+      sessionStorage.setItem(GRADE_CTX_KEY, JSON.stringify({
+        sticky: true,
+        caller_user_id: callerId,
+        ts: Date.now(),
+      }));
+    } catch (_) { /* private mode etc. — non-fatal */ }
+  }
   function readGradeContext() {
     try {
       const raw = sessionStorage.getItem(GRADE_CTX_KEY);
@@ -2192,6 +2234,22 @@
   function applyGradeContext() {
     const ctx = readGradeContext();
     if (!ctx) return;
+
+    // Phase 2c sticky payload: caller-only. Restore the caller dropdown and
+    // bail — location/project/campaign are intentionally left empty so the
+    // user re-picks the cascade. Caller dropdown was loaded once at init
+    // and survives resetForm's $("#grade-form").reset().
+    if (ctx.sticky) {
+      const callerSel = $("#gf-caller");
+      if (callerSel && ctx.caller_user_id) {
+        const opt = Array.from(callerSel.options).find(
+          (o) => String(o.value) === String(ctx.caller_user_id),
+        );
+        if (opt) callerSel.value = String(ctx.caller_user_id);
+      }
+      return;
+    }
+
     const locSel  = $("#gf-location");
     const projSel = $("#gf-project");
     if (!locSel || locSel.disabled) return;
