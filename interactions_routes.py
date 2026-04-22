@@ -1940,7 +1940,11 @@ def hard_delete_interaction(interaction_id):
                 (interaction_id, current_user.user_id,
                  owning_company_id, owning_project_id),
             )
-            deletion_id = cur.fetchone()[0]
+            row = cur.fetchone()
+            try:
+                deletion_id = row["deletion_id"]
+            except (KeyError, TypeError, IndexError):
+                deletion_id = row[0]
         else:
             cur = conn.execute(
                 "INSERT INTO interaction_deletions "
