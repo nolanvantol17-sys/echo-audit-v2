@@ -32,6 +32,13 @@
 // consumer's `onItemAdd` only fires when the user's first non-empty name
 // blurs. Empty rows abandon silently (row ×, destroy, or refocus elsewhere).
 // Backend never sees empty-name rows.
+//
+// Delete — cancel vs. failure
+// ───────────────────────────
+// onItemDelete resolving to `false` (or `Promise<false>`) is "user declined" —
+// row stays, no `.row-error`. Rejecting is failure — row stays, `.row-error`
+// applied. Any other resolution removes the row. This lets consumers wire
+// a confirm-dialog-then-DELETE flow without a row flashing red on cancel.
 (function () {
   "use strict";
   const EA = (window.EA = window.EA || {});
@@ -300,12 +307,18 @@
       if (!onItemDelete) { removeItemLocally(item); return; }
       const p = Promise.resolve()
         .then(function () { return onItemDelete({ id: item.id, item: item }); })
-        .then(function () {
+        .then(function (result) {
           if (destroyed) return;
+          // Consumer returned `false` — silent cancel (e.g. dismissed confirm).
+          // Keep the row, no error state.
+          if (result === false) {
+            delete item._pendingDelete;
+            return;
+          }
           removeItemLocally(item);
         })
         .catch(function () {
-          // Consumer rejected (canceled confirm, or API error). Keep row.
+          // Consumer rejected — API error or other failure. Keep row, flag.
           delete item._pendingDelete;
           if (destroyed) return;
           setRowError(item);
