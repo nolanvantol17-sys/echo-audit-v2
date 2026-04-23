@@ -154,22 +154,6 @@
   </div>
 </details>
 
-{# ── Campaigns ───────────────────────────────────── #}
-{% if user_role in ('admin', 'super_admin') %}
-<details class="collapsible settings-section">
-  <summary>Campaigns</summary>
-  <div class="collapsible-body">
-    <div class="section-desc">
-      Rename or remove campaigns used to label graded calls.
-      New campaigns are created from the Grade page.
-    </div>
-    <div id="campaigns-wrap">
-      <div class="skeleton" style="height:18px;margin:8px 0;"></div>
-    </div>
-  </div>
-</details>
-{% endif %}
-
 {# ── Account ───────────────────────────────────────── #}
 <details id="account" class="collapsible settings-section">
   <summary>Account</summary>
@@ -225,7 +209,7 @@
   const $ = (s) => document.querySelector(s);
 
   // Shared caches so child dropdowns don't each refetch.
-  const cache = { locations: [], phoneRoutings: [], hints: [], campaigns: [] };
+  const cache = { locations: [], phoneRoutings: [], hints: [] };
 
   // Single source of truth for transcription-hint limits (server-injected).
   const KEYTERMS_MAX_TERMS  = {{ keyterms_prompt_max_terms }};
@@ -250,7 +234,6 @@
       loadPhoneRoutings(),
       loadAccount(),
       loadHints(),
-      loadCampaigns(),
     ]);
     wireDirtyGuard();
   }
@@ -637,121 +620,6 @@
         EA.toast(err.message || "Bulk add failed", "error");
       }
     }
-  }
-
-  // ── Campaigns ───────────────────────────────────
-  // Settings is company-scoped but the campaigns API is project-scoped, so we
-  // fan out one fetch per project in parallel and flatten the results. For
-  // tenants with a handful of projects this is cheaper than maintaining a new
-  // company-scoped aggregate endpoint; revisit if a tenant ends up with dozens.
-  async function loadCampaigns() {
-    const wrap = document.getElementById("campaigns-wrap");
-    if (!wrap) return;  // hidden for non-admin roles
-    try {
-      const projects = await EA.fetchJSON("/api/projects");
-      const lists = await Promise.all((projects || []).map(async (p) => {
-        try {
-          const items = await EA.fetchJSON("/api/projects/" + p.project_id + "/campaigns");
-          return (items || []).map((c) => Object.assign({}, c, {
-            project_name: p.project_name,
-          }));
-        } catch (e) {
-          return [];
-        }
-      }));
-      const flat = [].concat.apply([], lists);
-      // Match Grade page ordering: most-recent-used first, NULLs last.
-      flat.sort((a, b) => {
-        const ax = a.last_used_at, bx = b.last_used_at;
-        if (ax && bx) return (ax < bx ? 1 : (ax > bx ? -1 : 0));
-        if (ax && !bx) return -1;
-        if (!ax && bx) return 1;
-        return 0;
-      });
-      cache.campaigns = flat;
-      renderCampaigns();
-    } catch (err) {
-      cache.campaigns = [];
-      EA.showError("#campaigns-wrap", err.message || "Failed to load campaigns.");
-    }
-  }
-
-  function renderCampaigns() {
-    const wrap = document.getElementById("campaigns-wrap");
-    if (!wrap) return;
-    if (!cache.campaigns.length) {
-      wrap.innerHTML =
-        '<div class="empty-state">' +
-          '<div>No campaigns yet. Create one from the Grade page.</div>' +
-        '</div>';
-      return;
-    }
-    const rows = cache.campaigns.map((c) => {
-      const lastUsed = c.last_used_at
-        ? EA.esc(EA.formatRelativeTime(c.last_used_at))
-        : '<span class="muted">Never</span>';
-      return (
-        '<tr data-id="' + c.campaign_id + '">' +
-          '<td>' + EA.esc(c.project_name || "—") + '</td>' +
-          '<td>' + EA.esc(c.campaign_name) + '</td>' +
-          '<td>' + (Number(c.usage_count) || 0) + '</td>' +
-          '<td>' + lastUsed + '</td>' +
-          '<td style="text-align:right;">' +
-            '<button type="button" class="btn btn-ghost btn-sm camp-edit" data-id="' + c.campaign_id + '">Edit</button>' +
-            '<button type="button" class="btn btn-ghost btn-sm camp-delete" data-id="' + c.campaign_id + '">Delete</button>' +
-          '</td>' +
-        '</tr>'
-      );
-    }).join("");
-    wrap.innerHTML =
-      '<table class="history-table"><thead><tr>' +
-        '<th>Project</th><th>Name</th><th>Usage</th><th>Last used</th><th></th>' +
-      '</tr></thead><tbody>' + rows + '</tbody></table>';
-    wrap.querySelectorAll(".camp-edit").forEach((b) => b.onclick = () => onEditCampaign(b.dataset.id));
-    wrap.querySelectorAll(".camp-delete").forEach((b) => b.onclick = () => onDeleteCampaign(b.dataset.id));
-  }
-
-  async function onEditCampaign(id) {
-    const camp = cache.campaigns.find((x) => String(x.campaign_id) === String(id));
-    if (!camp) return;
-    const data = await EA.formDialog({
-      title: "Rename campaign",
-      fields: [
-        { name: "campaign_name", label: "Name", required: true, value: camp.campaign_name },
-      ],
-      okLabel: "Save",
-    });
-    if (!data) return;
-    const name = (data.campaign_name || "").trim();
-    if (!name || name === camp.campaign_name) return;
-    try {
-      await EA.fetchJSON("/api/campaigns/" + encodeURIComponent(id),
-                         { method: "PUT", body: { campaign_name: name } });
-      await loadCampaigns();
-      EA.toast("Campaign renamed.", "success");
-    } catch (err) { EA.toast(err.message || "Rename failed", "error"); }
-  }
-
-  async function onDeleteCampaign(id) {
-    const camp = cache.campaigns.find((x) => String(x.campaign_id) === String(id));
-    if (!camp) return;
-    const usage = Number(camp.usage_count) || 0;
-    const body = (usage > 0)
-      ? '"' + camp.campaign_name + '" has ' + usage + ' interaction' + (usage === 1 ? '' : 's') +
-        ' attached. Past grades stay labeled, but new grades won\u2019t be able to pick this campaign.'
-      : '"' + camp.campaign_name + '" has no interactions attached. This removes it from the list.';
-    const ok = await EA.confirmDialog({
-      title: "Delete campaign?",
-      body: body,
-      okLabel: "Delete",
-      variant: "danger",
-    });
-    if (!ok) return;
-    try {
-      await EA.fetchJSON("/api/campaigns/" + encodeURIComponent(id), { method: "DELETE" });
-      await loadCampaigns();
-      EA.toast("Campaign deleted.", "success");
-    } catch (err) { EA.toast(err.message || "Delete failed", "error"); }
   }
 
   // ── Bulk upload ───────────────────────────────
