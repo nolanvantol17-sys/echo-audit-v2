@@ -71,7 +71,11 @@
   /* ── Rubric panel (Rubric tab) ────────────────────────── */
   /* All .rubric-item / .rubric-editor-header / .rubric-snapshot-note
      styling lives in app.css — shared with the project wizard. */
-  #rubric-panel { padding: 20px 22px; }
+  #rubric-panel    { padding: 20px 22px; }
+
+  /* ── Campaigns panel (Campaigns tab) ──────────────────── */
+  /* Uses .history-table for the row layout; nothing else needed. */
+  #campaigns-panel { padding: 20px 22px; }
 
   /* ── Project Settings popover ───────────────────────── */
   .settings-wrap { position: relative; display: inline-block; }
@@ -143,6 +147,9 @@
   <div class="tabs">
     <button type="button" class="tab-btn" data-tab="dashboard">Dashboard</button>
     <button type="button" class="tab-btn" data-tab="rubric">Rubric</button>
+    {% if user_role in ('admin', 'super_admin') %}
+    <button type="button" class="tab-btn" data-tab="campaigns">Campaigns</button>
+    {% endif %}
   </div>
 
   <section class="tab-panel" data-tab-panel="dashboard">
@@ -164,6 +171,18 @@
       </div>
     </section>
   </section>
+
+  {% if user_role in ('admin', 'super_admin') %}
+  <section class="tab-panel" data-tab-panel="campaigns" hidden>
+    <section class="panel" id="campaigns-panel">
+      <div id="campaigns-mount">
+        <div class="skeleton" style="height:52px;margin-bottom:8px;"></div>
+        <div class="skeleton" style="height:52px;margin-bottom:8px;"></div>
+        <div class="skeleton" style="height:52px;"></div>
+      </div>
+    </section>
+  </section>
+  {% endif %}
 </div>
 {% endblock %}
 
@@ -186,10 +205,12 @@
   const $ = (s) => document.querySelector(s);
 
   const state = { summary: null };
-  let widgetHandle = null;
-  let tabsHandle   = null;
-  let editorHandle = null;
-  let editorMounted = false;
+  let widgetHandle    = null;
+  let tabsHandle      = null;
+  let editorHandle    = null;
+  let editorMounted   = false;
+  let campaignsHandle = null;
+  let campaignsMounted = false;
 
   async function init() {
     $("#btn-start-grading").href = "/app/grade?project_id=" + PROJECT_ID;
@@ -213,6 +234,9 @@
         if (tabsHandle && typeof tabsHandle.destroy === "function") {
           try { tabsHandle.destroy(); } catch (_) {}
         }
+        if (campaignsHandle && typeof campaignsHandle.destroy === "function") {
+          try { campaignsHandle.destroy(); } catch (_) {}
+        }
       },
     };
   }
@@ -234,10 +258,10 @@
     widgetHandle = EA.DashboardWidget.init(opts);
   }
 
-  // ── Tabs (Dashboard / Rubric) ────────────────────────────
+  // ── Tabs (Dashboard / Rubric / Campaigns) ────────────────
   // Default to Dashboard so the first impression is unchanged. The Rubric
-  // editor mounts lazily on first activation — users who never open the tab
-  // never pay the /items round-trip.
+  // editor and Campaigns table both mount lazily on first activation —
+  // users who never open a tab never pay its round-trip cost.
   function initTabs() {
     const container = document.getElementById("hub-tabs");
     if (!container || !window.EA || !EA.Tabs) return;
@@ -245,7 +269,8 @@
       container:  container,
       defaultTab: "dashboard",
       onActivate: function (name) {
-        if (name === "rubric" && !editorMounted) mountRubricEditor();
+        if (name === "rubric"    && !editorMounted)    mountRubricEditor();
+        if (name === "campaigns" && !campaignsMounted) mountCampaignsTab();
       },
     });
   }
@@ -268,6 +293,123 @@
       gradeTarget:   state.summary.rg_grade_target || "respondent",
       isAdmin:       IS_ADMIN,
     });
+  }
+
+  // ── Campaigns tab (lazy) ─────────────────────────────────
+  // Single-project scope means we render the server's order verbatim
+  // (last_used DESC NULLS LAST, then created DESC) — no client sort.
+  // Creation lives on the Grade page; this tab only renames + soft-
+  // deletes. Edit/Delete buttons assume admin/super_admin (the tab
+  // itself is template-gated to that role, so we don't re-check here).
+  function mountCampaignsTab() {
+    const mount = document.getElementById("campaigns-mount");
+    if (!mount) return;
+    campaignsMounted = true;
+
+    let cache = [];
+
+    async function load() {
+      try {
+        cache = await EA.fetchJSON("/api/projects/" + PROJECT_ID + "/campaigns") || [];
+        render();
+      } catch (err) {
+        mount.innerHTML = '<div class="section-error">' +
+          EA.esc(err.message || "Failed to load campaigns.") + '</div>';
+      }
+    }
+
+    function render() {
+      if (!cache.length) {
+        mount.innerHTML =
+          '<div class="empty-state">' +
+            'No campaigns yet. ' +
+            '<a href="/app/grade?project_id=' + PROJECT_ID + '" data-no-swap>Start a grade</a> ' +
+            'to create your first one.' +
+          '</div>';
+        return;
+      }
+      const rows = cache.map(function (c) {
+        const lastUsed = c.last_used_at
+          ? EA.esc(EA.formatRelativeTime(c.last_used_at))
+          : '<span class="muted">Never</span>';
+        return (
+          '<tr data-id="' + c.campaign_id + '">' +
+            '<td>' + EA.esc(c.campaign_name) + '</td>' +
+            '<td>' + (Number(c.usage_count) || 0) + '</td>' +
+            '<td>' + lastUsed + '</td>' +
+            '<td style="text-align:right;">' +
+              '<button type="button" class="btn btn-ghost btn-sm camp-edit" data-id="' + c.campaign_id + '">Edit</button>' +
+              '<button type="button" class="btn btn-ghost btn-sm camp-delete" data-id="' + c.campaign_id + '">Delete</button>' +
+            '</td>' +
+          '</tr>'
+        );
+      }).join("");
+      mount.innerHTML =
+        '<div class="muted text-small" style="margin-bottom:10px;">' +
+          'Rename or remove campaigns used to label graded calls. ' +
+          'New campaigns are created from the Grade page.' +
+        '</div>' +
+        '<table class="history-table"><thead><tr>' +
+          '<th>Name</th><th>Usage</th><th>Last used</th><th></th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table>';
+      mount.querySelectorAll(".camp-edit").forEach(function (b) {
+        b.onclick = function () { onEdit(b.dataset.id); };
+      });
+      mount.querySelectorAll(".camp-delete").forEach(function (b) {
+        b.onclick = function () { onDelete(b.dataset.id); };
+      });
+    }
+
+    async function onEdit(id) {
+      const camp = cache.find(function (x) { return String(x.campaign_id) === String(id); });
+      if (!camp) return;
+      const data = await EA.formDialog({
+        title:   "Rename campaign",
+        fields:  [{ name: "campaign_name", label: "Name", required: true, value: camp.campaign_name }],
+        okLabel: "Save",
+      });
+      if (!data) return;
+      const name = (data.campaign_name || "").trim();
+      if (!name || name === camp.campaign_name) return;
+      try {
+        await EA.fetchJSON("/api/campaigns/" + encodeURIComponent(id),
+                           { method: "PUT", body: { campaign_name: name } });
+        await load();
+        EA.toast("Campaign renamed.", "success");
+      } catch (err) { EA.toast(err.message || "Rename failed", "error"); }
+    }
+
+    async function onDelete(id) {
+      const camp = cache.find(function (x) { return String(x.campaign_id) === String(id); });
+      if (!camp) return;
+      const usage = Number(camp.usage_count) || 0;
+      const body = (usage > 0)
+        ? '"' + camp.campaign_name + '" has ' + usage + ' interaction' + (usage === 1 ? '' : 's') +
+          ' attached. Past grades stay labeled, but new grades won’t be able to pick this campaign.'
+        : '"' + camp.campaign_name + '" has no interactions attached. This removes it from the list.';
+      const ok = await EA.confirmDialog({
+        title:   "Delete campaign?",
+        body:    body,
+        okLabel: "Delete",
+        variant: "danger",
+      });
+      if (!ok) return;
+      try {
+        await EA.fetchJSON("/api/campaigns/" + encodeURIComponent(id), { method: "DELETE" });
+        await load();
+        EA.toast("Campaign deleted.", "success");
+      } catch (err) { EA.toast(err.message || "Delete failed", "error"); }
+    }
+
+    load();
+
+    campaignsHandle = {
+      // Refresh exposed for future wiring (e.g. visibilitychange or a
+      // post-Grade-page return signal). Not auto-called today — Q3 deferred
+      // until users hit the stale-data scenario.
+      refresh: load,
+      destroy: function () { /* no observers, timers, or doc-level listeners */ },
+    };
   }
 
   // ── Project Settings popover (Edit + Delete) ─────────────
