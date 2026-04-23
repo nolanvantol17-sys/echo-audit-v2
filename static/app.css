@@ -747,6 +747,134 @@ button { font-family: inherit; }
   line-height: 1.5;
 }
 
+/* ── Rubric item module (EA.RubricListView) ─────────────────────
+   Shared by the project wizard (templates/projects.html) and the
+   Project Hub's Rubric tab (templates/project_hub.html). Both
+   surfaces mount EA.RubricListView with identical markup, so the
+   styles live here rather than in either page's <style> block. */
+.rubric-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+
+.rubric-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.rubric-snapshot-note {
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  margin-bottom: 14px;
+  line-height: 1.45;
+}
+
+.rubric-item {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 1fr 120px 80px 28px;
+  gap: 10px;
+  align-items: center;
+  animation: item-fade-in 240ms ease both;
+}
+.rubric-item.with-reorder { grid-template-columns: 16px 1fr 120px 80px 28px; }
+.rubric-item.fading-out   { animation: item-fade-out 180ms ease both; }
+@keyframes item-fade-in  { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes item-fade-out { from { opacity: 1; } to { opacity: 0; transform: translateY(-4px); } }
+
+.rubric-item .ri-name {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.92rem;
+  padding: 4px 6px;
+  border-radius: 6px;
+  width: 100%;
+}
+.rubric-item .ri-name:focus,
+.rubric-item .ri-name:hover { border-color: var(--border); background: var(--surface); outline: none; }
+.rubric-item .ri-type   { font-size: 0.82rem; padding: 4px 6px; }
+.rubric-item .ri-weight { font-size: 0.82rem; padding: 4px 6px; text-align: center; }
+.rubric-item .ri-delete {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.rubric-item .ri-delete:hover { color: var(--danger); background: rgba(255,69,58,0.1); }
+
+.rubric-item .ri-guidance {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  padding: 6px 6px 0;
+  border-top: 1px dashed var(--border);
+  margin-top: 4px;
+}
+.rubric-item .ri-guidance textarea {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.82rem;
+  padding: 6px 8px;
+  resize: vertical;
+  min-height: 46px;
+}
+
+.rubric-item .ri-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 10px;
+  padding: 4px 0 0;
+}
+.rubric-item .btn-linklike {
+  background: transparent;
+  border: none;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 0.82rem;
+  padding: 0;
+}
+.rubric-item .btn-linklike:hover { text-decoration: underline; }
+.rubric-item .btn-linklike:disabled { color: var(--muted); cursor: not-allowed; text-decoration: none; }
+
+.rubric-thinking {
+  color: var(--muted);
+  font-size: 0.9rem;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+.rubric-thinking::before {
+  content: "";
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+  animation: thinking-pulse 1.1s ease-in-out infinite;
+}
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.8); }
+  50%      { opacity: 1; transform: scale(1.2); }
+}
+.rubric-status { color: var(--muted); font-size: 0.82rem; margin-top: 12px; }
+
 .bullet-list {
   list-style: none;
   padding: 0;
@@ -1204,31 +1332,12 @@ audio.app-audio {
 }
 
 /* ── Drag + drop reordering ─────────────────────────────── */
-.drag-row {
-  display: grid;
-  grid-template-columns: 28px 1fr auto;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  margin-bottom: 6px;
-  cursor: grab;
-}
-.drag-row.dragging { opacity: 0.4; }
-.drag-row.drag-over {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
 .drag-handle {
   color: var(--muted);
   font-size: 1.1rem;
   text-align: center;
   user-select: none;
 }
-.drag-row-title { font-size: 0.88rem; font-weight: 500; }
-.drag-row-meta  { font-size: 0.76rem; color: var(--muted); }
 
 /* ── Tag / meta chips on list rows ───────────────────────── */
 .meta-chip {
