@@ -174,23 +174,35 @@
   }
   .wizard-footer .right-group { display: flex; gap: 8px; }
 
-  .wizard-tabs {
+  .starter-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .starter-card {
     display: flex;
-    gap: 2px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 14px;
-  }
-  .wizard-tab {
-    padding: 8px 14px;
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: var(--muted);
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    text-align: left;
     cursor: pointer;
-    font-size: 0.88rem;
-    font-weight: 600;
+    transition: border-color 0.12s ease, background 0.12s ease;
+    font-family: inherit;
   }
-  .wizard-tab.active { color: var(--text); border-bottom-color: var(--primary); }
+  .starter-card:hover { border-color: var(--border-strong); }
+  .starter-card.active {
+    border-color: var(--primary);
+    background: rgba(10,132,255,0.08);
+  }
+  .starter-icon  { font-size: 1.4rem; line-height: 1; }
+  .starter-title { font-weight: 600; color: var(--text); font-size: 0.92rem; }
+  .starter-sub   { color: var(--muted); font-size: 0.78rem; line-height: 1.35; }
+  .starter-hint  { margin-bottom: 14px; }
+  .starter-panel { margin-bottom: 8px; }
 
   /* Rubric preview list + .rubric-item module live in app.css —
      shared with the Project Hub's Rubric tab. */
@@ -290,12 +302,28 @@
 
       {# Step 2 — Rubric #}
       <div class="wizard-step" data-step="2" hidden>
-        <div class="wizard-tabs">
-          <button type="button" class="wizard-tab active" data-rub-tab="ai">Generate with AI</button>
-          <button type="button" class="wizard-tab" data-rub-tab="manual">Build Manually</button>
+        <div class="starter-cards" role="group" aria-label="Starting point">
+          <button type="button" class="starter-card" data-starter="ai">
+            <div class="starter-icon">&#10024;</div>
+            <div class="starter-title">Generate with AI</div>
+            <div class="starter-sub">Describe your call and let Claude draft the rubric.</div>
+          </button>
+          <button type="button" class="starter-card" data-starter="template">
+            <div class="starter-icon">&#128203;</div>
+            <div class="starter-title">Start from template</div>
+            <div class="starter-sub">Pick an industry preset and customize from there.</div>
+          </button>
+          <button type="button" class="starter-card" data-starter="blank">
+            <div class="starter-icon">+</div>
+            <div class="starter-title">Start blank</div>
+            <div class="starter-sub">Build your rubric one item at a time.</div>
+          </button>
+        </div>
+        <div class="starter-hint muted text-small" data-role="starter-hint">
+          Choose how you'd like to build your rubric.
         </div>
 
-        <div class="rubric-tab-panel" data-rub-panel="ai">
+        <div class="starter-panel" data-starter-panel="ai" hidden>
           <div class="field">
             <label class="field-label" for="wiz-desc">Describe what you're grading</label>
             <textarea id="wiz-desc" class="field-input" rows="4"
@@ -312,8 +340,16 @@
           <div id="rub-name-display" class="muted text-small" style="margin-top:10px;" hidden></div>
         </div>
 
-        <div class="rubric-tab-panel" data-rub-panel="manual" hidden>
-          <p class="muted text-small">Start empty and add items one at a time.</p>
+        <div class="starter-panel" data-starter-panel="template" hidden>
+          <div class="field">
+            <label class="field-label" for="wiz-template-key">Industry template</label>
+            <select id="wiz-template-key" class="field-select">
+              <option value="">Loading templates&hellip;</option>
+            </select>
+          </div>
+          <div class="hstack-wrap">
+            <button type="button" class="btn btn-primary" id="btn-apply-template" disabled>Apply Template</button>
+          </div>
         </div>
 
         <div id="wizard-rubric-mount"></div>
@@ -335,14 +371,14 @@
             <input type="radio" name="wiz-grade-target" value="respondent" checked>
             <div class="gt-copy">
               <div class="gt-copy-title">The person who answered the call</div>
-              <div class="gt-copy-sub">Secret-shopping pattern — you're grading whoever picked up.</div>
+              <div class="gt-copy-sub">Secret-shopping pattern &mdash; you're grading whoever picked up.</div>
             </div>
           </label>
           <label>
             <input type="radio" name="wiz-grade-target" value="caller">
             <div class="gt-copy">
               <div class="gt-copy-title">The person who placed the call</div>
-              <div class="gt-copy-sub">Coaching pattern — you're grading your own caller.</div>
+              <div class="gt-copy-sub">Coaching pattern &mdash; you're grading your own caller.</div>
             </div>
           </label>
         </div>
@@ -445,7 +481,8 @@
       step:           1,
       editingProjectId: null,      // null = create, number = edit
       returnToHub:    false,       // set when entered via ?return=hub
-      rubricTab:      "ai",
+      startingPoint:       null,   // null | "ai" | "template" | "blank"
+      selectedTemplateKey: "",
       rubricName:     "",
       isGenerating:   false,
       currentStream:  null,        // AbortController
@@ -467,6 +504,21 @@
   // Wizard's rubric list view — EA.RubricListView handle. Single source of
   // truth for rubric items in the wizard; state.wizard no longer mirrors.
   let wizardRubricView = null;
+
+  // Industry-template cache. Pulled from /api/rubric-templates the first time
+  // the user opens the Template starter; survives across wizard opens since
+  // templates are static per company.
+  let templatesCache = null;
+
+  // V1 criterion type → V2 ri_score_type. Mirrors rubric_templates.py's
+  // V1_TO_V2_SCORE_TYPE so we can apply templates client-side without round-
+  // tripping through POST /api/rubric-templates/<key>/apply (which would
+  // create a server-side rubric_group — wizard saves at the end instead).
+  const V1_TO_V2_SCORE_TYPE = {
+    "numeric":        "out_of_10",
+    "yes_no":         "yes_no",
+    "yes_no_pending": "yes_no_pending",
+  };
 
   // ── Boot ─────────────────────────────────────────
   // The wizard isn't yet a shared component — markup + JS live inline here.
@@ -723,7 +775,7 @@
     Object.assign(state.wizard, {
       open: false, step: 1, editingProjectId: null,
       returnToHub: false,
-      rubricTab: "ai", rubricName: "",
+      startingPoint: null, selectedTemplateKey: "", rubricName: "",
       isGenerating: false, currentStream: null,
       gradeTarget: "respondent",
       projectName: "", description: "", script: "",
@@ -745,7 +797,7 @@
     // default the first grade-target radio back on
     const def = document.querySelector('input[name="wiz-grade-target"][value="respondent"]');
     if (def) def.checked = true;
-    switchRubricTab("ai");
+    clearStartingPointUi();
   }
 
   function closeWizard() {
@@ -964,21 +1016,130 @@
     }
   }
 
-  // ── Rubric generation (SSE stream) ──────────────
-  function switchRubricTab(tab) {
-    state.wizard.rubricTab = tab;
-    document.querySelectorAll(".wizard-tab").forEach(function (b) {
-      b.classList.toggle("active", b.dataset.rubTab === tab);
+  // ── Starting-point selection (AI / Template / Blank) ──────────
+  // All three paths feed into the same EA.RubricListView mounted at
+  // #wizard-rubric-mount. The buttons just populate its initial state.
+  // Switching between starters with existing items prompts to confirm —
+  // and aborts any in-flight AI SSE stream so we don't leak callbacks.
+  function clearStartingPointUi() {
+    document.querySelectorAll(".starter-card").forEach(function (b) {
+      b.classList.remove("active");
     });
-    document.querySelectorAll(".rubric-tab-panel").forEach(function (p) {
-      p.hidden = p.dataset.rubPanel !== tab;
+    document.querySelectorAll(".starter-panel").forEach(function (p) {
+      p.hidden = true;
     });
-    // Seed one empty row so the user sees the UI shape immediately. The
-    // null-guard handles resetWizardState()'s early call — view isn't
-    // mounted yet when resetWizardState runs during openWizard.
-    if (tab === "manual" && wizardRubricView && !wizardRubricView.getItems().length) {
-      wizardRubricView.addBlankRow();
+    const hint = document.querySelector('[data-role="starter-hint"]');
+    if (hint) hint.hidden = false;
+  }
+
+  async function switchStartingPoint(point) {
+    if (state.wizard.startingPoint === point) return;
+
+    // Only count rows the user has actually named — addBlankRow() inserts
+    // an empty placeholder for the Blank starter, and we don't want that
+    // to trip the confirm dialog on the very next click.
+    const items = wizardRubricView ? wizardRubricView.getItems() : [];
+    const meaningful = items.filter(function (it) {
+      return (it.name || "").trim();
+    }).length;
+    if (meaningful > 0) {
+      const ok = await EA.confirmDialog({
+        title:       "Switch starting point?",
+        body:        "Your " + meaningful + " " +
+                     (meaningful === 1 ? "item" : "items") + " will be replaced.",
+        okLabel:     "Switch",
+        cancelLabel: "Keep editing",
+        variant:     "danger",
+      });
+      if (!ok) return;
+    }
+
+    // Bail out of AI mid-stream — the SSE callback would otherwise keep
+    // appending items into the freshly-cleared editor.
+    if (state.wizard.isGenerating && state.wizard.currentStream) {
+      try { state.wizard.currentStream.abort(); } catch (_) {}
+      state.wizard.currentStream = null;
+      state.wizard.isGenerating  = false;
+      $("#btn-generate-rubric").disabled = false;
+      $("#btn-refine-rubric") && ($("#btn-refine-rubric").disabled = false);
+      if (wizardRubricView) wizardRubricView.hideThinking();
+    }
+
+    state.wizard.startingPoint        = point;
+    state.wizard.selectedTemplateKey  = "";
+    if (wizardRubricView) {
+      wizardRubricView.setItems([]);
+      wizardRubricView.setStatus("");
+    }
+    $("#rub-refine").hidden       = true;
+    $("#rub-name-display").hidden = true;
+
+    document.querySelectorAll(".starter-card").forEach(function (b) {
+      b.classList.toggle("active", b.dataset.starter === point);
+    });
+    document.querySelectorAll(".starter-panel").forEach(function (p) {
+      p.hidden = p.dataset.starterPanel !== point;
+    });
+    const hint = document.querySelector('[data-role="starter-hint"]');
+    if (hint) hint.hidden = true;
+
+    if (point === "blank") {
+      if (wizardRubricView) wizardRubricView.addBlankRow();
       state.wizard.rubricName = state.wizard.rubricName || "Custom Rubric";
+    } else if (point === "template") {
+      loadTemplatesIntoSelect();
+    }
+  }
+
+  async function loadTemplatesIntoSelect() {
+    const sel = $("#wiz-template-key");
+    if (!sel) return;
+    if (templatesCache) { populateTemplateSelect(); return; }
+    try {
+      templatesCache = await EA.fetchJSON("/api/rubric-templates");
+      populateTemplateSelect();
+    } catch (err) {
+      sel.innerHTML = '<option value="">Failed to load templates</option>';
+      EA.toast("Could not load templates: " + (err.message || ""), "error");
+    }
+  }
+
+  function populateTemplateSelect() {
+    const sel = $("#wiz-template-key");
+    if (!sel || !templatesCache) return;
+    const keys = Object.keys(templatesCache);
+    sel.innerHTML = '<option value="">Select a template\u2026</option>' +
+      keys.map(function (k) {
+        const t = templatesCache[k];
+        return '<option value="' + EA.esc(k) + '">' +
+                 EA.esc(t.name) + ' (' + t.criteria.length + ' items)' +
+               '</option>';
+      }).join("");
+    sel.value = state.wizard.selectedTemplateKey || "";
+    $("#btn-apply-template").disabled = !sel.value;
+  }
+
+  function applySelectedTemplate() {
+    const sel = $("#wiz-template-key");
+    const key = sel ? sel.value : "";
+    if (!key || !templatesCache || !templatesCache[key]) {
+      EA.toast("Pick a template first.", "error");
+      return;
+    }
+    const tmpl = templatesCache[key];
+    const items = (tmpl.criteria || []).map(function (c) {
+      return {
+        name:             c.name || "",
+        score_type:       V1_TO_V2_SCORE_TYPE[c.type] || "out_of_10",
+        weight:           c.weight != null ? c.weight : 1.0,
+        scoring_guidance: "",
+      };
+    });
+    state.wizard.selectedTemplateKey = key;
+    state.wizard.rubricName          = tmpl.name;
+    if (wizardRubricView) {
+      wizardRubricView.setItems(items);
+      wizardRubricView.setStatus(items.length + " items applied from " + tmpl.name + ".");
     }
   }
 
@@ -1206,8 +1367,12 @@
     $("#btn-wizard-next").addEventListener("click", nextStep);
     $("#btn-wizard-prev").addEventListener("click", prevStep);
     $("#btn-wizard-create").addEventListener("click", createOrSaveProject);
-    document.querySelectorAll(".wizard-tab").forEach(function (b) {
-      b.addEventListener("click", function () { switchRubricTab(b.dataset.rubTab); });
+    document.querySelectorAll(".starter-card").forEach(function (b) {
+      b.addEventListener("click", function () { switchStartingPoint(b.dataset.starter); });
+    });
+    $("#btn-apply-template").addEventListener("click", applySelectedTemplate);
+    $("#wiz-template-key").addEventListener("change", function () {
+      $("#btn-apply-template").disabled = !$("#wiz-template-key").value;
     });
     $("#btn-generate-rubric").addEventListener("click", function () { generateRubric(false); });
     $("#btn-refine-rubric") .addEventListener("click", function () { generateRubric(true);  });
