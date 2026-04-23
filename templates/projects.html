@@ -275,6 +275,25 @@
     50%      { opacity: 1; transform: scale(1.2); }
   }
 
+  /* Phase 3 tactical — move to app.css in Phase 5 alongside other .rubric-* rules. */
+  .rubric-item .ri-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 10px;
+    padding: 4px 0 0;
+  }
+  .rubric-item .btn-linklike {
+    background: transparent;
+    border: none;
+    color: var(--primary);
+    cursor: pointer;
+    font-size: 0.82rem;
+    padding: 0;
+  }
+  .rubric-item .btn-linklike:hover { text-decoration: underline; }
+  .rubric-item .btn-linklike:disabled { color: var(--muted); cursor: not-allowed; text-decoration: none; }
+  .rubric-status { color: var(--muted); font-size: 0.82rem; margin-top: 12px; }
+
   .grade-target-choice {
     display: flex;
     gap: 10px;
@@ -388,10 +407,7 @@
           </div>
           <div class="hstack-wrap">
             <button type="button" class="btn btn-primary" id="btn-generate-rubric">Generate Rubric</button>
-            <span class="spacer"></span>
-            <span class="text-small muted" id="rub-status"></span>
           </div>
-          <div id="rub-thinking" class="rubric-thinking" hidden>Claude is thinking…</div>
           <div id="rub-name-display" class="muted text-small" style="margin-top:10px;" hidden></div>
         </div>
 
@@ -399,7 +415,7 @@
           <p class="muted text-small">Start empty and add items one at a time.</p>
         </div>
 
-        <div id="rubric-list" class="rubric-list"></div>
+        <div id="wizard-rubric-mount"></div>
         <div class="hstack-wrap" style="margin-top:12px;">
           <button type="button" class="btn btn-ghost btn-sm" id="btn-add-item">+ Add item manually</button>
         </div>
@@ -529,7 +545,6 @@
       editingProjectId: null,      // null = create, number = edit
       returnToHub:    false,       // set when entered via ?return=hub
       rubricTab:      "ai",
-      rubricItems:    [],          // [{name,score_type,weight,scoring_guidance}]
       rubricName:     "",
       isGenerating:   false,
       currentStream:  null,        // AbortController
@@ -547,6 +562,10 @@
 
   // Sentinel value stored in #wiz-location when the user picks "All Locations".
   const ALL_LOCATIONS_SENTINEL = "all";
+
+  // Wizard's rubric list view — EA.RubricListView handle. Single source of
+  // truth for rubric items in the wizard; state.wizard no longer mirrors.
+  let wizardRubricView = null;
 
   // ── Boot ─────────────────────────────────────────
   // The wizard isn't yet a shared component — markup + JS live inline here.
@@ -716,6 +735,25 @@
   }
 
   // ── Wizard ───────────────────────────────────────
+  // Remounts the wizard's rubric view into #wizard-rubric-mount. Called by
+  // both openWizard (create) and openWizardForEdit. In edit mode the step is
+  // skipped entirely; the mount sits empty and is torn down on closeWizard.
+  // No callbacks are wired — the wizard reads items once at submit.
+  function mountWizardRubricView() {
+    if (wizardRubricView) {
+      try { wizardRubricView.destroy(); } catch (_) {}
+      wizardRubricView = null;
+    }
+    wizardRubricView = EA.RubricListView.mount({
+      container:          $("#wizard-rubric-mount"),
+      items:              [],
+      isAdmin:            true,
+      enableInlineEdit:   true,
+      enableReorder:      false,
+      showGuidanceToggle: true,
+    });
+  }
+
   async function openWizard() {
     resetWizardState();
     state.wizard.open = true;
@@ -725,6 +763,7 @@
     $("#wizard-backdrop").hidden = false;
     // Preload lookups concurrently so the user isn't blocked at step 3/4.
     loadLookupsForWizard();
+    mountWizardRubricView();
     showStep(1);
   }
 
@@ -772,6 +811,10 @@
                                    : state.wizard.locationId;
     onWizLocationChange();
     $("#wiz-phone-routing").value = state.wizard.phoneRoutingId;
+    // Mount view even in edit mode — step 2 skip logic (in showStep) keeps
+    // the rubric step hidden, so the view sits idle until closeWizard tears
+    // it down. Cheaper than conditional mounting; keeps teardown symmetric.
+    mountWizardRubricView();
     showStep(1);
   }
 
@@ -779,7 +822,7 @@
     Object.assign(state.wizard, {
       open: false, step: 1, editingProjectId: null,
       returnToHub: false,
-      rubricTab: "ai", rubricItems: [], rubricName: "",
+      rubricTab: "ai", rubricName: "",
       isGenerating: false, currentStream: null,
       gradeTarget: "respondent",
       projectName: "", description: "", script: "",
@@ -788,18 +831,16 @@
       startDate: new Date().toISOString().slice(0,10),
       endDate: "",
     });
-    // DOM reset
+    // DOM reset — rubric mount + status/thinking chrome are owned by
+    // wizardRubricView; mountWizardRubricView() remounts fresh each open.
     $("#wiz-project-name").value = "";
     $("#wiz-desc").value = "";
     $("#wiz-script").value = "";
     $("#wiz-feedback").value = "";
     $("#wiz-start").value = state.wizard.startDate;
     $("#wiz-end").value = "";
-    $("#rub-status").textContent = "";
-    $("#rub-thinking").hidden = true;
     $("#rub-refine").hidden = true;
     $("#rub-name-display").hidden = true;
-    $("#rubric-list").innerHTML = "";
     // default the first grade-target radio back on
     const def = document.querySelector('input[name="wiz-grade-target"][value="respondent"]');
     if (def) def.checked = true;
@@ -810,6 +851,10 @@
     if (state.wizard.currentStream) {
       try { state.wizard.currentStream.abort(); } catch (_) {}
       state.wizard.currentStream = null;
+    }
+    if (wizardRubricView) {
+      try { wizardRubricView.destroy(); } catch (_) {}
+      wizardRubricView = null;
     }
     state.wizard.open = false;
     $("#wizard-backdrop").hidden = true;
@@ -865,8 +910,10 @@
     if (s === 1) return !!$("#wiz-project-name").value.trim();
     if (s === 2) {
       if (state.wizard.editingProjectId) return true;
-      if (!state.wizard.rubricItems.length) {
-        $("#rub-status").textContent = "Add or generate at least one rubric item first.";
+      if (!wizardRubricView || !wizardRubricView.getItems().length) {
+        if (wizardRubricView) {
+          wizardRubricView.setStatus("Add or generate at least one rubric item first.");
+        }
         return false;
       }
       return true;
@@ -1025,16 +1072,13 @@
     document.querySelectorAll(".rubric-tab-panel").forEach(function (p) {
       p.hidden = p.dataset.rubPanel !== tab;
     });
-    if (tab === "manual" && !state.wizard.rubricItems.length) {
-      // Seed one empty row so the user sees the UI shape immediately.
-      state.wizard.rubricItems.push(blankRubricItem());
+    // Seed one empty row so the user sees the UI shape immediately. The
+    // null-guard handles resetWizardState()'s early call — view isn't
+    // mounted yet when resetWizardState runs during openWizard.
+    if (tab === "manual" && wizardRubricView && !wizardRubricView.getItems().length) {
+      wizardRubricView.addBlankRow();
       state.wizard.rubricName = state.wizard.rubricName || "Custom Rubric";
-      renderRubricList();
     }
-  }
-
-  function blankRubricItem() {
-    return { name: "", score_type: "out_of_10", weight: 1.0, scoring_guidance: "" };
   }
 
   async function generateRubric(isRefine) {
@@ -1053,18 +1097,24 @@
     state.wizard.isGenerating = true;
     $("#btn-generate-rubric").disabled = true;
     $("#btn-refine-rubric") && ($("#btn-refine-rubric").disabled = true);
-    $("#rub-thinking").hidden = false;
-    $("#rub-status").textContent = "";
+    wizardRubricView.setStatus("");
 
-    // Fade out existing items on refine
-    if (isRefine && state.wizard.rubricItems.length) {
-      document.querySelectorAll("#rubric-list .rubric-item")
-        .forEach(el => el.classList.add("fading-out"));
-      await new Promise(r => setTimeout(r, 200));
+    // Capture prior items BEFORE fade so the refine payload carries them.
+    // Strip `id` — preview endpoint doesn't want client-side ids.
+    const priorItems = isRefine
+      ? wizardRubricView.getItems().map(function (it) {
+          return {
+            name: it.name, score_type: it.score_type,
+            weight: it.weight, scoring_guidance: it.scoring_guidance,
+          };
+        })
+      : [];
+    // fadeOutAll only adds the class + waits — setItems([]) actually clears.
+    if (isRefine && priorItems.length) {
+      await wizardRubricView.fadeOutAll();
     }
-    const priorItems = isRefine ? state.wizard.rubricItems.slice() : [];
-    state.wizard.rubricItems = [];
-    renderRubricList();
+    wizardRubricView.setItems([]);
+    wizardRubricView.showThinking("Claude is thinking\u2026");
 
     const controller = new AbortController();
     state.wizard.currentStream = controller;
@@ -1090,17 +1140,17 @@
       await consumeSSE(resp, handleSSEFrame);
     } catch (err) {
       if (err.name === "AbortError") { /* user closed wizard */ }
-      else {
-        $("#rub-status").textContent = "Generation failed: " + (err.message || "unknown error");
+      else if (wizardRubricView) {
+        wizardRubricView.setStatus("Generation failed: " + (err.message || "unknown error"));
       }
     } finally {
       state.wizard.isGenerating = false;
       state.wizard.currentStream = null;
       $("#btn-generate-rubric").disabled = false;
       $("#btn-refine-rubric") && ($("#btn-refine-rubric").disabled = false);
-      $("#rub-thinking").hidden = true;
-      if (state.wizard.rubricItems.length) {
-        $("#rub-refine").hidden = false;
+      if (wizardRubricView) {
+        wizardRubricView.hideThinking();
+        if (wizardRubricView.getItems().length) $("#rub-refine").hidden = false;
       }
     }
   }
@@ -1112,12 +1162,11 @@
       el.textContent = "Rubric: " + state.wizard.rubricName;
       el.hidden = false;
     } else if (event === "item") {
-      state.wizard.rubricItems.push(data);
-      renderRubricList();
+      wizardRubricView.appendItem(data);
     } else if (event === "done") {
-      $("#rub-status").textContent = state.wizard.rubricItems.length + " items ready.";
+      wizardRubricView.setStatus(wizardRubricView.getItems().length + " items ready.");
     } else if (event === "error") {
-      $("#rub-status").textContent = data.error || "Stream error";
+      wizardRubricView.setStatus(data.error || "Stream error");
     }
   }
 
@@ -1148,63 +1197,6 @@
     }
   }
 
-  // ── Rubric list rendering ───────────────────────
-  function renderRubricList() {
-    const list = $("#rubric-list");
-    list.innerHTML = state.wizard.rubricItems.map(rubricItemHtml).join("");
-    list.querySelectorAll(".rubric-item").forEach(function (row) {
-      const idx = parseInt(row.dataset.idx, 10);
-      row.querySelector(".ri-name").addEventListener("input", function (e) {
-        state.wizard.rubricItems[idx].name = e.target.value;
-      });
-      row.querySelector(".ri-type").addEventListener("change", function (e) {
-        state.wizard.rubricItems[idx].score_type = e.target.value;
-      });
-      row.querySelector(".ri-weight").addEventListener("input", function (e) {
-        state.wizard.rubricItems[idx].weight = parseFloat(e.target.value) || 1.0;
-      });
-      const gbtn = row.querySelector(".ri-guidance-toggle");
-      const gbox = row.querySelector(".ri-guidance");
-      if (gbtn) gbtn.addEventListener("click", function () {
-        gbox.hidden = !gbox.hidden;
-      });
-      const gta = row.querySelector(".ri-guidance textarea");
-      if (gta) gta.addEventListener("input", function (e) {
-        state.wizard.rubricItems[idx].scoring_guidance = e.target.value;
-      });
-      row.querySelector(".ri-delete").addEventListener("click", function () {
-        state.wizard.rubricItems.splice(idx, 1);
-        renderRubricList();
-      });
-    });
-  }
-
-  function rubricItemHtml(item, idx) {
-    const typeOpt = function (v, label) {
-      return '<option value="' + v + '"' +
-             (item.score_type === v ? ' selected' : '') + '>' + label + '</option>';
-    };
-    const guidance = item.scoring_guidance || "";
-    return (
-      '<div class="rubric-item" data-idx="' + idx + '">' +
-        '<input class="ri-name field-input" value="' + EA.esc(item.name || "") + '" placeholder="Criterion name">' +
-        '<select class="ri-type field-select">' +
-          typeOpt("out_of_10",      "1–10 scale") +
-          typeOpt("yes_no",         "Yes / No") +
-          typeOpt("yes_no_pending", "Yes / No / Pending") +
-        '</select>' +
-        '<input class="ri-weight field-input" type="number" min="0.1" step="0.1" ' +
-               'value="' + (item.weight || 1.0) + '">' +
-        '<button type="button" class="ri-delete" title="Delete">×</button>' +
-        '<div class="ri-guidance"' + (guidance ? '' : ' hidden') + '>' +
-          '<textarea rows="2" placeholder="Scoring guidance — describe what high vs low looks like">' +
-            EA.esc(guidance) +
-          '</textarea>' +
-        '</div>' +
-      '</div>'
-    );
-  }
-
   // ── Review step ─────────────────────────────────
   function renderSummary() {
     captureStepValues();
@@ -1219,8 +1211,9 @@
       ["Date range",    (w.startDate || "—") + " → " + (w.endDate || "ongoing")],
     ];
     if (!w.editingProjectId) {
+      const itemCount = wizardRubricView ? wizardRubricView.getItems().length : 0;
       rows.push(
-        ["Rubric", (w.rubricName || "Custom") + " — " + w.rubricItems.length + " items"],
+        ["Rubric", (w.rubricName || "Custom") + " — " + itemCount + " items"],
         ["Who we're grading", w.gradeTarget === "caller"
           ? "The person who placed the call"
           : "The person who answered the call"],
@@ -1260,7 +1253,8 @@
           return;
         }
       } else {
-        const items = w.rubricItems
+        const viewItems = wizardRubricView ? wizardRubricView.getItems() : [];
+        const items = viewItems
           .map(function (it) {
             return {
               name:             (it.name || "").trim(),
@@ -1317,9 +1311,9 @@
     $("#btn-generate-rubric").addEventListener("click", function () { generateRubric(false); });
     $("#btn-refine-rubric") .addEventListener("click", function () { generateRubric(true);  });
     $("#btn-add-item").addEventListener("click", function () {
-      state.wizard.rubricItems.push(blankRubricItem());
+      if (!wizardRubricView) return;
+      wizardRubricView.addBlankRow();
       if (!state.wizard.rubricName) state.wizard.rubricName = "Custom Rubric";
-      renderRubricList();
     });
     $("#wiz-new-phone-routing-link").addEventListener("click", function (e) {
       e.preventDefault();
