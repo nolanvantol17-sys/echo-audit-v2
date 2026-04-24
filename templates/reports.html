@@ -77,6 +77,15 @@ details.report-location > summary > .score-pill {
   <a href="/app/reports" class="text-small">View all reports →</a>
 </div>
 
+{# ── Location-scoped banner — shown when arrived via Locations page name link. ── #}
+<div id="location-filter-banner" class="panel" hidden
+     style="margin-bottom:14px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+  <div>
+    Showing reports for <strong id="location-filter-banner-name">…</strong>.
+  </div>
+  <a href="/app/reports" class="text-small">View all reports →</a>
+</div>
+
 <section id="reports-list-section">
   <div id="reports-wrap">
     <div class="skeleton" style="height:20px;margin:8px 0;"></div>
@@ -136,11 +145,31 @@ details.report-location > summary > .score-pill {
       const data = await EA.fetchJSON("/api/performance-reports");
       reportsCache = data.reports || [];
 
-      const params = new URLSearchParams(window.location.search);
+      const params    = new URLSearchParams(window.location.search);
       const focusName = params.get("focus_name");
       const reportId  = params.get("report");
+      const locId     = params.get("location");
 
-      if (focusName) {
+      if (locId) {
+        // Drop known-user-type rows (respondent_user_id IS NOT NULL) — their
+        // location_id is a "first active location for the company" placeholder,
+        // not real per-call location data, so filtering would surface
+        // misleading data. Respondent-type rows have real respondents.location_id.
+        const target = parseInt(locId, 10);
+        const filtered = reportsCache.filter((r) =>
+          !r.respondent_user_id && Number(r.location_id) === target
+        );
+        const groups = {};
+        for (const r of filtered) {
+          const loc = r.location_name || "—";
+          (groups[loc] = groups[loc] || []).push(r);
+        }
+        const locName = filtered.length ? (filtered[0].location_name || "this location")
+                                        : ("location #" + target);
+        document.getElementById("location-filter-banner-name").textContent = locName;
+        document.getElementById("location-filter-banner").hidden = false;
+        renderList(groups);
+      } else if (focusName) {
         const norm = (s) => String(s || "").trim().toLowerCase();
         const target = norm(focusName);
         const filtered = reportsCache.filter((r) => norm(r.respondent_name) === target);

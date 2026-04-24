@@ -116,7 +116,14 @@ def list_performance_reports():
                 WHERE l.company_id = d.company_id
                   AND l.location_deleted_at IS NULL
                 ORDER BY l.location_id ASC LIMIT 1
-            ) AS location_name
+            ) AS location_name,
+            (
+                SELECT l.location_id FROM locations l
+                WHERE l.company_id = d.company_id
+                  AND l.location_deleted_at IS NULL
+                ORDER BY l.location_id ASC LIMIT 1
+            ) AS location_id,
+            NULL::int AS project_id
         FROM performance_reports pr
         JOIN users       u ON u.user_id       = pr.subject_user_id
         JOIN departments d ON d.department_id = u.department_id
@@ -137,7 +144,14 @@ def list_performance_reports():
                 WHERE l.company_id = d.company_id
                   AND l.location_deleted_at IS NULL
                 ORDER BY l.location_id ASC LIMIT 1
-            ) AS location_name
+            ) AS location_name,
+            (
+                SELECT l.location_id FROM locations l
+                WHERE l.company_id = d.company_id
+                  AND l.location_deleted_at IS NULL
+                ORDER BY l.location_id ASC LIMIT 1
+            ) AS location_id,
+            NULL AS project_id
         FROM performance_reports pr
         JOIN users       u ON u.user_id       = pr.subject_user_id
         JOIN departments d ON d.department_id = u.department_id
@@ -155,7 +169,15 @@ def list_performance_reports():
             pr.pr_average_score,
             pr.pr_call_count,
             pr.pr_updated_at,
-            l.location_name      AS location_name
+            l.location_name      AS location_name,
+            l.location_id        AS location_id,
+            (
+                SELECT i.project_id FROM interactions i
+                WHERE i.respondent_id = pr.respondent_id
+                  AND i.interaction_deleted_at IS NULL
+                ORDER BY i.interaction_date DESC, i.interaction_id DESC
+                LIMIT 1
+            ) AS project_id
         FROM performance_reports pr
         JOIN respondents r ON r.respondent_id = pr.respondent_id
         LEFT JOIN locations l ON l.location_id = r.location_id
