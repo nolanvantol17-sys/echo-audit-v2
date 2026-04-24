@@ -20,7 +20,7 @@ from datetime import date, datetime
 from flask import Blueprint, Response, jsonify, request, send_file
 from flask_login import current_user, login_required
 
-from audit_log import ACTION_UPDATED, ENTITY_COMPANY, write_audit_log
+from audit_log import ACTION_EXPORTED, ACTION_UPDATED, ENTITY_COMPANY, write_audit_log
 from auth import role_required
 from db import IS_POSTGRES, get_conn, q
 from helpers import get_effective_company_id
@@ -203,7 +203,7 @@ def export_interactions():
 
     # Audit
     write_audit_log(
-        current_user.user_id, ACTION_UPDATED, ENTITY_COMPANY, company_id,
+        current_user.user_id, ACTION_EXPORTED, ENTITY_COMPANY, company_id,
         metadata={"action": "export_interactions",
                   "row_count": len(interactions),
                   "filters": {k: v for k, v in args.items()}},
@@ -419,7 +419,7 @@ def export_backup():
 
     # Audit
     write_audit_log(
-        current_user.user_id, ACTION_UPDATED, ENTITY_COMPANY, company_id,
+        current_user.user_id, ACTION_EXPORTED, ENTITY_COMPANY, company_id,
         metadata={"action": "export_backup",
                   "counts": {k: len(v) for k, v in payload["tables"].items()}},
     )

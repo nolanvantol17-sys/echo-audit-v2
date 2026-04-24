@@ -454,6 +454,7 @@ _ACTION_TYPE_SEEDS = [
     (5, 'regraded'),
     (6, 'submitted'),
     (7, 'unposted'),
+    (8, 'exported'),
 ]
 
 _TARGET_ENTITY_TYPE_SEEDS = [

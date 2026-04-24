@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import tempfile
+import zipfile
 from datetime import date, datetime
 from pathlib import Path
 
@@ -24,9 +25,10 @@ from flask import Blueprint, Response, jsonify, request, send_file
 from flask_login import current_user, login_required
 
 import grader
+import pdf_export
 from audit_log import (
-    ACTION_DELETED, ACTION_GRADED, ACTION_REGRADED, ACTION_SUBMITTED,
-    ENTITY_INTERACTION, write_audit_log,
+    ACTION_DELETED, ACTION_EXPORTED, ACTION_GRADED, ACTION_REGRADED,
+    ACTION_SUBMITTED, ENTITY_INTERACTION, write_audit_log,
 )
 from auth import role_required
 from db import IS_POSTGRES, get_conn, q
@@ -1763,6 +1765,46 @@ _AUDIO_MIME = {
 }
 
 
+def _safe_filename_segment(s, max_len=60):
+    """Make a string safe for use inside a download filename.
+
+    Keeps alnum / dash / underscore; collapses any whitespace or unsafe
+    chars to a single underscore; trims to max_len. Returns "Untitled" if
+    the result is empty.
+    """
+    if not s: return "Untitled"
+    out, prev_us = [], False
+    unsafe = set('/\\:*?"<>|.')
+    for ch in str(s).strip():
+        if ch.isalnum() or ch in ("-", "_"):
+            out.append(ch); prev_us = False
+        elif ch.isspace() or ch in unsafe:
+            if not prev_us:
+                out.append("_"); prev_us = True
+        # else: silently drop
+    result = "".join(out).strip("_")
+    return (result[:max_len] or "Untitled")
+
+
+def _sniff_audio_ext(data):
+    """Return an extension (with leading dot) sniffed from audio magic bytes.
+
+    Lets the export ZIP label files correctly even when storage doesn't
+    preserve the original extension (e.g. PG BYTEA dropping the .webm
+    suffix from a live recording). Falls back to .bin for unknown formats.
+    """
+    if not data or len(data) < 12: return ".bin"
+    head = data[:12]
+    if head[:3] == b"ID3" or (head[0] == 0xFF and (head[1] & 0xE0) == 0xE0):
+        return ".mp3"                                    # ID3v2 or MPEG sync
+    if head[:4] == b"\x1A\x45\xDF\xA3": return ".webm"   # EBML / Matroska
+    if head[4:8] == b"ftyp":             return ".m4a"   # MP4 atom; .m4a for audio-only
+    if head[:4] == b"RIFF" and head[8:12] == b"WAVE": return ".wav"
+    if head[:4] == b"OggS": return ".ogg"
+    if head[:4] == b"fLaC": return ".flac"
+    return ".bin"
+
+
 @interactions_bp.route("/interactions/<int:interaction_id>/audio", methods=["GET"])
 @login_required
 def get_audio(interaction_id):
@@ -2062,3 +2104,85 @@ def hard_delete_interaction(interaction_id):
         raise
     finally:
         conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+# GET /api/interactions/<id>/export — single-interaction ZIP (PDF + audio)
+# ═══════════════════════════════════════════════════════════════
+
+
+@interactions_bp.route("/interactions/<int:interaction_id>/export", methods=["GET"])
+@login_required
+def export_interaction(interaction_id):
+    company_id, err = _require_company()
+    if err: return err
+
+    audio_included = False
+    conn = get_conn()
+    try:
+        # Tenant scope: this returns None if the interaction belongs to a
+        # different company, which lets us collapse 403/404 into a single
+        # "not found" (matches the pattern used elsewhere in this module).
+        row = _get_interaction_in_company(conn, interaction_id, company_id)
+        if not row or row["interaction_deleted_at"]:
+            return _err("Interaction not found", 404)
+
+        try:
+            pdf_bytes = pdf_export.render_interaction_pdf(conn, interaction_id)
+        except Exception:
+            logger.exception("PDF render failed for interaction %s", interaction_id)
+            return _err("Failed to render PDF", 500)
+
+        # Filename: {Location}_Call_{YYYY-MM-DD}_#{InteractionID}
+        loc_id = row["interaction_location_id"]
+        location_raw = "Unknown_Location"
+        if loc_id:
+            loc = conn.execute(
+                q("SELECT location_name FROM locations WHERE location_id = ?"),
+                (loc_id,),
+            ).fetchone()
+            if loc and loc["location_name"]:
+                location_raw = loc["location_name"]
+        location = _safe_filename_segment(location_raw)
+        date_str = (row["interaction_date"].isoformat()
+                    if row["interaction_date"] else "unknown-date")
+        base_name = f"{location}_Call_{date_str}_#{interaction_id}"
+
+        # Build the ZIP in memory. PDF deflates (text), audio stores raw.
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as zf:
+            zf.writestr(f"{base_name}.pdf", pdf_bytes,
+                        compress_type=zipfile.ZIP_DEFLATED)
+
+            audio_bytes = None
+            audio_ext   = None
+            if IS_POSTGRES and row.get("interaction_audio_data"):
+                audio_bytes = bytes(row["interaction_audio_data"])
+                audio_ext   = _sniff_audio_ext(audio_bytes)
+            elif not IS_POSTGRES and row.get("interaction_audio_url"):
+                p = Path(row["interaction_audio_url"])
+                if p.exists():
+                    audio_bytes = p.read_bytes()
+                    audio_ext   = p.suffix.lower() or _sniff_audio_ext(audio_bytes)
+
+            if audio_bytes:
+                zf.writestr(f"{base_name}{audio_ext}", audio_bytes,
+                            compress_type=zipfile.ZIP_STORED)
+                audio_included = True
+
+        zip_buf.seek(0)
+    finally:
+        conn.close()
+
+    write_audit_log(
+        current_user.user_id, ACTION_EXPORTED, ENTITY_INTERACTION,
+        interaction_id,
+        metadata={"interaction_id": interaction_id,
+                  "has_audio":      audio_included,
+                  "file_count":     2 if audio_included else 1},
+    )
+
+    return send_file(
+        zip_buf, mimetype="application/zip",
+        as_attachment=True, download_name=f"{base_name}.zip",
+    )
