@@ -392,6 +392,7 @@
           <div class="hstack-wrap" style="margin-top:12px;justify-content:center;">
             <button type="button" class="btn btn-ghost btn-sm" id="btn-record-redo">Re-record</button>
             <button type="button" class="btn btn-ghost btn-sm btn-record-use" id="btn-record-use">Use This Recording</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-no-answer-record-preview">Log Unanswered Call</button>
           </div>
         </div>
       </div>
@@ -1242,14 +1243,19 @@
 
     // Submit
     $("#grade-form").addEventListener("submit", onSubmit);
-    // Two copies of "Log Unanswered Call" — one in the Record panel, one in
-    // the Upload panel. Whichever panel is visible exposes the button. VoIP
-    // panel intentionally has no copy (queue rows already represent
+    // Three copies of "Log Unanswered Call" — Record idle, Record preview
+    // (after Stop), Upload. Whichever panel/state is visible exposes a button.
+    // VoIP panel intentionally has no copy (queue rows already represent
     // completed call events; logging "unanswered" doesn't apply).
+    // The preview-state button shares onLogNoAnswer with the others; the
+    // handler detects audio-present and swaps the dialog to a danger-styled
+    // discard confirm.
     const naRec = document.getElementById("btn-no-answer-record");
     const naUp  = document.getElementById("btn-no-answer-upload");
+    const naRP  = document.getElementById("btn-no-answer-record-preview");
     if (naRec) naRec.addEventListener("click", onLogNoAnswer);
     if (naUp)  naUp .addEventListener("click", onLogNoAnswer);
+    if (naRP)  naRP .addEventListener("click", onLogNoAnswer);
   }
 
   function switchTab(which) {
@@ -2435,8 +2441,19 @@
       return;
     }
 
+    // Audio present? Swap the dialog to a danger-styled discard confirm —
+    // user is about to lose a recording/upload they prepared. Preserves the
+    // date picker so we don't trade one affordance for another.
+    const hasAudio = !!(state.audioFile || state.liveRecordingBlob);
+
     const body = document.createElement("div");
     body.innerHTML =
+      (hasAudio
+        ? '<div class="muted text-small" style="margin-bottom:12px;">' +
+            'You have a recording ready. Logging this call as unanswered ' +
+            'will discard the recording — it won’t be saved.' +
+          '</div>'
+        : '') +
       '<div class="field"><label class="field-label">Project</label>' +
         '<div>' + EA.esc($("#gf-project").options[$("#gf-project").selectedIndex].text) + '</div>' +
       '</div>' +
@@ -2444,12 +2461,14 @@
         '<input type="date" id="na-date" class="field-input" value="' + callDate + '">' +
       '</div>';
 
-    const ok = await EA.confirmDialog({
-      title: "Log an unanswered call",
-      body:  body,
-      okLabel: "Log unanswered",
+    const dialogOpts = {
+      title:       hasAudio ? "Discard the recording?" : "Log an unanswered call",
+      body:        body,
+      okLabel:     hasAudio ? "Discard & Log" : "Log unanswered",
       cancelLabel: "Cancel",
-    });
+    };
+    if (hasAudio) dialogOpts.variant = "danger";
+    const ok = await EA.confirmDialog(dialogOpts);
     if (!ok) return;
 
     const chosenDate = (document.getElementById("na-date") || {}).value || callDate;
