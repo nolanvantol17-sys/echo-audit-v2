@@ -307,8 +307,8 @@
      header strip=yellow-200 (#fde68a), text=yellow-900 (#422006). */
   .loc-notes-pad {
     position: fixed;
-    bottom: 24px;
-    right: 24px;
+    left: 24px;
+    top: 200px;            /* Default; JS may override; user drag mutates */
     width: 300px;
     max-height: 460px;
     background: #fef9c3;
@@ -324,8 +324,8 @@
   }
   .loc-notes-pad[hidden] { display: none !important; }
   @keyframes loc-notes-slide-in {
-    from { transform: translateX(20px); opacity: 0; }
-    to   { transform: translateX(0);    opacity: 1; }
+    from { transform: translateX(-20px); opacity: 0; }
+    to   { transform: translateX(0);     opacity: 1; }
   }
   .loc-notes-header {
     display: flex; align-items: center; justify-content: space-between;
@@ -333,18 +333,49 @@
     background: #fde68a;
     border-bottom: 1px solid #fde047;
     border-radius: 6px 6px 0 0;
+    cursor: move;          /* drag handle for repositioning */
+    user-select: none;     /* prevent text selection while dragging */
   }
   .loc-notes-title {
     font-weight: 600; font-size: 0.84rem;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     flex: 1; min-width: 0;
   }
-  .loc-notes-close {
+  .loc-notes-close,
+  .loc-notes-minimize {
     background: none; border: none; cursor: pointer;
     font-size: 1.2rem; line-height: 1;
-    color: #713f12; padding: 0 4px; margin-left: 8px;
+    color: #713f12; padding: 0 4px;
   }
-  .loc-notes-close:hover { color: #422006; }
+  .loc-notes-minimize { margin-left: 8px; }
+  .loc-notes-close    { margin-left: 4px; }
+  .loc-notes-close:hover,
+  .loc-notes-minimize:hover { color: #422006; }
+
+  /* Minimized icon — small yellow square with note count. Drag-compatible. */
+  .loc-notes-icon {
+    position: fixed;
+    left: 24px;
+    top: 200px;            /* mirrors pad's verticalOffset */
+    width: 40px;
+    height: 40px;
+    background: #fef9c3;
+    border: 1px solid #fde047;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+    color: #422006;
+    cursor: pointer;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.95rem;
+    font-family: inherit;
+    padding: 0;
+  }
+  .loc-notes-icon[hidden] { display: none !important; }
+  .loc-notes-icon:hover { background: #fde68a; }
   .loc-notes-body {
     padding: 10px 12px; overflow-y: auto; flex: 1;
   }
@@ -438,12 +469,14 @@
   }
   .loc-note-edit:hover, .loc-note-delete:hover { color: #422006; }
 
-  /* Mobile: stretch to viewport */
+  /* Mobile: stretch pad to viewport, suppress drag affordance, reposition icon. */
   @media (max-width: 520px) {
     .loc-notes-pad {
-      left: 12px; right: 12px; bottom: 12px;
-      width: auto; max-width: none;
+      left: 12px; right: 12px; top: 12px;
+      bottom: auto; width: auto; max-width: none;
     }
+    .loc-notes-header { cursor: default; }
+    .loc-notes-icon   { left: 12px; top: 12px; }
   }
 </style>
 {% endblock %}
@@ -614,7 +647,8 @@
 <aside id="location-notes-pad" class="loc-notes-pad" hidden>
   <div class="loc-notes-header">
     <span class="loc-notes-title">Notes — <span id="loc-notes-loc-name">…</span></span>
-    <button type="button" class="loc-notes-close" id="loc-notes-close" title="Close">×</button>
+    <button type="button" class="loc-notes-minimize" id="loc-notes-minimize" title="Minimize">—</button>
+    <button type="button" class="loc-notes-close"    id="loc-notes-close"    title="Close">×</button>
   </div>
   <div class="loc-notes-body">
     <div class="loc-notes-add-row" id="loc-notes-add-row">
@@ -634,6 +668,13 @@
     <div class="loc-notes-list" id="loc-notes-list"></div>
   </div>
 </aside>
+
+{# ── Minimized notes icon — small yellow square with note count.
+     Lives at body-level (sibling to pad). Click to restore; drag to reposition. #}
+<button type="button" id="loc-notes-icon" class="loc-notes-icon" hidden
+        title="Show notes" aria-label="Show notes">
+  <span id="loc-notes-icon-count">0</span>
+</button>
 
 {% endblock %}
 
@@ -684,13 +725,16 @@
   };
 
   // Location notes — per-page-load state for the post-it pad.
-  // dismissed flag resets on every location change so the pad reappears.
+  // dismissed flag resets on every location change so the pad reappears;
+  // minimized + verticalOffset are sticky preferences within the session.
   const notesState = {
     notesByLocation: {},  // {location_id: [note, ...]}
     dismissed:       false,
     currentLocId:    null,
     loadSeq:         0,   // race guard for rapid location switches
     editingNoteId:   null, // null = no edit; <id> = inline editing this note
+    minimized:       false, // true → show icon instead of pad
+    verticalOffset:  200,  // pixels from viewport top; mutated by drag
   };
 
   const $ = function (sel) { return document.querySelector(sel); };
@@ -2694,14 +2738,18 @@
   }
 
   async function loadLocationNotes(locId) {
-    const pad = getNotesPad();
+    const pad  = getNotesPad();
+    const icon = document.getElementById("loc-notes-icon");
     if (!pad) return;
     if (!locId) {
       pad.hidden = true;
+      if (icon) icon.hidden = true;
       notesState.currentLocId = null;
       return;
     }
-    // Reset dismissal + per-pad state on location change
+    // Reset close-state + per-pad transient state on location change.
+    // notesState.minimized + verticalOffset are intentionally PRESERVED
+    // — minimize is a sticky preference, close is per-location.
     if (String(locId) !== String(notesState.currentLocId)) {
       notesState.dismissed     = false;
       notesState.currentLocId  = locId;
@@ -2714,8 +2762,20 @@
     );
     document.getElementById("loc-notes-loc-name").textContent =
       (loc && loc.location_name) || "—";
-    if (notesState.dismissed) return;
-    pad.hidden = false;
+    if (notesState.dismissed) {
+      pad.hidden = true;
+      if (icon) icon.hidden = true;
+      return;
+    }
+    // Show either the pad or the icon depending on minimized state.
+    if (notesState.minimized) {
+      pad.hidden = true;
+      if (icon) icon.hidden = false;
+    } else {
+      pad.hidden = false;
+      if (icon) icon.hidden = true;
+    }
+    applyVerticalOffset();
     renderNotesList(null);   // skeleton
     const seq = ++notesState.loadSeq;
     try {
@@ -2734,6 +2794,9 @@
   function renderNotesList(notes) {
     const list = document.getElementById("loc-notes-list");
     if (!list) return;
+    // Keep the minimized icon count in sync on every render (covers
+    // initial load, add, edit, delete; null = loading skeleton, no count change).
+    if (notes !== null) updateMinimizedIcon();
     if (notes === null) {
       list.innerHTML = '<div class="muted text-small" style="text-align:center;padding:8px;">Loading…</div>';
       return;
@@ -2791,13 +2854,16 @@
   function renderNoteRow(n) {
     const canModify = n.is_author || isAdmin();
     const editedSpan = n.is_edited ? '<span class="loc-note-edited"></span>' : '';
-    const time = EA.formatRelativeTime(n.ln_updated_at);
+    const time    = EA.formatRelativeTime(n.ln_updated_at);
+    const absTime = formatAbsoluteTime(n.ln_updated_at);
     return (
       '<div class="loc-note" data-id="' + n.location_note_id + '">' +
         '<div class="loc-note-text">' + EA.esc(n.ln_text) + '</div>' +
         '<div class="loc-note-meta">' +
           '<span class="loc-note-author">' +
-            EA.esc(n.author_display) + ' · ' + EA.esc(time) + editedSpan +
+            EA.esc(n.author_display) + ' · ' +
+            '<span title="' + EA.esc(absTime) + '">' + EA.esc(time) + '</span>' +
+            editedSpan +
           '</span>' +
           (canModify
             ? '<span class="loc-note-actions">' +
@@ -2808,6 +2874,16 @@
         '</div>' +
       '</div>'
     );
+  }
+
+  function formatAbsoluteTime(value) {
+    if (!value) return "";
+    const d = (value instanceof Date) ? value : new Date(value);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleString(undefined, {
+      month: "short", day: "numeric", year: "numeric",
+      hour:  "numeric", minute: "2-digit",
+    });
   }
 
   function renderEditMode(n) {
@@ -2946,17 +3022,90 @@
     }
   }
 
+  // ── Drag + minimize helpers ─────────────────────────────
+  function applyVerticalOffset() {
+    const pad  = getNotesPad();
+    const icon = document.getElementById("loc-notes-icon");
+    const top  = notesState.verticalOffset + "px";
+    if (pad)  pad.style.top  = top;
+    if (icon) icon.style.top = top;
+  }
+
+  function clampVerticalOffset(px) {
+    const pad = getNotesPad();
+    const padHeight = (pad && !pad.hidden) ? pad.offsetHeight : 60;  // icon ~60
+    const minTop = 70;   // below topbar (62px) + breathing room
+    const maxTop = Math.max(minTop, window.innerHeight - padHeight - 24);
+    return Math.max(minTop, Math.min(maxTop, px));
+  }
+
+  // Returns true if the drag handler was attached, false if it bailed
+  // (mobile / non-left-click). Calls onDragEnd(didDrag) when mouse releases.
+  function startDrag(e, onDragEnd) {
+    if (e.button !== 0) return false;
+    if (window.innerWidth < 520) return false;
+
+    const startY      = e.clientY;
+    const startOffset = notesState.verticalOffset;
+    let didDrag = false;
+
+    function onMove(e2) {
+      const dy = e2.clientY - startY;
+      if (!didDrag && Math.abs(dy) >= 5) didDrag = true;
+      if (didDrag) {
+        notesState.verticalOffset = clampVerticalOffset(startOffset + dy);
+        applyVerticalOffset();
+      }
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup",   onUp);
+      if (onDragEnd) onDragEnd(didDrag);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup",   onUp);
+    e.preventDefault();
+    return true;
+  }
+
+  function minimizePad() {
+    notesState.minimized = true;
+    getNotesPad().hidden = true;
+    document.getElementById("loc-notes-icon").hidden = false;
+    updateMinimizedIcon();
+    applyVerticalOffset();   // ensure icon picks up current offset
+  }
+
+  function restorePad() {
+    notesState.minimized = false;
+    document.getElementById("loc-notes-icon").hidden = true;
+    getNotesPad().hidden = false;
+    applyVerticalOffset();
+  }
+
+  function updateMinimizedIcon() {
+    const countEl = document.getElementById("loc-notes-icon-count");
+    if (!countEl) return;
+    const notes = notesState.notesByLocation[notesState.currentLocId] || [];
+    countEl.textContent = String(notes.length);
+  }
+
   function wireNotesPad() {
-    const closeBtn  = document.getElementById("loc-notes-close");
-    const addBtn    = document.getElementById("loc-notes-add-btn");
-    const addCancel = document.getElementById("loc-notes-add-cancel");
-    const addSave   = document.getElementById("loc-notes-add-save");
-    const addText   = document.getElementById("loc-notes-add-text");
+    const closeBtn    = document.getElementById("loc-notes-close");
+    const minimizeBtn = document.getElementById("loc-notes-minimize");
+    const addBtn      = document.getElementById("loc-notes-add-btn");
+    const addCancel   = document.getElementById("loc-notes-add-cancel");
+    const addSave     = document.getElementById("loc-notes-add-save");
+    const addText     = document.getElementById("loc-notes-add-text");
+    const header      = document.querySelector(".loc-notes-header");
+    const icon        = document.getElementById("loc-notes-icon");
     if (!closeBtn || !addBtn) return;   // pad markup absent → no-op
     closeBtn.addEventListener("click", function () {
       notesState.dismissed = true;
       getNotesPad().hidden = true;
+      if (icon) icon.hidden = true;
     });
+    if (minimizeBtn) minimizeBtn.addEventListener("click", minimizePad);
     addBtn.addEventListener("click", openAddForm);
     addCancel.addEventListener("click", closeAddForm);
     addSave.addEventListener("click", onAddSave);
@@ -2967,6 +3116,23 @@
         document.getElementById("loc-notes-add-save")
       );
     });
+    // Drag handle: header strip on the pad. Skip if press is on a header button.
+    if (header) {
+      header.addEventListener("mousedown", function (e) {
+        if (e.target.closest("button")) return;
+        startDrag(e);
+      });
+    }
+    // Icon: drag OR click (restore). startDrag returns false on mobile / non-left;
+    // in that case treat as click. Otherwise the onDragEnd callback decides.
+    if (icon) {
+      icon.addEventListener("mousedown", function (e) {
+        const ok = startDrag(e, function (didDrag) {
+          if (!didDrag) restorePad();
+        });
+        if (!ok) restorePad();
+      });
+    }
   }
 
   document.addEventListener("DOMContentLoaded", init);
