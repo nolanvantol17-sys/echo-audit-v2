@@ -301,6 +301,150 @@
     gap: 12px;
     margin-top: 12px;
   }
+
+  /* ── Location notes pad — yellow post-it, fixed bottom-right ──
+     Yellow palette: bg=yellow-100 (#fef9c3), border=yellow-300 (#fde047),
+     header strip=yellow-200 (#fde68a), text=yellow-900 (#422006). */
+  .loc-notes-pad {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 300px;
+    max-height: 460px;
+    background: #fef9c3;
+    border: 1px solid #fde047;
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+    color: #422006;
+    font-size: 0.86rem;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    animation: loc-notes-slide-in 200ms ease-out;
+  }
+  .loc-notes-pad[hidden] { display: none !important; }
+  @keyframes loc-notes-slide-in {
+    from { transform: translateX(20px); opacity: 0; }
+    to   { transform: translateX(0);    opacity: 1; }
+  }
+  .loc-notes-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px;
+    background: #fde68a;
+    border-bottom: 1px solid #fde047;
+    border-radius: 6px 6px 0 0;
+  }
+  .loc-notes-title {
+    font-weight: 600; font-size: 0.84rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1; min-width: 0;
+  }
+  .loc-notes-close {
+    background: none; border: none; cursor: pointer;
+    font-size: 1.2rem; line-height: 1;
+    color: #713f12; padding: 0 4px; margin-left: 8px;
+  }
+  .loc-notes-close:hover { color: #422006; }
+  .loc-notes-body {
+    padding: 10px 12px; overflow-y: auto; flex: 1;
+  }
+  .loc-notes-add-btn {
+    background: none; border: 1px dashed #ca8a04;
+    color: #713f12; width: 100%;
+    padding: 6px 10px; border-radius: 4px;
+    cursor: pointer; font-size: 0.84rem;
+  }
+  .loc-notes-add-btn:hover { background: rgba(234,179,8,0.10); }
+  .loc-notes-add-form {
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px dashed rgba(202,138,4,0.4);
+  }
+  .loc-notes-add-form textarea,
+  .loc-note-edit-text {
+    width: 100%;
+    border: 1px solid #fde047;
+    background: #fffbeb;
+    color: #422006;
+    border-radius: 4px;
+    padding: 6px 8px;
+    font: inherit;
+    resize: vertical;
+    min-height: 60px;
+    box-sizing: border-box;
+  }
+  .loc-notes-add-form textarea:focus,
+  .loc-note-edit-text:focus {
+    outline: 2px solid #facc15;
+    outline-offset: -1px;
+  }
+  .loc-notes-add-meta,
+  .loc-note-edit-meta {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 6px;
+  }
+  .loc-notes-counter { font-size: 0.74rem; color: #713f12; }
+  .loc-notes-counter.warn { color: #c2410c; }
+  .loc-notes-add-actions, .loc-note-edit-actions {
+    display: flex; gap: 6px;
+  }
+  .loc-notes-list {
+    display: flex; flex-direction: column; gap: 8px;
+    margin-top: 8px;
+  }
+  .loc-notes-empty {
+    text-align: center; color: #713f12;
+    font-style: italic;
+    padding: 20px 4px 12px;
+    font-size: 0.84rem;
+  }
+  .loc-note {
+    background: rgba(255,255,255,0.40);
+    border: 1px solid rgba(202,138,4,0.20);
+    border-radius: 4px;
+    padding: 8px 10px;
+  }
+  .loc-note-text {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    margin-bottom: 4px;
+    font-size: 0.86rem;
+    line-height: 1.4;
+  }
+  .loc-note-meta {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 0.72rem; color: #713f12;
+    gap: 8px;
+  }
+  .loc-note-edited::after {
+    content: " (edited)";
+    font-style: italic;
+    margin-left: 2px;
+  }
+  .loc-note-actions {
+    display: inline-flex; gap: 4px;
+    opacity: 0;
+    transition: opacity 100ms;
+    flex-shrink: 0;
+  }
+  .loc-note:hover .loc-note-actions,
+  .loc-note:focus-within .loc-note-actions { opacity: 1; }
+  .loc-note-edit, .loc-note-delete {
+    background: none; border: none; cursor: pointer;
+    color: #713f12;
+    font-size: 0.9rem;
+    padding: 0 3px;
+    line-height: 1;
+  }
+  .loc-note-edit:hover, .loc-note-delete:hover { color: #422006; }
+
+  /* Mobile: stretch to viewport */
+  @media (max-width: 520px) {
+    .loc-notes-pad {
+      left: 12px; right: 12px; bottom: 12px;
+      width: auto; max-width: none;
+    }
+  }
 </style>
 {% endblock %}
 
@@ -464,6 +608,33 @@
 {# ── Grade result panel (hidden until a successful grade) ── #}
 <section id="grade-result-section" hidden></section>
 
+{# ── Location notes pad — yellow post-it, fixed bottom-right.
+     Mounted at body-level so position:fixed is relative to viewport.
+     Hidden until a location is selected and the pad isn't user-dismissed. #}
+<aside id="location-notes-pad" class="loc-notes-pad" hidden>
+  <div class="loc-notes-header">
+    <span class="loc-notes-title">Notes — <span id="loc-notes-loc-name">…</span></span>
+    <button type="button" class="loc-notes-close" id="loc-notes-close" title="Close">×</button>
+  </div>
+  <div class="loc-notes-body">
+    <div class="loc-notes-add-row" id="loc-notes-add-row">
+      <button type="button" class="loc-notes-add-btn" id="loc-notes-add-btn">+ Add note</button>
+    </div>
+    <div class="loc-notes-add-form" id="loc-notes-add-form" hidden>
+      <textarea id="loc-notes-add-text" maxlength="500" rows="3"
+                placeholder="What should the next caller know?"></textarea>
+      <div class="loc-notes-add-meta">
+        <span class="loc-notes-counter" id="loc-notes-counter">0 / 500</span>
+        <div class="loc-notes-add-actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="loc-notes-add-cancel">Cancel</button>
+          <button type="button" class="btn btn-primary btn-sm" id="loc-notes-add-save" disabled>Save</button>
+        </div>
+      </div>
+    </div>
+    <div class="loc-notes-list" id="loc-notes-list"></div>
+  </div>
+</aside>
+
 {% endblock %}
 
 {% block extra_js %}
@@ -510,6 +681,16 @@
     cqWizard:             null,    // active CQ wizard handle (createCqWizard)
     projectLocked:        false,   // true when ?project_id= URL lock is in effect
     recordingConfirmed:   false,   // two-click morph: 1st click confirms preview, 2nd click submits
+  };
+
+  // Location notes — per-page-load state for the post-it pad.
+  // dismissed flag resets on every location change so the pad reappears.
+  const notesState = {
+    notesByLocation: {},  // {location_id: [note, ...]}
+    dismissed:       false,
+    currentLocId:    null,
+    loadSeq:         0,   // race guard for rapid location switches
+    editingNoteId:   null, // null = no edit; <id> = inline editing this note
   };
 
   const $ = function (sel) { return document.querySelector(sel); };
@@ -816,6 +997,7 @@
     updateProjectFieldVisibility();
     $("#form-hint").textContent = "";
     refreshLocationIntel(locId);
+    loadLocationNotes(locId);
   }
 
   // Toggle the render-on-demand project field. Visible only when the user
@@ -1205,6 +1387,7 @@
     // Location change — update phone + re-filter projects
     $("#gf-location").addEventListener("change", onLocationChange);
     $("#gf-project").addEventListener("change", onProjectChange);
+    wireNotesPad();
 
     // Dropzone: <label for="audio-file"> natively forwards clicks to the input —
     // don't also call fi.click() from JS, that causes Chrome to open-and-immediately-
@@ -2497,6 +2680,294 @@
     const h = document.getElementById("overlay-host");
     if (h) h.remove();
   });
+
+  // ════════════════════════════════════════════════════════════
+  // Location notes pad — surfaces on Grade page when a location
+  // is selected. CRUD via /api/locations/<id>/notes + /api/location-notes/<id>.
+  // ════════════════════════════════════════════════════════════
+
+  function getNotesPad() { return document.getElementById("location-notes-pad"); }
+
+  function isAdmin() {
+    const role = (window.EA_USER && window.EA_USER.role) || "";
+    return role === "admin" || role === "super_admin";
+  }
+
+  async function loadLocationNotes(locId) {
+    const pad = getNotesPad();
+    if (!pad) return;
+    if (!locId) {
+      pad.hidden = true;
+      notesState.currentLocId = null;
+      return;
+    }
+    // Reset dismissal + per-pad state on location change
+    if (String(locId) !== String(notesState.currentLocId)) {
+      notesState.dismissed     = false;
+      notesState.currentLocId  = locId;
+      notesState.editingNoteId = null;
+      closeAddForm();
+    }
+    // Set header location name from cached locations list
+    const loc = state.allLocations.find(
+      function (l) { return String(l.location_id) === String(locId); }
+    );
+    document.getElementById("loc-notes-loc-name").textContent =
+      (loc && loc.location_name) || "—";
+    if (notesState.dismissed) return;
+    pad.hidden = false;
+    renderNotesList(null);   // skeleton
+    const seq = ++notesState.loadSeq;
+    try {
+      const notes = await EA.fetchJSON(
+        "/api/locations/" + encodeURIComponent(locId) + "/notes"
+      );
+      if (seq !== notesState.loadSeq) return;   // superseded
+      notesState.notesByLocation[locId] = notes || [];
+      renderNotesList(notesState.notesByLocation[locId]);
+    } catch (err) {
+      if (seq !== notesState.loadSeq) return;
+      renderNotesError(err.message || "Failed to load notes.");
+    }
+  }
+
+  function renderNotesList(notes) {
+    const list = document.getElementById("loc-notes-list");
+    if (!list) return;
+    if (notes === null) {
+      list.innerHTML = '<div class="muted text-small" style="text-align:center;padding:8px;">Loading…</div>';
+      return;
+    }
+    if (!notes.length) {
+      list.innerHTML = '<div class="loc-notes-empty">No notes yet for this location. Be the first to add one.</div>';
+      return;
+    }
+    list.innerHTML = notes.map(function (n) {
+      return (n.location_note_id === notesState.editingNoteId)
+        ? renderEditMode(n)
+        : renderNoteRow(n);
+    }).join("");
+    // Wire row events
+    list.querySelectorAll(".loc-note-edit").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const id = parseInt(btn.closest(".loc-note").dataset.id, 10);
+        notesState.editingNoteId = id;
+        renderNotesList(notesState.notesByLocation[notesState.currentLocId] || []);
+      });
+    });
+    list.querySelectorAll(".loc-note-delete").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const id = parseInt(btn.closest(".loc-note").dataset.id, 10);
+        onNoteDeleteClick(id);
+      });
+    });
+    list.querySelectorAll(".loc-note-edit-save").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const id = parseInt(btn.closest(".loc-note").dataset.id, 10);
+        onNoteEditSave(id);
+      });
+    });
+    list.querySelectorAll(".loc-note-edit-cancel").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        notesState.editingNoteId = null;
+        renderNotesList(notesState.notesByLocation[notesState.currentLocId] || []);
+      });
+    });
+    list.querySelectorAll(".loc-note-edit-text").forEach(function (ta) {
+      ta.addEventListener("input", function () {
+        const row = ta.closest(".loc-note");
+        const counter = row.querySelector(".loc-notes-counter");
+        const saveBtn = row.querySelector(".loc-note-edit-save");
+        updateCounter(ta, counter, saveBtn);
+      });
+      // Auto-focus + cursor-at-end for the row entering edit mode
+      if (parseInt(ta.closest(".loc-note").dataset.id, 10) === notesState.editingNoteId) {
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+      }
+    });
+  }
+
+  function renderNoteRow(n) {
+    const canModify = n.is_author || isAdmin();
+    const editedSpan = n.is_edited ? '<span class="loc-note-edited"></span>' : '';
+    const time = EA.formatRelativeTime(n.ln_updated_at);
+    return (
+      '<div class="loc-note" data-id="' + n.location_note_id + '">' +
+        '<div class="loc-note-text">' + EA.esc(n.ln_text) + '</div>' +
+        '<div class="loc-note-meta">' +
+          '<span class="loc-note-author">' +
+            EA.esc(n.author_display) + ' · ' + EA.esc(time) + editedSpan +
+          '</span>' +
+          (canModify
+            ? '<span class="loc-note-actions">' +
+                '<button type="button" class="loc-note-edit"   title="Edit">✎</button>' +
+                '<button type="button" class="loc-note-delete" title="Delete">×</button>' +
+              '</span>'
+            : '') +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function renderEditMode(n) {
+    const len = (n.ln_text || "").length;
+    const counterClass = (len >= 450) ? "loc-notes-counter warn" : "loc-notes-counter";
+    return (
+      '<div class="loc-note loc-note-editing" data-id="' + n.location_note_id + '">' +
+        '<textarea class="loc-note-edit-text" maxlength="500" rows="3">' +
+          EA.esc(n.ln_text) +
+        '</textarea>' +
+        '<div class="loc-note-edit-meta">' +
+          '<span class="' + counterClass + '">' + len + ' / 500</span>' +
+          '<div class="loc-note-edit-actions">' +
+            '<button type="button" class="btn btn-ghost btn-sm loc-note-edit-cancel">Cancel</button>' +
+            '<button type="button" class="btn btn-primary btn-sm loc-note-edit-save">Save</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function renderNotesError(msg) {
+    const list = document.getElementById("loc-notes-list");
+    if (!list) return;
+    list.innerHTML = '<div class="loc-notes-empty" style="color:#b91c1c;">' + EA.esc(msg) + '</div>';
+  }
+
+  function openAddForm() {
+    document.getElementById("loc-notes-add-row").hidden = true;
+    document.getElementById("loc-notes-add-form").hidden = false;
+    const ta = document.getElementById("loc-notes-add-text");
+    ta.value = "";
+    document.getElementById("loc-notes-counter").textContent = "0 / 500";
+    document.getElementById("loc-notes-counter").className = "loc-notes-counter";
+    document.getElementById("loc-notes-add-save").disabled = true;
+    ta.focus();
+  }
+
+  function closeAddForm() {
+    const form = document.getElementById("loc-notes-add-form");
+    const row  = document.getElementById("loc-notes-add-row");
+    if (form) form.hidden = true;
+    if (row)  row.hidden  = false;
+  }
+
+  function updateCounter(ta, counterEl, saveBtn) {
+    const len = ta.value.length;
+    if (counterEl) {
+      counterEl.textContent = len + " / 500";
+      counterEl.className = (len >= 450) ? "loc-notes-counter warn" : "loc-notes-counter";
+    }
+    if (saveBtn) {
+      saveBtn.disabled = (ta.value.trim().length === 0 || len > 500);
+    }
+  }
+
+  async function onAddSave() {
+    const ta = document.getElementById("loc-notes-add-text");
+    const text = (ta.value || "").trim();
+    if (!text) return;
+    if (text.length > 500) {
+      EA.toast("Note exceeds 500 character limit.", "error");
+      return;
+    }
+    const locId = notesState.currentLocId;
+    if (!locId) return;
+    const saveBtn = document.getElementById("loc-notes-add-save");
+    saveBtn.disabled = true;
+    try {
+      const created = await EA.fetchJSON(
+        "/api/locations/" + encodeURIComponent(locId) + "/notes",
+        { method: "POST", body: { ln_text: text } }
+      );
+      const notes = notesState.notesByLocation[locId] || [];
+      notes.unshift(created);
+      notesState.notesByLocation[locId] = notes;
+      closeAddForm();
+      renderNotesList(notes);
+      EA.toast("Note added.", "success");
+    } catch (err) {
+      EA.toast(err.message || "Failed to add note.", "error");
+      saveBtn.disabled = false;
+    }
+  }
+
+  async function onNoteEditSave(noteId) {
+    const row = document.querySelector('.loc-note[data-id="' + noteId + '"]');
+    if (!row) return;
+    const ta = row.querySelector(".loc-note-edit-text");
+    const text = (ta.value || "").trim();
+    if (!text) return;
+    if (text.length > 500) {
+      EA.toast("Note exceeds 500 character limit.", "error");
+      return;
+    }
+    const saveBtn = row.querySelector(".loc-note-edit-save");
+    saveBtn.disabled = true;
+    try {
+      const updated = await EA.fetchJSON(
+        "/api/location-notes/" + encodeURIComponent(noteId),
+        { method: "PUT", body: { ln_text: text } }
+      );
+      const notes = notesState.notesByLocation[notesState.currentLocId] || [];
+      const idx = notes.findIndex(function (n) { return n.location_note_id === noteId; });
+      if (idx !== -1) notes[idx] = updated;
+      notesState.editingNoteId = null;
+      renderNotesList(notes);
+      EA.toast("Note updated.", "success");
+    } catch (err) {
+      EA.toast(err.message || "Failed to update note.", "error");
+      saveBtn.disabled = false;
+    }
+  }
+
+  async function onNoteDeleteClick(noteId) {
+    const ok = await EA.confirmDialog({
+      title: "Delete this note?",
+      body:  "This cannot be undone.",
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+      variant: "danger",
+    });
+    if (!ok) return;
+    try {
+      await EA.fetchJSON(
+        "/api/location-notes/" + encodeURIComponent(noteId),
+        { method: "DELETE" }
+      );
+      const notes = notesState.notesByLocation[notesState.currentLocId] || [];
+      notesState.notesByLocation[notesState.currentLocId] =
+        notes.filter(function (n) { return n.location_note_id !== noteId; });
+      renderNotesList(notesState.notesByLocation[notesState.currentLocId]);
+      EA.toast("Note deleted.", "success");
+    } catch (err) {
+      EA.toast(err.message || "Failed to delete note.", "error");
+    }
+  }
+
+  function wireNotesPad() {
+    const closeBtn  = document.getElementById("loc-notes-close");
+    const addBtn    = document.getElementById("loc-notes-add-btn");
+    const addCancel = document.getElementById("loc-notes-add-cancel");
+    const addSave   = document.getElementById("loc-notes-add-save");
+    const addText   = document.getElementById("loc-notes-add-text");
+    if (!closeBtn || !addBtn) return;   // pad markup absent → no-op
+    closeBtn.addEventListener("click", function () {
+      notesState.dismissed = true;
+      getNotesPad().hidden = true;
+    });
+    addBtn.addEventListener("click", openAddForm);
+    addCancel.addEventListener("click", closeAddForm);
+    addSave.addEventListener("click", onAddSave);
+    addText.addEventListener("input", function (e) {
+      updateCounter(
+        e.target,
+        document.getElementById("loc-notes-counter"),
+        document.getElementById("loc-notes-add-save")
+      );
+    });
+  }
 
   document.addEventListener("DOMContentLoaded", init);
 })();
