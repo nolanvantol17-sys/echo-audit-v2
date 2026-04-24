@@ -160,6 +160,19 @@
             view_all_reports_href='/app/reports?project_id=' ~ project_id %}
     {% include '_dashboard_analytics.html' %}
     {% endwith %}
+
+    {% if user_role in ('admin', 'super_admin') %}
+    <details class="collapsible" style="margin-top:14px;">
+      <summary style="padding:14px 16px;cursor:pointer;font-weight:500;">
+        Export by Location
+      </summary>
+      <div class="collapsible-body" id="export-locations-mount">
+        <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+        <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+        <div class="skeleton" style="height:18px;margin:8px 0;"></div>
+      </div>
+    </details>
+    {% endif %}
   </section>
 
   <section class="tab-panel" data-tab-panel="rubric" hidden>
@@ -194,6 +207,7 @@
 <script defer src="{{ url_for('static', filename='dashboard_widget.js') }}?v={{ static_v('dashboard_widget.js') }}"></script>
 <script defer src="{{ url_for('static', filename='dashboard_summary.js') }}?v={{ static_v('dashboard_summary.js') }}"></script>
 <script defer src="{{ url_for('static', filename='tabs.js') }}?v={{ static_v('tabs.js') }}"></script>
+<script defer src="{{ url_for('static', filename='bulk_export_modal.js') }}?v={{ static_v('bulk_export_modal.js') }}"></script>
 <script defer src="{{ url_for('static', filename='rubric_list_view.js') }}?v={{ static_v('rubric_list_view.js') }}"></script>
 <script defer src="{{ url_for('static', filename='rubric_editor.js') }}?v={{ static_v('rubric_editor.js') }}"></script>
 <script>
@@ -211,6 +225,7 @@
   let editorMounted   = false;
   let campaignsHandle = null;
   let campaignsMounted = false;
+  let exportLocsLoaded = false;
 
   async function init() {
     $("#btn-start-grading").href = "/app/grade?project_id=" + PROJECT_ID;
@@ -221,6 +236,7 @@
     // the rubric_group_id + rg_grade_target ready when first activated.
     await loadSummary();
     bootDashboardWidget(state.summary || {});
+    if (IS_ADMIN) wireExportByLocation();
     initTabs();
     return {
       teardown() {
@@ -256,6 +272,62 @@
       opts.hideViewByModes = ["location"];
     }
     widgetHandle = EA.DashboardWidget.init(opts);
+  }
+
+  // ── Export by Location (Dashboard tab, admin-only) ──────
+  // Lazy-loaded on first <details> open. Pattern matches the lazy-mount
+  // used by the Rubric / Campaigns tabs — no fetch unless the user expands.
+  function wireExportByLocation() {
+    const wrap = document.getElementById("export-locations-mount");
+    if (!wrap) return;
+    const detEl = wrap.closest("details");
+    if (!detEl) return;
+    detEl.addEventListener("toggle", async function () {
+      if (!detEl.open || exportLocsLoaded) return;
+      exportLocsLoaded = true;
+      try {
+        const locs = await EA.fetchJSON("/api/projects/" + PROJECT_ID + "/locations");
+        if (!locs.length) {
+          wrap.innerHTML = '<div class="empty-state">' +
+            'No interactions yet for this project.' +
+          '</div>';
+          return;
+        }
+        const projectName = (state.summary && state.summary.project_name)
+          || ("Project #" + PROJECT_ID);
+        wrap.innerHTML =
+          '<table class="history-table"><thead><tr>' +
+            '<th>Location</th><th style="text-align:right;">Total calls</th>' +
+            '<th style="text-align:right;">Action</th>' +
+          '</tr></thead><tbody>' +
+          locs.map(function (l) {
+            return '<tr>' +
+              '<td>' + EA.esc(l.location_name) + '</td>' +
+              '<td style="text-align:right;">' + (l.interaction_count || 0) + '</td>' +
+              '<td style="text-align:right;">' +
+                '<button type="button" class="btn btn-ghost btn-sm export-loc-btn" ' +
+                  'data-id="' + l.location_id + '" ' +
+                  'data-name="' + EA.esc(l.location_name) + '">↓ Export Calls</button>' +
+              '</td>' +
+            '</tr>';
+          }).join("") +
+          '</tbody></table>';
+        wrap.querySelectorAll(".export-loc-btn").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            EA.BulkExportModal.open({
+              locationId:    parseInt(btn.dataset.id, 10),
+              locationName:  btn.dataset.name,
+              lockedProject: true,
+              projectId:     PROJECT_ID,
+              projectName:   projectName,
+            });
+          });
+        });
+      } catch (err) {
+        wrap.innerHTML = '<div class="section-error">' +
+          EA.esc(err.message || "Failed to load locations.") + '</div>';
+      }
+    });
   }
 
   // ── Tabs (Dashboard / Rubric / Campaigns) ────────────────

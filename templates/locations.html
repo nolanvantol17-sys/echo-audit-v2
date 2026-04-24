@@ -64,6 +64,7 @@
 
 {% block extra_js %}
 <script defer src="{{ url_for('static', filename='tabs.js') }}?v={{ static_v('tabs.js') }}"></script>
+<script defer src="{{ url_for('static', filename='bulk_export_modal.js') }}?v={{ static_v('bulk_export_modal.js') }}"></script>
 <script>
 (function () {
   "use strict";
@@ -188,6 +189,7 @@
           '<td>' + EA.esc(l.location_phone || "—") + '</td>' +
           '<td>' + EA.esc(EA.formatDate(l.location_engagement_date) || "—") + '</td>' +
           '<td style="text-align:right;">' +
+            '<button type="button" class="btn btn-ghost btn-sm loc-export" data-id="' + l.location_id + '" data-name="' + EA.esc(l.location_name) + '">↓ Export Calls</button>' +
             '<button type="button" class="btn btn-ghost btn-sm loc-edit" data-id="' + l.location_id + '">Edit</button>' +
             '<button type="button" class="btn btn-ghost btn-sm loc-delete" data-id="' + l.location_id + '">Delete</button>' +
           '</td>' +
@@ -203,6 +205,15 @@
     });
     container.querySelectorAll(".loc-delete").forEach(function (b) {
       b.onclick = function () { onDeleteLocation(b.dataset.id); };
+    });
+    container.querySelectorAll(".loc-export").forEach(function (b) {
+      b.onclick = function () {
+        EA.BulkExportModal.open({
+          locationId:    parseInt(b.dataset.id, 10),
+          locationName:  b.dataset.name,
+          lockedProject: false,
+        });
+      };
     });
   }
 

@@ -1284,6 +1284,46 @@ def project_deletion_impact(project_id):
 
 
 # ═══════════════════════════════════════════════════════════════
+# GET /api/projects/<id>/locations  — locations with interactions in this project
+# ═══════════════════════════════════════════════════════════════
+#
+# Powers the Hub Dashboard "Export by Location" section. Returns only
+# locations that have at least one non-deleted interaction in this project
+# (locations with zero calls are uninteresting for export). Counts are
+# inclusive of every status — the per-status filtering happens in the
+# bulk-export preflight, not here.
+
+
+@api_bp.route("/projects/<int:project_id>/locations", methods=["GET"])
+@login_required
+@role_required("admin", "super_admin")
+def list_project_locations(project_id):
+    company_id, err = _require_company()
+    if err: return err
+
+    conn = get_conn()
+    try:
+        if not _get_project(conn, project_id, company_id):
+            return _err("Project not found", 404)
+
+        cur = conn.execute(
+            q("""SELECT loc.location_id, loc.location_name,
+                        COUNT(i.interaction_id) AS interaction_count
+                 FROM interactions i
+                 JOIN locations loc ON loc.location_id = i.interaction_location_id
+                 WHERE i.project_id = ?
+                   AND i.interaction_deleted_at IS NULL
+                   AND loc.location_deleted_at IS NULL
+                 GROUP BY loc.location_id, loc.location_name
+                 ORDER BY loc.location_name"""),
+            (project_id,),
+        )
+        return jsonify(_rows(cur))
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════
 # CAMPAIGNS  (scoped to a project)
 # ═══════════════════════════════════════════════════════════════
 #
