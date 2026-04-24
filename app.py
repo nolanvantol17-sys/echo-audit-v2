@@ -31,6 +31,7 @@ from voip_routes import voip_bp
 # Phase 6 modules
 from account_routes import account_bp
 from export_routes import export_bp
+from bulk_export_routes import bulk_export_bp
 from labels_routes import labels_bp
 from platform_admin_routes import platform_admin_bp
 from settings_routes import settings_bp
@@ -126,6 +127,7 @@ def create_app():
     app.register_blueprint(account_bp)
     app.register_blueprint(labels_bp)
     app.register_blueprint(export_bp)
+    app.register_blueprint(bulk_export_bp)
     app.register_blueprint(platform_admin_bp)
 
     # JSON error handlers for /api/ paths (HTML paths get default handling)
