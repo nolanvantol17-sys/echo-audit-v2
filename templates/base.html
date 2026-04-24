@@ -86,6 +86,7 @@
 {% set is_reports   = _p.startswith('/app/reports') %}
 {% set is_team      = _p.startswith('/app/team') %}
 {% set is_settings  = _p.startswith('/app/settings') %}
+{% set is_locations = _p.startswith('/app/locations') %}
 {% set is_voip      = _p.startswith('/app/voip') %}
 {% set is_platform  = _p.startswith('/app/platform') %}
 
@@ -135,6 +136,10 @@
       <a href="{{ url_for('settings_page') }}"
          class="nav-link {% if is_settings %}active{% endif %}" {{ _nsw }}>
         <span class="nav-icon">⚙</span> Settings
+      </a>
+      <a href="{{ url_for('locations_page') }}"
+         class="nav-link {% if is_locations %}active{% endif %}" {{ _nsw }}>
+        <span class="nav-icon">⌂</span> Locations
       </a>
       <a href="{{ url_for('voip_page') }}"
          class="nav-link {% if is_voip %}active{% endif %}" {{ _nsw }}>
