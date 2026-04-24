@@ -567,7 +567,11 @@
 
   // ── Form bootstrap ────────────────────────────────────
   async function init() {
-    $("#gf-date").value = new Date().toISOString().slice(0,10);
+    // Local date — toISOString() would shift to tomorrow after 8 PM EDT.
+    const _t = new Date();
+    $("#gf-date").value = _t.getFullYear() + "-"
+      + String(_t.getMonth()+1).padStart(2,"0") + "-"
+      + String(_t.getDate()).padStart(2,"0");
 
     wireForm();  // attach handlers BEFORE awaiting loaders so a fast user's first click lands
 
@@ -2395,7 +2399,11 @@
     state.currentInteraction = null;
     state.callerNameDisplay = "";
     state.locationNameDisplay = "";
-    $("#gf-date").value = new Date().toISOString().slice(0,10);
+    // Local date — toISOString() would shift to tomorrow after 8 PM EDT.
+    const _t = new Date();
+    $("#gf-date").value = _t.getFullYear() + "-"
+      + String(_t.getMonth()+1).padStart(2,"0") + "-"
+      + String(_t.getDate()).padStart(2,"0");
     $("#form-hint").textContent = "";
     // Reset the location-driven project dropdown to its "pick a location" state
     $("#gf-location-phone").textContent = "";

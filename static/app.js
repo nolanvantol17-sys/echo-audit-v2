@@ -57,6 +57,14 @@
   const _MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   function formatDate(value) {
     if (!value) return "";
+    // Date-only ISO strings ("YYYY-MM-DD") get parsed as UTC midnight, then
+    // .getMonth()/.getDate() read in local time → previous day west of UTC.
+    // Hand-parse the components so DATE columns render the day the server stored.
+    if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const parts = value.split("-");
+      return _MONTHS[parseInt(parts[1], 10) - 1] + " "
+           + parseInt(parts[2], 10) + ", " + parts[0];
+    }
     const d = (value instanceof Date) ? value : new Date(value);
     if (isNaN(d.getTime())) return String(value);
     return _MONTHS[d.getMonth()] + " " + d.getDate() + ", " + d.getFullYear();
