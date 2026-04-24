@@ -2428,70 +2428,54 @@
   }
 
   // ── No-answer flow ─────────────────────────────────
+  // Always-FormData, silent save. When audio is present (upload or live
+  // recording), it's attached and saved to the no-answer row — no confirm
+  // dialog. The caller already chose this action by clicking the button.
   async function onLogNoAnswer() {
-    const projectId = $("#gf-project").value;
+    const projectId  = $("#gf-project").value;
     const locationId = parseInt($("#gf-location").value, 10) || null;
-    const callDate = $("#gf-date").value || new Date().toISOString().slice(0,10);
-    if (!projectId) {
-      EA.toast("Pick a project first.", "error");
-      return;
-    }
-    if (!locationId) {
-      EA.toast("Pick a location first.", "error");
-      return;
-    }
+    const callDate   = $("#gf-date").value || new Date().toISOString().slice(0,10);
+    if (!projectId)  { EA.toast("Pick a project first.",  "error"); return; }
+    if (!locationId) { EA.toast("Pick a location first.", "error"); return; }
 
-    // Audio present? Swap the dialog to a danger-styled discard confirm —
-    // user is about to lose a recording/upload they prepared. Preserves the
-    // date picker so we don't trade one affordance for another.
-    const hasAudio = !!(state.audioFile || state.liveRecordingBlob);
-
-    const body = document.createElement("div");
-    body.innerHTML =
-      (hasAudio
-        ? '<div class="muted text-small" style="margin-bottom:12px;">' +
-            'You have a recording ready. Logging this call as unanswered ' +
-            'will discard the recording — it won’t be saved.' +
-          '</div>'
-        : '') +
-      '<div class="field"><label class="field-label">Project</label>' +
-        '<div>' + EA.esc($("#gf-project").options[$("#gf-project").selectedIndex].text) + '</div>' +
-      '</div>' +
-      '<div class="field"><label class="field-label">Call date</label>' +
-        '<input type="date" id="na-date" class="field-input" value="' + callDate + '">' +
-      '</div>';
-
-    const dialogOpts = {
-      title:       hasAudio ? "Discard the recording?" : "Log an unanswered call",
-      body:        body,
-      okLabel:     hasAudio ? "Discard & Log" : "Log unanswered",
-      cancelLabel: "Cancel",
-    };
-    if (hasAudio) dialogOpts.variant = "danger";
-    const ok = await EA.confirmDialog(dialogOpts);
-    if (!ok) return;
-
-    const chosenDate = (document.getElementById("na-date") || {}).value || callDate;
-
+    const hasAudio   = !!(state.audioFile || state.liveRecordingBlob);
+    const callerId   = $("#gf-caller").value || null;
     const campaignId = state.campaignCombo ? state.campaignCombo.getValue() : null;
-    const naBody = {
-      project_id: parseInt(projectId, 10),
-      location_id: locationId,
-      interaction_date: chosenDate,
-      caller_user_id: $("#gf-caller").value || null,
-    };
-    if (campaignId !== null && campaignId !== undefined) {
-      naBody.campaign_id = parseInt(campaignId, 10);
+
+    const fd = new FormData();
+    if (state.liveRecordingBlob) {
+      fd.append("audio", state.liveRecordingBlob, "live_recording.webm");
+      if (state.callStartTime)        fd.append("call_start_time", state.callStartTime);
+      if (state.callEndTime)          fd.append("call_end_time",   state.callEndTime);
+      if (state.callDurationSeconds != null)
+                                      fd.append("call_duration_seconds", String(state.callDurationSeconds));
+    } else if (state.audioFile) {
+      fd.append("audio", state.audioFile);
     }
+    fd.append("project_id",       String(projectId));
+    fd.append("location_id",      String(locationId));
+    fd.append("interaction_date", callDate);
+    if (callerId)   fd.append("caller_user_id", callerId);
+    if (campaignId !== null && campaignId !== undefined)
+                    fd.append("campaign_id", String(campaignId));
+
+    const overlay = hasAudio ? EA.showOverlay("Saving recording…") : null;
     try {
       const res = await EA.fetchJSON("/api/interactions/no-answer", {
         method: "POST",
-        body: naBody,
+        body: fd,
       });
-      EA.toast("Unanswered call logged (#" + res.interaction_id + ").", "success");
+      if (overlay) overlay.close();
+      if (hasAudio && res.audio_save_error) {
+        EA.toast("Unanswered call logged (#" + res.interaction_id +
+                 "), but the recording couldn’t be saved.", "error");
+      } else {
+        EA.toast("Unanswered call logged (#" + res.interaction_id + ").", "success");
+      }
       saveGradeContext();
       resetForm();
     } catch (err) {
+      if (overlay) overlay.close();
       EA.toast(err.message || "Couldn't log the call", "error");
     }
   }

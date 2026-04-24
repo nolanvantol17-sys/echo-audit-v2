@@ -599,6 +599,17 @@ def _save_audio(interaction_id, audio_bytes, filename_ext):
     return (str(fs_path), None)
 
 
+def _save_no_answer_audio(conn, interaction_id, audio_url, audio_bytes):
+    """Attach audio to a no-answer interaction row (audio-only, no transcript)."""
+    conn.execute(
+        q("""UPDATE interactions SET
+                interaction_audio_url   = ?,
+                interaction_audio_data  = ?
+             WHERE interaction_id = ?"""),
+        (audio_url, audio_bytes, interaction_id),
+    )
+
+
 def _fetch_scores(conn, interaction_id):
     cur = conn.execute(
         q("""SELECT * FROM interaction_rubric_scores
@@ -1149,8 +1160,18 @@ def log_no_answer():
     company_id, err = _require_company()
     if err: return err
 
-    body = _body()
-    project_id = body.get("project_id")
+    # Lenient body parsing: prefer multipart form fields (when audio is
+    # attached) and fall back to JSON body. The UI now always sends
+    # multipart/form-data (audio optional), but tolerating JSON keeps
+    # third-party callers and old clients working.
+    audio_file = request.files.get("audio")
+    if request.form:
+        get = lambda k: request.form.get(k)
+    else:
+        body = _body()
+        get = lambda k: body.get(k)
+
+    project_id = get("project_id")
     if not project_id:
         return _err("Missing project_id", 400)
 
@@ -1158,14 +1179,14 @@ def log_no_answer():
     # absence means a bypassed UI or a stale browser. Reject loudly so we
     # never write a no-answer row that's invisible to per-property reports.
     try:
-        location_id = int(body.get("location_id") or 0)
+        location_id = int(get("location_id") or 0)
     except (TypeError, ValueError):
         return _err("Invalid location_id", 400)
     if not location_id:
         return _err("Missing location_id", 400)
 
     # Optional campaign_id — tenant-verified by project FK check below.
-    raw_campaign = body.get("campaign_id")
+    raw_campaign = get("campaign_id")
     campaign_id = None
     if raw_campaign not in (None, ""):
         try:
@@ -1173,9 +1194,28 @@ def log_no_answer():
         except (TypeError, ValueError):
             return _err("Invalid campaign_id", 400)
 
-    caller_user_id = body.get("caller_user_id") or None
-    interaction_date = _parse_date(body.get("interaction_date"), date.today())
+    caller_user_id = get("caller_user_id") or None
+    interaction_date = _parse_date(get("interaction_date"), date.today())
 
+    # Optional live-recording timestamps (only sent when audio came from the
+    # in-browser recorder). Same parsing rules as submit_grade.
+    call_start_time       = (get("call_start_time") or "").strip() or None
+    call_end_time         = (get("call_end_time")   or "").strip() or None
+    call_duration_seconds = get("call_duration_seconds")
+    try:
+        call_duration_seconds = int(call_duration_seconds) if call_duration_seconds else None
+    except (TypeError, ValueError):
+        call_duration_seconds = None
+
+    # If audio was attached, validate the extension up front so a bad upload
+    # rejects the whole request rather than silently dropping the audio.
+    audio_ext = None
+    if audio_file and audio_file.filename:
+        audio_ext = Path(audio_file.filename).suffix.lower()
+        if audio_ext not in grader.AUDIO_EXTENSIONS:
+            return _err(f"Unsupported audio format: {audio_ext or '(none)'}", 400)
+
+    # ── Step 1: insert the interaction row + audit log (one transaction) ──
     conn = get_conn()
     try:
         if not _get_project_in_company(conn, project_id, company_id):
@@ -1202,22 +1242,57 @@ def log_no_answer():
             campaign_id=campaign_id,
             interaction_date=interaction_date,
             status_id=STATUS_NO_ANSWER,
+            call_start_time=call_start_time,
+            call_end_time=call_end_time,
+            call_duration_seconds=call_duration_seconds,
+            set_uploaded_at=bool(audio_file),
         )
         write_audit_log(
             current_user.user_id, ACTION_SUBMITTED, ENTITY_INTERACTION,
             interaction_id,
             metadata={"project_id": project_id, "no_answer": True,
                       "location_id": location_id,
-                      "campaign_id": campaign_id},
+                      "campaign_id": campaign_id,
+                      "has_audio": bool(audio_file)},
             conn=conn,
         )
         conn.commit()
-        return jsonify({"ok": True, "interaction_id": interaction_id})
     except Exception:
         conn.rollback()
         raise
     finally:
+        # Always release the conn — early-return validation paths,
+        # success path, and exception path all converge here. Audio save
+        # uses a separate conn so partial-success doesn't roll back the row.
         conn.close()
+
+    # ── Step 2: save audio (separate transaction so partial-success is OK) ──
+    audio_saved = False
+    audio_save_error = None
+    if audio_file:
+        try:
+            audio_bytes = audio_file.read()
+            audio_url, audio_data = _save_audio(interaction_id, audio_bytes, audio_ext)
+            conn2 = get_conn()
+            try:
+                _save_no_answer_audio(conn2, interaction_id, audio_url, audio_data)
+                conn2.commit()
+                audio_saved = True
+            finally:
+                conn2.close()
+        except Exception as e:
+            logger.exception(
+                "Failed to save audio for no-answer interaction %s",
+                interaction_id,
+            )
+            audio_save_error = str(e) or "audio save failed"
+
+    return jsonify({
+        "ok": True,
+        "interaction_id": interaction_id,
+        "audio_saved": audio_saved,
+        "audio_save_error": audio_save_error,
+    })
 
 
 # ═══════════════════════════════════════════════════════════════
