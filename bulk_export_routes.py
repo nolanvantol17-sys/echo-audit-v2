@@ -75,6 +75,35 @@ def _resolve_status_set(args):
     return statuses
 
 
+def _resolve_campaign_filter(args):
+    """Parse campaign_ids + include_uncategorized into a WHERE-clause snippet.
+
+    Returns (campaign_ids, include_uncategorized, where_snippet, extra_params).
+    When neither is provided, the snippet is empty (no filter applied → all
+    campaigns + uncategorized are included). Cross-tenant campaign IDs are
+    harmless because the surrounding query filters by project_id.
+    """
+    raw = (args.get("campaign_ids") or "").strip()
+    ids = []
+    if raw:
+        for tok in raw.split(","):
+            tok = tok.strip()
+            if not tok: continue
+            try: ids.append(int(tok))
+            except (TypeError, ValueError): pass   # silently drop bad tokens
+    inc_unc = args.get("include_uncategorized") == "1"
+    if not ids and not inc_unc:
+        return [], False, "", []
+    parts, params = [], []
+    if ids:
+        ph = ",".join(["?"] * len(ids))
+        parts.append(f"i.campaign_id IN ({ph})")
+        params.extend(ids)
+    if inc_unc:
+        parts.append("i.campaign_id IS NULL")
+    return ids, inc_unc, "AND (" + " OR ".join(parts) + ")", params
+
+
 # ── GET /api/locations/<id>/export/preflight ──
 
 @bulk_export_bp.route("/locations/<int:location_id>/export/preflight", methods=["GET"])
@@ -94,6 +123,7 @@ def export_preflight(location_id):
 
     statuses = _resolve_status_set(request.args)
     placeholders = ",".join(["?"] * len(statuses))
+    _, _, camp_where, camp_params = _resolve_campaign_filter(request.args)
 
     conn = get_conn()
     try:
@@ -130,8 +160,9 @@ def export_preflight(location_id):
                   WHERE i.interaction_location_id = ?
                     AND i.project_id              = ?
                     AND i.interaction_deleted_at IS NULL
-                    AND i.status_id IN ({placeholders})"""),
-            [location_id, project_id, *statuses],
+                    AND i.status_id IN ({placeholders})
+                    {camp_where}"""),
+            [location_id, project_id, *statuses, *camp_params],
         ).fetchone()
     finally:
         conn.close()
@@ -151,6 +182,30 @@ def export_preflight(location_id):
         "location_name": loc["location_name"],
         "project_name":  proj["project_name"],
     })
+
+
+# ── Filename builder (Commit 7 — campaign-aware) ──
+
+def _build_zip_filename(loc_name, proj_name, selected_campaign_names,
+                        include_uncategorized):
+    """Per Commit 7 spec, filename varies with campaign filter:
+       - No filter:   {Loc}_{Proj}_Calls.zip
+       - 1-3 picks:   {Loc}_{Proj}_{Camp1}_{Camp2}_Calls.zip
+       - 4+ picks:    {Loc}_{Proj}_MultipleCampaigns_Calls.zip
+    Selected-name list is alphabetized for filename stability across requests.
+    "Uncategorized" counts as one selection toward the 1-3 vs 4+ threshold.
+    """
+    safe_loc  = _safe_filename_segment(loc_name)
+    safe_proj = _safe_filename_segment(proj_name)
+    selected = list(selected_campaign_names)
+    if include_uncategorized:
+        selected.append("Uncategorized")
+    if not selected:
+        return f"{safe_loc}_{safe_proj}_Calls.zip"
+    if len(selected) >= 4:
+        return f"{safe_loc}_{safe_proj}_MultipleCampaigns_Calls.zip"
+    safe_camps = "_".join(_safe_filename_segment(c, max_len=30) for c in sorted(selected))
+    return f"{safe_loc}_{safe_proj}_{safe_camps}_Calls.zip"
 
 
 # ── Manifest helper (only emitted on partial failure) ──
@@ -210,6 +265,7 @@ def export_location_bulk(location_id):
 
     statuses = _resolve_status_set(request.args)
     placeholders = ",".join(["?"] * len(statuses))
+    campaign_ids, inc_unc, camp_where, camp_params = _resolve_campaign_filter(request.args)
 
     succeeded_ids = []
     skipped       = []   # list of (iid, date_str, caller_name, reason)
@@ -247,8 +303,9 @@ def export_location_bulk(location_id):
                     AND i.project_id              = ?
                     AND i.interaction_deleted_at IS NULL
                     AND i.status_id IN ({placeholders})
+                    {camp_where}
                   ORDER BY i.interaction_date DESC, i.interaction_id DESC"""),
-            [location_id, project_id, *statuses],
+            [location_id, project_id, *statuses, *camp_params],
         ).fetchall()
 
         if not rows:
@@ -331,8 +388,11 @@ def export_location_bulk(location_id):
                 "project_id":      project_id,
                 "project_name":    proj["project_name"],
                 "filters": {
-                    "include_no_answer": request.args.get("include_no_answer") == "1",
-                    "include_failed":    request.args.get("include_failed")    == "1",
+                    "include_no_answer":      request.args.get("include_no_answer") == "1",
+                    "include_failed":         request.args.get("include_failed")    == "1",
+                    "campaign_filter_active": bool(campaign_ids) or inc_unc,
+                    "campaign_ids":           campaign_ids,
+                    "include_uncategorized":  inc_unc,
                 },
                 "count_requested": len(rows),
                 "count_succeeded": 0,
@@ -342,10 +402,28 @@ def export_location_bulk(location_id):
         )
         return _err("Export failed: no interactions could be rendered", 500)
 
-    # Filename: {SafeLoc}_Calls_{SafeProj}.zip
-    loc_safe  = _safe_filename_segment(loc["location_name"])
-    proj_safe = _safe_filename_segment(proj["project_name"])
-    zip_filename = f"{loc_safe}_Calls_{proj_safe}.zip"
+    # Look up names of selected campaigns for the filename. Tenant scope is
+    # implicit: campaigns are project-scoped, and the row query already
+    # filtered by project_id, so a malicious campaign_id from another
+    # project simply yields no rows above and no name here.
+    selected_camp_names = []
+    if campaign_ids:
+        conn2 = get_conn()
+        try:
+            ph = ",".join(["?"] * len(campaign_ids))
+            cur = conn2.execute(
+                q(f"""SELECT campaign_name FROM campaigns
+                      WHERE campaign_id IN ({ph}) AND project_id = ?
+                        AND campaign_deleted_at IS NULL"""),
+                [*campaign_ids, project_id],
+            )
+            selected_camp_names = [r["campaign_name"] for r in cur.fetchall()]
+        finally:
+            conn2.close()
+    zip_filename = _build_zip_filename(
+        loc["location_name"], proj["project_name"],
+        selected_camp_names, inc_unc,
+    )
 
     # Audit log: full ID list under the cap; degrade to count-only above.
     metadata = {
@@ -354,8 +432,11 @@ def export_location_bulk(location_id):
         "project_id":      project_id,
         "project_name":    proj["project_name"],
         "filters": {
-            "include_no_answer": request.args.get("include_no_answer") == "1",
-            "include_failed":    request.args.get("include_failed")    == "1",
+            "include_no_answer":      request.args.get("include_no_answer") == "1",
+            "include_failed":         request.args.get("include_failed")    == "1",
+            "campaign_filter_active": bool(campaign_ids) or inc_unc,
+            "campaign_ids":           campaign_ids,
+            "include_uncategorized":  inc_unc,
         },
         "count_requested": len(rows),
         "count_succeeded": len(succeeded_ids),

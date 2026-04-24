@@ -24,11 +24,21 @@
   // Cached projects list per page-load; first opening from Locations does
   // the fetch, subsequent openings reuse.
   let _projectsCache = null;
+  // Campaigns cached per project (per page-load); rare cross-tab edits
+  // require a refresh — see followup memory if this ever becomes an issue.
+  const _campaignsCache = {};
 
   async function _loadProjects() {
     if (_projectsCache) return _projectsCache;
     _projectsCache = await EA.fetchJSON("/api/projects");
     return _projectsCache;
+  }
+
+  async function _loadCampaigns(projectId) {
+    if (_campaignsCache[projectId]) return _campaignsCache[projectId];
+    _campaignsCache[projectId] =
+      await EA.fetchJSON("/api/projects/" + projectId + "/campaigns");
+    return _campaignsCache[projectId];
   }
 
   function _renderStats(host, res) {
@@ -77,6 +87,9 @@
       includeNoAns:  false,
       includeFailed: false,
       hasResults:    false,
+      allCampaigns:         true,    // default: All campaigns checked
+      campaignIds:          [],      // selected individual campaign IDs
+      includeUncategorized: false,   // selected the "Uncategorized" pseudo-row
     };
 
     const body = document.createElement("div");
@@ -92,6 +105,12 @@
         '</div>';
     body.innerHTML =
       pickerHtml +
+      '<div class="field" style="margin-bottom:14px;" data-role="campaigns-block" hidden>' +
+        '<label class="field-label">Campaigns</label>' +
+        '<div data-role="campaigns-list">' +
+          '<div class="muted text-small">Loading campaigns…</div>' +
+        '</div>' +
+      '</div>' +
       '<div class="field" style="margin-bottom:8px;">' +
         '<label class="field-label" style="display:flex;align-items:center;gap:8px;font-weight:normal;">' +
           '<input type="checkbox" data-role="toggle-noans">' +
@@ -109,10 +128,90 @@
         '<div class="muted text-small">Pick a project to see counts.</div>' +
       '</div>';
 
+    function syncCampaignState() {
+      state.campaignIds = [];
+      state.includeUncategorized = false;
+      body.querySelectorAll('.campaign-cb:checked').forEach(function (cb) {
+        if (cb.dataset.uncategorized) state.includeUncategorized = true;
+        else state.campaignIds.push(parseInt(cb.dataset.id, 10));
+      });
+    }
+
+    function renderCampaignsList(campaigns) {
+      const block = body.querySelector('[data-role="campaigns-block"]');
+      const list  = body.querySelector('[data-role="campaigns-list"]');
+      if (!campaigns.length) {
+        // Project has no campaigns → hide entirely (current behavior preserved).
+        block.hidden = true;
+        state.allCampaigns = true;
+        state.campaignIds = [];
+        state.includeUncategorized = false;
+        return;
+      }
+      block.hidden = false;
+      let html = '<label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin-bottom:6px;">' +
+        '<input type="checkbox" data-role="campaign-all" checked> ' +
+        '<strong>All campaigns</strong>' +
+      '</label>';
+      campaigns.forEach(function (c) {
+        html += '<label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin-bottom:4px;padding-left:18px;">' +
+          '<input type="checkbox" class="campaign-cb" data-id="' + c.campaign_id + '" disabled> ' +
+          EA.esc(c.campaign_name) +
+        '</label>';
+      });
+      // Uncategorized pseudo-row — always shown when project has campaigns.
+      html += '<label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin-bottom:4px;padding-left:18px;font-style:italic;color:var(--muted,#64748b);">' +
+        '<input type="checkbox" class="campaign-cb" data-uncategorized="1" disabled> ' +
+        'Uncategorized (no campaign)' +
+      '</label>';
+      list.innerHTML = html;
+
+      list.querySelector('[data-role="campaign-all"]').addEventListener("change", function (e) {
+        state.allCampaigns = e.target.checked;
+        list.querySelectorAll(".campaign-cb").forEach(function (cb) {
+          cb.disabled = state.allCampaigns;
+          if (state.allCampaigns) cb.checked = false;
+        });
+        syncCampaignState();
+        refresh();
+      });
+      list.querySelectorAll(".campaign-cb").forEach(function (cb) {
+        cb.addEventListener("change", function () { syncCampaignState(); refresh(); });
+      });
+    }
+
+    async function refreshCampaigns() {
+      const block = body.querySelector('[data-role="campaigns-block"]');
+      if (!state.projectId) { block.hidden = true; return; }
+      block.hidden = false;
+      body.querySelector('[data-role="campaigns-list"]').innerHTML =
+        '<div class="muted text-small">Loading campaigns…</div>';
+      // Reset campaign selection on every project change.
+      state.allCampaigns = true;
+      state.campaignIds = [];
+      state.includeUncategorized = false;
+      try {
+        const camps = await _loadCampaigns(state.projectId);
+        renderCampaignsList(camps);
+      } catch (err) {
+        body.querySelector('[data-role="campaigns-list"]').innerHTML =
+          '<div class="muted text-small">Failed to load campaigns.</div>';
+      }
+    }
+
     async function refresh() {
       const stats = body.querySelector('[data-role="stats"]');
       if (!state.projectId) {
         stats.innerHTML = '<div class="muted text-small">Pick a project to see counts.</div>';
+        state.hasResults = false;
+        _setDownloadEnabled(body, false);
+        return;
+      }
+      // Campaign filter validation: if user unchecked "All campaigns" they
+      // must pick at least one (campaign or Uncategorized) to proceed.
+      if (!state.allCampaigns && !state.campaignIds.length && !state.includeUncategorized) {
+        stats.innerHTML = '<div class="muted text-small">' +
+          'Pick at least one campaign or check "All campaigns".</div>';
         state.hasResults = false;
         _setDownloadEnabled(body, false);
         return;
@@ -122,6 +221,10 @@
       const params = new URLSearchParams({ project_id: String(state.projectId) });
       if (state.includeNoAns)  params.set("include_no_answer", "1");
       if (state.includeFailed) params.set("include_failed",    "1");
+      if (!state.allCampaigns) {
+        if (state.campaignIds.length)   params.set("campaign_ids", state.campaignIds.join(","));
+        if (state.includeUncategorized) params.set("include_uncategorized", "1");
+      }
       try {
         const res = await EA.fetchJSON(
           "/api/locations/" + locationId + "/export/preflight?" + params.toString()
@@ -156,7 +259,7 @@
     _setDownloadEnabled(body, false);
 
     if (lockedProject) {
-      refresh();
+      refreshCampaigns().then(refresh);
     } else {
       try {
         const projects = await _loadProjects();
@@ -168,7 +271,7 @@
           sel.innerHTML = '<option value="' + projects[0].project_id + '">' +
                           EA.esc(projects[0].project_name) + '</option>';
           state.projectId = projects[0].project_id;
-          refresh();
+          refreshCampaigns().then(refresh);
         } else {
           sel.innerHTML = '<option value="">Select a project…</option>' +
             projects.map(function (p) {
@@ -177,7 +280,7 @@
             }).join("");
           sel.addEventListener("change", function (e) {
             state.projectId = e.target.value ? parseInt(e.target.value, 10) : null;
-            refresh();
+            refreshCampaigns().then(refresh);
           });
         }
       } catch (err) {
@@ -197,6 +300,10 @@
     const params = new URLSearchParams({ project_id: String(state.projectId) });
     if (state.includeNoAns)  params.set("include_no_answer", "1");
     if (state.includeFailed) params.set("include_failed",    "1");
+    if (!state.allCampaigns) {
+      if (state.campaignIds.length)   params.set("campaign_ids", state.campaignIds.join(","));
+      if (state.includeUncategorized) params.set("include_uncategorized", "1");
+    }
     const url = "/api/locations/" + locationId + "/export?" + params.toString();
 
     const overlay = EA.showOverlay("Building your export — this may take up to a minute…");
