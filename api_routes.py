@@ -343,13 +343,44 @@ def list_locations():
     try:
         cur = conn.execute(q("""
             SELECT l.location_id, l.location_name, l.location_phone,
-                   l.location_engagement_date, l.status_id, s.status_name
+                   l.location_engagement_date, l.status_id, s.status_name,
+                   COALESCE(m.total_calls, 0)     AS total_calls,
+                   COALESCE(m.graded_count, 0)    AS graded_count,
+                   COALESCE(m.no_answer_count, 0) AS no_answer_count,
+                   m.avg_score                    AS avg_score,
+                   m.last_call_date               AS last_call_date
             FROM locations l
             LEFT JOIN statuses s ON s.status_id = l.status_id
+            LEFT JOIN (
+                SELECT i.interaction_location_id AS location_id,
+                       COUNT(*)                                                  AS total_calls,
+                       SUM(CASE WHEN i.status_id = 43 THEN 1 ELSE 0 END)         AS graded_count,
+                       SUM(CASE WHEN i.status_id = 44 THEN 1 ELSE 0 END)         AS no_answer_count,
+                       AVG(CASE WHEN i.status_id = 43
+                                THEN i.interaction_overall_score END)            AS avg_score,
+                       MAX(CASE WHEN i.status_id = 43
+                                THEN i.interaction_date END)                     AS last_call_date
+                  FROM interactions i
+                  JOIN projects p ON p.project_id = i.project_id
+                 WHERE p.company_id = ?
+                   AND i.interaction_deleted_at IS NULL
+                 GROUP BY i.interaction_location_id
+            ) m ON m.location_id = l.location_id
             WHERE l.company_id = ? AND l.location_deleted_at IS NULL
             ORDER BY l.location_name
-        """), (company_id,))
-        return jsonify(_rows(cur))
+        """), (company_id, company_id))
+        rows = _rows(cur)
+        # AVG returns Decimal in PG; coerce to JSON-safe float (matches the
+        # round(float(...), 1) pattern used elsewhere in this file).
+        # SUM/COUNT can also return Decimal in PG — coerce to int.
+        for r in rows:
+            avg = r.get("avg_score")
+            r["avg_score"] = round(float(avg), 1) if avg is not None else None
+            for k in ("total_calls", "graded_count", "no_answer_count"):
+                v = r.get(k)
+                if v is not None:
+                    r[k] = int(v)
+        return jsonify(rows)
     finally:
         conn.close()
 

@@ -183,11 +183,18 @@
     }
 
     const rows = filtered.map(function (l) {
+      const avg      = (l.avg_score != null) ? Number(l.avg_score).toFixed(1) : "—";
+      const lastCall = l.last_call_date ? EA.formatRelativeTime(l.last_call_date) : "—";
       return (
         '<tr data-id="' + l.location_id + '">' +
           '<td>' + EA.esc(l.location_name) + '</td>' +
           '<td>' + EA.esc(l.location_phone || "—") + '</td>' +
           '<td>' + EA.esc(EA.formatDate(l.location_engagement_date) || "—") + '</td>' +
+          '<td style="text-align:right;">' + (l.total_calls || 0) + '</td>' +
+          '<td style="text-align:right;">' + (l.graded_count || 0) + '</td>' +
+          '<td style="text-align:right;">' + (l.no_answer_count || 0) + '</td>' +
+          '<td style="text-align:right;">' + EA.esc(avg) + '</td>' +
+          '<td>' + EA.esc(lastCall) + '</td>' +
           '<td style="text-align:right;">' +
             '<button type="button" class="btn btn-ghost btn-sm loc-export" data-id="' + l.location_id + '" data-name="' + EA.esc(l.location_name) + '">↓ Export Calls</button>' +
             '<button type="button" class="btn btn-ghost btn-sm loc-edit" data-id="' + l.location_id + '">Edit</button>' +
@@ -198,7 +205,13 @@
     }).join("");
     container.innerHTML =
       '<table class="history-table"><thead><tr>' +
-        '<th>Name</th><th>Phone</th><th>First contact date</th><th></th>' +
+        '<th>Name</th><th>Phone</th><th>First contact</th>' +
+        '<th style="text-align:right;">Total</th>' +
+        '<th style="text-align:right;">Graded</th>' +
+        '<th style="text-align:right;">No-answer</th>' +
+        '<th style="text-align:right;">Avg score</th>' +
+        '<th>Last call</th>' +
+        '<th></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table>';
     container.querySelectorAll(".loc-edit").forEach(function (b) {
       b.onclick = function () { onEditLocation(b.dataset.id); };
