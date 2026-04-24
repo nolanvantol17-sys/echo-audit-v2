@@ -358,21 +358,30 @@ def _build_writeups(intr, styles):
 
 
 def _build_rubric(scores, styles):
+    """Render the rubric breakdown with pagination guards:
+
+    - Section header + first 2 rubric rows are KeepTogether'd to prevent
+      an orphan "Rubric Breakdown" header at the bottom of a page.
+    - Last 2 rubric rows are KeepTogether'd to prevent the final row
+      widowing alone on a new page.
+    - Middle rows flow naturally and may split between any two adjacent rows.
+
+    For rubrics with ≤6 rows, the whole table + header keeps together —
+    short rubrics fit one page comfortably and benefit from staying as a
+    single visual block.
+
+    Tradeoff: when chunks abut on the same page, the meeting point shows a
+    ~1pt double border (LINEBELOW of upper + LINEABOVE of lower) vs ~0.5pt
+    for between-row separators. Acceptable cosmetic cost for the pagination
+    guarantees; only happens when 7+ rubric items render fully on one page.
+    """
     if not scores:
         return []
-    out = [Paragraph("Rubric Breakdown", styles["section_header"])]
-    table_data = []
-    style = TableStyle([
-        ("VALIGN", (0,0), (-1,-1), "TOP"),
-        ("TOPPADDING", (0,0), (-1,-1), 8),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
-        ("LEFTPADDING", (0,0), (-1,-1), 10),
-        ("RIGHTPADDING", (0,0), (-1,-1), 10),
-        ("LINEBELOW", (0,0), (-1,-2), 0.5, BORDER),
-        ("BOX", (0,0), (-1,-1), 0.5, BORDER),
-    ])
 
-    for i, s in enumerate(scores):
+    # Build per-row data + per-row tint info first (same logic as before,
+    # extracted so the rows can be partitioned into chunks below).
+    rows = []
+    for s in scores:
         sv = float(s["irs_score_value"])
         st = s["irs_snapshot_score_type"]
         if st in ("yes_no", "yes_no_pending"):
@@ -392,15 +401,45 @@ def _build_rubric(scores, styles):
         explain_html = (s["irs_score_ai_explanation"] or "").replace("\n", "<br/>")
         explain_cell = Paragraph(explain_html, styles["rubric_explain"])
 
-        table_data.append([
-            [name_cell, Spacer(1, 2), explain_cell],
-            score_cell,
-        ])
-        style.add("BACKGROUND", (1, i), (1, i), bg)
+        rows.append({
+            "data": [[name_cell, Spacer(1, 2), explain_cell], score_cell],
+            "bg":   bg,
+        })
 
-    rubric_table = Table(table_data, colWidths=[5.3*inch, 0.9*inch])
-    rubric_table.setStyle(style)
-    out.append(rubric_table)
+    def _make_chunk(chunk_rows):
+        """Build one fully-bordered Table from a slice of rows. Uses explicit
+        LINE* on all four sides (instead of BOX) so each chunk renders the
+        same outer border whether it's standalone or abutting another chunk."""
+        ts = TableStyle([
+            ("VALIGN", (0,0), (-1,-1), "TOP"),
+            ("TOPPADDING", (0,0), (-1,-1), 8),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+            ("LEFTPADDING", (0,0), (-1,-1), 10),
+            ("RIGHTPADDING", (0,0), (-1,-1), 10),
+            ("LINEABOVE",  (0,0),  (-1,0),  0.5, BORDER),  # top edge
+            ("LINEBELOW",  (0,0),  (-1,-1), 0.5, BORDER),  # below every row (incl last = bottom edge)
+            ("LINEBEFORE", (0,0),  (0,-1),  0.5, BORDER),  # left edge
+            ("LINEAFTER",  (-1,0), (-1,-1), 0.5, BORDER),  # right edge
+        ])
+        for i, r in enumerate(chunk_rows):
+            ts.add("BACKGROUND", (1, i), (1, i), r["bg"])
+        t = Table([r["data"] for r in chunk_rows], colWidths=[5.3*inch, 0.9*inch])
+        t.setStyle(ts)
+        return t
+
+    header = Paragraph("Rubric Breakdown", styles["section_header"])
+    n = len(rows)
+    out = []
+    if n <= 6:
+        # Whole rubric (with header) keeps together — small enough to fit one page.
+        out.append(KeepTogether([header, _make_chunk(rows)]))
+    else:
+        # Header + first 2 rows: anti-orphan-header guard.
+        out.append(KeepTogether([header, _make_chunk(rows[:2])]))
+        # Middle rows flow naturally; can split anywhere between rows.
+        out.append(_make_chunk(rows[2:n-2]))
+        # Last 2 rows: anti-widow guard.
+        out.append(KeepTogether([_make_chunk(rows[n-2:])]))
     return out
 
 
@@ -460,12 +499,12 @@ def _build_story(intr, scores, styles):
         # Slim variant: header (no score badge), then a single note.
         story.extend(_build_header(intr, styles, show_score=False))
         story.append(Paragraph(
-            "This call was logged as <b>unanswered</b>. No grade or transcript is available.",
+            "This call was <b>unanswered</b>. No grade or transcript is available.",
             styles["empty_note"],
         ))
         if intr.get("interaction_audio_url"):
             story.append(Paragraph(
-                "An audio recording is included with this report.",
+                "An audio recording is attached.",
                 styles["empty_note"],
             ))
         return story
@@ -475,7 +514,7 @@ def _build_story(intr, scores, styles):
         # then any partial fields that exist. Never crashes on missing data.
         story.extend(_build_header(intr, styles, show_score=True))
         story.append(Paragraph(
-            "This call did not finish grading. Showing whatever data was captured.",
+            "This call did not complete grading. Partial data is shown below.",
             styles["empty_note"],
         ))
         story.extend(_build_writeups(intr, styles))
