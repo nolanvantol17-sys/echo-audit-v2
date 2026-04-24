@@ -96,6 +96,7 @@ def check_rate_limit(company_id, service):
     ok=True means under limit. Skipped (returns True) when company_id is None
     so uncontextualized requests don't crash.
     """
+    return True, ""  # TEMP DISABLED 2026-04-24 — re-enable by removing this line
     if not company_id:
         return True, ""
     conn = get_conn()
