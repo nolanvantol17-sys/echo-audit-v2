@@ -513,6 +513,30 @@
 
   const $ = function (sel) { return document.querySelector(sel); };
 
+  // ── Campaign-state diagnostic ring buffer ─────────────
+  // Persistent across grades / panel closes / soft-nav (sessionStorage),
+  // capped at 200 entries. Always-on — cheap, removable in a followup.
+  // If the campaign-disabled bug recurs after the resetForm fix below,
+  // dump the trace from DevTools console with:
+  //   copy(JSON.stringify(JSON.parse(sessionStorage.getItem("ea.dbg.campaign")), null, 2))
+  // and paste into the bug report.
+  function dbg(event, data) {
+    try {
+      const log = JSON.parse(sessionStorage.getItem("ea.dbg.campaign") || "[]");
+      log.push({
+        t:      Date.now(),
+        event:  event,
+        data:   data || null,
+        url:    location.href,
+        locked: state.projectLocked,
+        cpid:   state.campaignProjectId,
+        combo:  !!state.campaignCombo,
+      });
+      if (log.length > 200) log.splice(0, log.length - 200);
+      sessionStorage.setItem("ea.dbg.campaign", JSON.stringify(log));
+    } catch (_) { /* private mode etc. — non-fatal */ }
+  }
+
   // ── Nav-away guard ────────────────────────────────────
   // Exposes window.formIsDirty and window.gradeComplete so base.html can
   // prompt before sidebar nav or page unload. We consider the form "dirty"
@@ -574,6 +598,7 @@
   }
 
   async function applyLockedProject(projectId) {
+    dbg("applyLockedProject:enter", { projectId: projectId });
     state.projectLocked = true;
     const p = (state.allProjects || []).find(
       (pp) => String(pp.project_id) === String(projectId)
@@ -642,6 +667,7 @@
     // is established, so we kick off the campaign load ourselves.
     setCampaignFieldEnabled(true, "Loading campaigns…");
     loadCampaignsForProject(p.project_id);
+    dbg("applyLockedProject:done", { projectId: projectId, allLocations: allLocations });
   }
 
   function renderLockStrip(p, allLocations) {
@@ -807,8 +833,7 @@
   // Pre-selects the first item (most recently used, falling back to most
   // recently created), or a stashed campaign_id from the grade context.
   function setCampaignFieldEnabled(enabled, placeholderMsg) {
-    console.log("[DBG setCampaignFieldEnabled]", { enabled: enabled, placeholderMsg: placeholderMsg });
-    console.trace("[DBG setCampaignFieldEnabled trace]");
+    dbg("setCampaignFieldEnabled", { enabled: enabled, placeholderMsg: placeholderMsg });
     const input = document.getElementById("gf-campaign");
     if (!input) return;
     input.disabled = !enabled;
@@ -826,7 +851,6 @@
     const seq = ++state.campaignFetchSeq;
     if (!projectId) {
       destroyCampaignCombo();
-      state.campaignProjectId = null;
       return;
     }
     if (String(state.campaignProjectId) === String(projectId) && state.campaignCombo) {
@@ -855,10 +879,7 @@
   }
 
   function mountCampaignCombo(projectId, items, initialId) {
-    console.log("[DBG mountCampaignCombo] projectId=", projectId,
-                "items=", items.length, "initialId=", initialId,
-                "campaignProjectId(before)=", state.campaignProjectId);
-    console.trace("[DBG mountCampaignCombo trace]");
+    dbg("mountCampaignCombo:enter", { projectId: projectId, items: items.length, initialId: initialId });
     destroyCampaignCombo();
     const input = document.getElementById("gf-campaign");
     if (!input) return;
@@ -882,17 +903,18 @@
         }
       },
     });
-    console.log("[DBG mountCampaignCombo done] campaignProjectId(after)=", state.campaignProjectId);
+    dbg("mountCampaignCombo:done", { projectId: projectId });
   }
 
   function destroyCampaignCombo() {
-    console.log("[DBG destroyCampaignCombo] campaignProjectId(before)=", state.campaignProjectId,
-                "comboExists=", !!state.campaignCombo);
-    console.trace("[DBG destroyCampaignCombo trace]");
+    dbg("destroyCampaignCombo");
     if (state.campaignCombo) {
       try { state.campaignCombo.destroy(); } catch (_) {}
       state.campaignCombo = null;
     }
+    // Self-clear so callers don't have to remember. Mounting a new combo
+    // re-assigns campaignProjectId; destroying always means "no project."
+    state.campaignProjectId = null;
   }
 
   // ── Location intel card ──────────────────────────────
@@ -1163,14 +1185,12 @@
   function onProjectChange() {
     const projSel = $("#gf-project");
     const pid = projSel ? projSel.value : "";
-    console.log("[DBG onProjectChange] pid=", pid);
-    console.trace("[DBG onProjectChange trace]");
+    dbg("onProjectChange", { pid: pid });
     if (pid) {
       setCampaignFieldEnabled(true, "Loading campaigns…");
       loadCampaignsForProject(pid);
     } else {
       destroyCampaignCombo();
-      state.campaignProjectId = null;
       setCampaignFieldEnabled(false);
     }
   }
@@ -1233,10 +1253,7 @@
   }
 
   function switchTab(which) {
-    console.log("[DBG switchTab] which=", which,
-                "campaignProjectId=", state.campaignProjectId,
-                "comboExists=", !!state.campaignCombo,
-                "campaignDisabled=", document.getElementById("gf-campaign") && document.getElementById("gf-campaign").disabled);
+    dbg("switchTab", { which: which });
     state.activePanel = which;
     $("#panel-upload").hidden = which !== "upload";
     $("#panel-record").hidden = which !== "record";
@@ -2303,6 +2320,7 @@
   }
   function applyGradeContext() {
     const ctx = readGradeContext();
+    dbg("applyGradeContext:enter", { hasCtx: !!ctx, sticky: ctx ? !!ctx.sticky : null });
     if (!ctx) return;
 
     // Phase 2c sticky payload: caller-only. Restore the caller dropdown and
@@ -2351,6 +2369,7 @@
   }
 
   function resetForm() {
+    dbg("resetForm:enter");
     window.gradeComplete = false;
     $("#grade-result-section").hidden = true;
     $("#grade-result-section").innerHTML = "";
@@ -2377,7 +2396,6 @@
     $("#gf-location-phone").hidden = true;
     renderProjectDropdown(null);
     destroyCampaignCombo();
-    state.campaignProjectId = null;
     setCampaignFieldEnabled(false);
     const intel = document.getElementById("location-intel-card");
     if (intel) {
@@ -2390,7 +2408,17 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
 
     const params = new URLSearchParams(window.location.search);
-    if (!params.get("project_id")) applyGradeContext();
+    const forcedProjectId = params.get("project_id");
+    if (forcedProjectId) {
+      // Locked-URL workflow: re-run applyLockedProject to rebuild the
+      // project option + remount the campaign combo. Symmetric with init()
+      // — without this, resetForm's renderProjectDropdown(null) wipes the
+      // locked project and the campaign field is stuck on "Select a project
+      // first…" even though the lock strip still shows the project name.
+      applyLockedProject(forcedProjectId);
+    } else {
+      applyGradeContext();
+    }
   }
 
   // ── No-answer flow ─────────────────────────────────
