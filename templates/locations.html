@@ -183,17 +183,33 @@
     }
 
     const rows = filtered.map(function (l) {
-      const avg      = (l.avg_score != null) ? Number(l.avg_score).toFixed(1) : "—";
+      const total    = l.total_calls    || 0;
+      const graded   = l.graded_count   || 0;
+      const noAnswer = l.no_answer_count || 0;
+      const avgPill  = (l.avg_score != null)
+        ? '<span class="score-pill ' + EA.scoreClass(l.avg_score) + '">' +
+            EA.formatScore(l.avg_score) + '</span>'
+        : '—';
       const lastCall = l.last_call_date ? EA.formatRelativeTime(l.last_call_date) : "—";
+      const mutedStyle = ' style="color: var(--muted);"';
+      const warnStyle  = ' style="color: var(--warning);"';
       return (
         '<tr data-id="' + l.location_id + '">' +
           '<td>' + EA.esc(l.location_name) + '</td>' +
           '<td>' + EA.esc(l.location_phone || "—") + '</td>' +
           '<td>' + EA.esc(EA.formatDate(l.location_engagement_date) || "—") + '</td>' +
-          '<td style="text-align:right;">' + (l.total_calls || 0) + '</td>' +
-          '<td style="text-align:right;">' + (l.graded_count || 0) + '</td>' +
-          '<td style="text-align:right;">' + (l.no_answer_count || 0) + '</td>' +
-          '<td style="text-align:right;">' + EA.esc(avg) + '</td>' +
+          '<td style="text-align:right;">' +
+            (total === 0 ? '<span' + mutedStyle + '>0</span>' : total) +
+          '</td>' +
+          '<td style="text-align:right;">' +
+            (graded === 0 ? '<span' + mutedStyle + '>0</span>' : graded) +
+          '</td>' +
+          '<td style="text-align:right;">' +
+            (noAnswer === 0
+              ? '<span' + mutedStyle + '>0</span>'
+              : '<span' + warnStyle  + '>' + noAnswer + '</span>') +
+          '</td>' +
+          '<td style="text-align:right;">' + avgPill + '</td>' +
           '<td>' + EA.esc(lastCall) + '</td>' +
           '<td style="text-align:right;">' +
             '<button type="button" class="btn btn-ghost btn-sm loc-export" data-id="' + l.location_id + '" data-name="' + EA.esc(l.location_name) + '">↓ Export Calls</button>' +
