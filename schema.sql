@@ -978,3 +978,39 @@ BEGIN NEW.th_updated_at = NOW(); RETURN NEW; END;
 $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_transcription_hints_updated_at BEFORE UPDATE ON transcription_hints
     FOR EACH ROW EXECUTE FUNCTION set_th_updated_at();
+
+
+-- ================================================================
+-- location_notes  (Phase 8: free-form post-it notes per location)
+-- ================================================================
+-- Surfaces on the Grade page for the next caller to read; institutional
+-- memory across reviewers ("phone line doesn't work", etc). Soft-deleted;
+-- ln_author_user_id NULLable so deleting a user preserves the trail.
+-- Tenant scope: location_notes.location_id → locations.company_id (no
+-- denormalized company_id; every read query joins through locations).
+CREATE TABLE location_notes (
+    location_note_id   SERIAL PRIMARY KEY,
+    location_id        INTEGER NOT NULL
+                           REFERENCES locations (location_id) ON DELETE CASCADE,
+    ln_author_user_id  INTEGER REFERENCES users (user_id) ON DELETE SET NULL,
+    ln_text            TEXT NOT NULL,
+    ln_deleted_at      TIMESTAMPTZ,
+    ln_created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ln_updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT chk_location_notes_text_length
+        CHECK (char_length(ln_text) BETWEEN 1 AND 500),
+    CONSTRAINT chk_location_notes_text_not_blank
+        CHECK (btrim(ln_text) <> '')
+);
+
+CREATE INDEX idx_location_notes_location_id ON location_notes (location_id)
+    WHERE ln_deleted_at IS NULL;
+CREATE INDEX idx_location_notes_author_user_id ON location_notes (ln_author_user_id)
+    WHERE ln_deleted_at IS NULL;
+
+CREATE OR REPLACE FUNCTION set_ln_updated_at() RETURNS TRIGGER AS $$
+BEGIN NEW.ln_updated_at = NOW(); RETURN NEW; END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_location_notes_updated_at BEFORE UPDATE ON location_notes
+    FOR EACH ROW EXECUTE FUNCTION set_ln_updated_at();

@@ -21,6 +21,7 @@ import db
 import auth
 from api_routes import api_bp
 from audit_log_routes import audit_log_bp
+from location_notes_routes import location_notes_bp
 from dashboard_routes import dashboard_bp
 from interactions_routes import interactions_bp
 from performance_reports import reports_bp
@@ -118,6 +119,7 @@ def create_app():
     app.register_blueprint(reports_bp)
     app.register_blueprint(platform_bp)
     app.register_blueprint(audit_log_bp)
+    app.register_blueprint(location_notes_bp)
 
     # Phase 5: VoIP integration (webhook + config + queue)
     app.register_blueprint(voip_bp)
