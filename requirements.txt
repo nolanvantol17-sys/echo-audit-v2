@@ -6,6 +6,7 @@ flask-login
 gunicorn
 openpyxl
 psycopg2-binary
+reportlab
 python-dotenv
 requests
 werkzeug
