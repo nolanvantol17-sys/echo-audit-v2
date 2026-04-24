@@ -328,6 +328,9 @@
     wrap.querySelectorAll(".action-view").forEach(function (a) {
       a.addEventListener("click", function (e) { e.stopPropagation(); });
     });
+    wrap.querySelectorAll(".action-export").forEach(function (a) {
+      a.addEventListener("click", function (e) { e.stopPropagation(); });
+    });
   }
 
   function renderRow(r) {
@@ -340,6 +343,8 @@
     const statusCls = "status-" + EA.statusIdToSlug(r.status_id);
     const actions =
       '<a class="btn btn-ghost btn-sm row-action action-view" href="/app/history/' + iid + '">View</a>' +
+      '<a class="btn btn-ghost btn-sm row-action action-export" ' +
+         'href="/api/interactions/' + iid + '/export" download>↓ Export ZIP</a>' +
       (state.canDelete
         ? '<button type="button" class="btn btn-ghost btn-sm row-action action-delete" data-iid="' + iid + '">Remove</button>'
         : '');

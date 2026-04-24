@@ -124,6 +124,10 @@
             '<span class="side-panel-score" data-role="score"></span>' +
           '</div>' +
           '<div class="side-panel-actions">' +
+            '<a class="btn btn-ghost btn-sm" data-role="export-zip" ' +
+               'href="/api/interactions/' + iid + '/export" download>' +
+              '↓ Export ZIP' +
+            '</a>' +
             '<a class="btn btn-ghost btn-sm" data-role="open-full" href="/app/history/' + iid + '">' +
               'Open as full page →' +
             '</a>' +
@@ -143,6 +147,7 @@
     const heading = backdrop.querySelector('[data-role="heading"]');
     const scoreEl = backdrop.querySelector('[data-role="score"]');
     const openFull = backdrop.querySelector('[data-role="open-full"]');
+    const exportZip = backdrop.querySelector('[data-role="export-zip"]');
 
     const self = {
       backdrop: backdrop,
@@ -152,6 +157,7 @@
       heading: heading,
       scoreEl: scoreEl,
       openFull: openFull,
+      exportZip: exportZip,
       currentId: iid,
       onKey: null,
       onPopstate: null,
@@ -189,6 +195,7 @@
     self.scoreEl.textContent = "";
     self.scoreEl.className = "side-panel-score";
     self.openFull.setAttribute("href", "/app/history/" + iid);
+    self.exportZip.setAttribute("href", "/api/interactions/" + iid + "/export");
     self.body.innerHTML =
       '<div class="skeleton" style="height:26px;margin:10px 0;"></div>' +
       '<div class="skeleton" style="height:160px;margin:10px 0;"></div>' +

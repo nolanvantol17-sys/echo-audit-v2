@@ -101,6 +101,10 @@
         '<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">' +
           '<span class="status-pill ' + statusCls + '">' + EA.esc(statusName) + '</span>' +
           regradeBadge +
+          '<a class="btn btn-ghost btn-sm" ' +
+             'href="/api/interactions/' + interactionId + '/export" download>' +
+            '↓ Export ZIP' +
+          '</a>' +
         '</div>' +
       '</div>';
 
