@@ -47,6 +47,20 @@ details.report-location > summary > .score-pill {
     font-size: 0.72rem;
     padding: 2px 9px;
 }
+
+/* ── Filter banners ──────────────────────────────────────
+   Inline display:flex would override the [hidden] attribute (inline beats
+   UA stylesheet). Scope flex to :not([hidden]) so hidden actually hides. */
+.report-banner {
+    margin-bottom: 14px;
+    padding: 12px 16px;
+    gap: 12px;
+}
+.report-banner:not([hidden]) {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
 </style>
 {% endblock %}
 
@@ -59,8 +73,7 @@ details.report-location > summary > .score-pill {
 </div>
 
 {# ── Project-scoped banner (display-only, from the project hub) ── #}
-<div id="project-filter-banner" class="panel" hidden
-     style="margin-bottom:14px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+<div id="project-filter-banner" class="panel report-banner" hidden>
   <div>
     Showing reports opened from <strong id="project-filter-banner-name">…</strong>.
   </div>
@@ -69,8 +82,7 @@ details.report-location > summary > .score-pill {
 
 {# ── Focus-name banner — shown when arrived from dashboard Top Callers
      for a name that has reports at multiple locations. ── #}
-<div id="focus-name-banner" class="panel" hidden
-     style="margin-bottom:14px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+<div id="focus-name-banner" class="panel report-banner" hidden>
   <div>
     Showing reports for <strong id="focus-name-banner-name">…</strong>.
   </div>
@@ -78,8 +90,7 @@ details.report-location > summary > .score-pill {
 </div>
 
 {# ── Location-scoped banner — shown when arrived via Locations page name link. ── #}
-<div id="location-filter-banner" class="panel" hidden
-     style="margin-bottom:14px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+<div id="location-filter-banner" class="panel report-banner" hidden>
   <div>
     Showing reports for <strong id="location-filter-banner-name">…</strong>.
   </div>
