@@ -28,6 +28,50 @@
      metric pills next to it; underline only on hover signals discoverability. */
   .loc-name-link             { color: inherit; text-decoration: none; }
   .loc-name-link:hover       { color: var(--accent); text-decoration: underline; }
+
+  /* ── Multi-export checkbox column ─────────────────────── */
+  .loc-table-checkbox-col          { width: 36px; text-align: center; }
+  .loc-table-checkbox-col input    { cursor: pointer; }
+
+  /* ── Multi-export sticky action bar ───────────────────── */
+  .loc-sticky-bar {
+    position: fixed;
+    bottom: 0;
+    left: var(--sidebar-w);
+    right: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border-strong);
+    padding: 12px 22px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    z-index: 150;
+    box-shadow: 0 -4px 14px rgba(0,0,0,0.4);
+  }
+  .loc-sticky-bar[hidden]          { display: none; }
+  .loc-sticky-bar .selected-meta   { font-weight: 500; }
+  .loc-sticky-bar .selected-warn   { color: var(--warning); font-size: 0.82rem; margin-left: 8px; }
+
+  /* ── Progress modal rows (used by EA.BulkExportModal.openMulti) ── */
+  .loc-progress-list               { display: flex; flex-direction: column; gap: 6px; }
+  .loc-progress-row {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    padding: 8px 10px;
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+    font-size: 0.86rem;
+  }
+  .loc-progress-name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1; min-width: 0;
+  }
+  .loc-progress-status                              { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .loc-progress-status[data-state="queued"]         { color: var(--muted); }
+  .loc-progress-status[data-state="downloading"]    { color: var(--accent); }
+  .loc-progress-status[data-state="done"]           { color: var(--success); }
+  .loc-progress-status[data-state="skipped"]        { color: var(--muted); font-style: italic; }
+  .loc-progress-status[data-state="error"]          { color: var(--danger); }
 </style>
 {% endblock %}
 
@@ -66,6 +110,20 @@
     </section>
   </section>
 </div>
+
+{# ── Sticky action bar for multi-export. Lives at page level so it can
+     overlay viewport bottom regardless of scroll position. Hidden until
+     ≥1 row checked. ── #}
+<div id="loc-export-bar" class="loc-sticky-bar" hidden>
+  <span class="selected-meta">
+    <span id="loc-export-count">0</span> selected
+    <span id="loc-export-warn" class="selected-warn" hidden>(max 10 — uncheck some to enable export)</span>
+  </span>
+  <div>
+    <button type="button" class="btn btn-ghost btn-sm" id="loc-export-clear">Clear</button>
+    <button type="button" class="btn btn-primary btn-sm" id="loc-export-go">Export Selected</button>
+  </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -87,6 +145,10 @@
   let phoneRoutingsMounted = false;
   let locationSearchTerm   = "";
 
+  // Multi-export selection state. Persisted across renders/searches/CRUD;
+  // cleared via the sticky bar's Clear button.
+  const selectedIds = new Set();
+
   // ── Boot ─────────────────────────────────────────────────
   document.addEventListener("DOMContentLoaded", init);
 
@@ -103,6 +165,9 @@
       onActivate: function (name) {
         if (name === "locations"      && !locationsMounted)     mountLocationsTab();
         if (name === "phone-routings" && !phoneRoutingsMounted) mountPhoneRoutingsTab();
+        // Sticky bar belongs to the Locations tab only.
+        const bar = document.getElementById("loc-export-bar");
+        if (bar) bar.hidden = !(name === "locations" && selectedIds.size > 0);
       },
     });
   }
@@ -136,6 +201,11 @@
     });
     document.getElementById("btn-add-location").addEventListener("click", onAddLocation);
     wireBulkUpload();
+
+    // Sticky export bar lives at the page level; wire its buttons once on
+    // first mount of the Locations tab.
+    document.getElementById("loc-export-clear").addEventListener("click", clearSelection);
+    document.getElementById("loc-export-go")   .addEventListener("click", onExportSelected);
 
     loadLocations();
   }
@@ -201,6 +271,9 @@
       const warnStyle  = ' style="color: var(--warning);"';
       return (
         '<tr data-id="' + l.location_id + '">' +
+          '<td class="loc-table-checkbox-col">' +
+            '<input type="checkbox" class="loc-row-cb" data-id="' + l.location_id + '">' +
+          '</td>' +
           '<td><a href="/app/reports?location=' + l.location_id + '" class="loc-name-link">' +
             EA.esc(l.location_name) + '</a></td>' +
           '<td>' + EA.esc(l.location_phone || "—") + '</td>' +
@@ -228,6 +301,7 @@
     }).join("");
     container.innerHTML =
       '<table class="history-table"><thead><tr>' +
+        '<th class="loc-table-checkbox-col"></th>' +
         '<th>Name</th><th>Phone</th><th>First contact</th>' +
         '<th style="text-align:right;">Total</th>' +
         '<th style="text-align:right;">Graded</th>' +
@@ -251,6 +325,18 @@
         });
       };
     });
+    // Reapply checked state from selectedIds (preserved across renders)
+    // and wire change listeners.
+    container.querySelectorAll(".loc-row-cb").forEach(function (cb) {
+      const id = parseInt(cb.dataset.id, 10);
+      cb.checked = selectedIds.has(id);
+      cb.addEventListener("change", function () {
+        if (cb.checked) selectedIds.add(id);
+        else            selectedIds.delete(id);
+        updateExportBar();
+      });
+    });
+    updateExportBar();
   }
 
   async function onAddLocation() {
@@ -333,6 +419,48 @@
       await loadLocations();
       EA.toast("Location deleted.", "success");
     } catch (err) { EA.toast(err.message || "Delete failed", "error"); }
+  }
+
+  // ── Multi-export sticky bar ─────────────────────────────
+  function updateExportBar() {
+    const bar     = document.getElementById("loc-export-bar");
+    const countEl = document.getElementById("loc-export-count");
+    const warnEl  = document.getElementById("loc-export-warn");
+    const goBtn   = document.getElementById("loc-export-go");
+    if (!bar) return;
+    const count = selectedIds.size;
+    countEl.textContent = count;
+    bar.hidden = (count === 0);
+    if (count > 10) {
+      warnEl.hidden  = false;
+      goBtn.disabled = true;
+    } else {
+      warnEl.hidden  = true;
+      goBtn.disabled = (count === 0);
+    }
+  }
+
+  function clearSelection() {
+    selectedIds.clear();
+    document.querySelectorAll(".loc-row-cb").forEach(function (cb) { cb.checked = false; });
+    updateExportBar();
+  }
+
+  function onExportSelected() {
+    // Resolve to {locationId, locationName} pairs from the cache (the
+    // checkbox markup only carries the ID; cache.locations is the source
+    // of truth for names + admin-only metric data).
+    const selected = cache.locations
+      .filter(function (l) { return selectedIds.has(l.location_id); })
+      .map(function (l) {
+        return { locationId: l.location_id, locationName: l.location_name };
+      });
+    if (!selected.length) { EA.toast("No properties selected.", "error"); return; }
+    if (selected.length > 10) {
+      EA.toast("Maximum 10 properties at a time.", "error");
+      return;
+    }
+    EA.BulkExportModal.openMulti({ locations: selected });
   }
 
   // ── Bulk upload ─────────────────────────────────────────
