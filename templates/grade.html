@@ -217,7 +217,10 @@
     gap: 14px 16px;
     margin-bottom: 14px;
   }
-  @media (max-width: 880px) {
+  /* Collapse to 2-col before the queue pane gets squeezed too — at viewport
+     ~1100px the form area (after 240px queue + gap) is ~840px, which is
+     comfortable for 2 columns but cramped for 4. */
+  @media (max-width: 1100px) {
     .grade-fields-row { grid-template-columns: 1fr 1fr; }
   }
   @media (max-width: 520px) {
@@ -486,6 +489,10 @@
     gap: 24px;
     align-items: start;
   }
+  /* CSS-Grid items default to min-width: auto (= min-content), which lets
+     the form column grow past the viewport when selects have long option
+     text. min-width: 0 lets the column honor its 1fr allotment. */
+  .grade-split > * { min-width: 0; }
 
   /* Queue pane — yellow tint to differentiate from the form. */
   .gj-pane {
@@ -589,6 +596,14 @@
     overflow-y: auto;
   }
 
+  /* Medium viewports: shrink queue + tighten gap so the form gets back
+     enough room for the 4-field row. */
+  @media (max-width: 1300px) {
+    .grade-split {
+      grid-template-columns: 240px 1fr;
+      gap: 16px;
+    }
+  }
   /* Mobile: stack queue above form, drop scroll cap. */
   @media (max-width: 960px) {
     .grade-split { grid-template-columns: 1fr; }
