@@ -23,6 +23,52 @@
     padding: 3px 8px;
     font-size: 0.72rem;
 }
+
+/* ── Multi-select checkbox column ─────────────────────── */
+.hist-table-checkbox-col          { width: 36px; text-align: center; }
+.hist-table-checkbox-col input    { cursor: pointer; }
+
+/* ── Multi-select sticky action bar ───────────────────── */
+.hist-sticky-bar {
+  position: fixed;
+  bottom: 0;
+  left: var(--sidebar-w);
+  right: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border-strong);
+  padding: 12px 22px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  z-index: 150;
+  box-shadow: 0 -4px 14px rgba(0,0,0,0.4);
+}
+.hist-sticky-bar[hidden]          { display: none; }
+.hist-sticky-bar .selected-meta   { font-weight: 500; }
+.hist-sticky-bar .selected-warn   { color: var(--warning); font-size: 0.82rem; margin-left: 8px; }
+
+/* ── Progress modal rows (used by EA.BulkExportModal.openProgress) ──
+   Duplicated from locations.html — followup memory: promote .loc-progress-*
+   to app.css so all consumer pages share one definition. */
+.loc-progress-list               { display: flex; flex-direction: column; gap: 6px; }
+.loc-progress-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  font-size: 0.86rem;
+}
+.loc-progress-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; min-width: 0;
+}
+.loc-progress-status                              { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.loc-progress-status[data-state="queued"]         { color: var(--muted); }
+.loc-progress-status[data-state="downloading"]    { color: var(--accent); }
+.loc-progress-status[data-state="done"]           { color: var(--success); }
+.loc-progress-status[data-state="skipped"]        { color: var(--muted); font-style: italic; }
+.loc-progress-status[data-state="error"]          { color: var(--danger); }
 </style>
 {% endblock %}
 
@@ -114,6 +160,22 @@
     <button type="button" class="btn btn-ghost" id="btn-load-more">Load more</button>
   </div>
 </section>
+
+{# ── Sticky action bar for multi-select. Lives at body level so position:
+     fixed overlays the viewport bottom regardless of scroll. Hidden until
+     ≥1 row checked. ── #}
+<div id="hist-action-bar" class="hist-sticky-bar" hidden>
+  <span class="selected-meta">
+    <span id="hist-action-count">0</span> selected
+    <span id="hist-action-warn-export" class="selected-warn" hidden>(max 10 for export)</span>
+    <span id="hist-action-warn-delete" class="selected-warn" hidden>(max 25 for delete)</span>
+  </span>
+  <div>
+    <button type="button" class="btn btn-ghost btn-sm"   id="hist-action-clear">Clear</button>
+    <button type="button" class="btn btn-ghost btn-sm"   id="hist-action-export">↓ Export Selected</button>
+    <button type="button" class="btn btn-danger btn-sm"  id="hist-action-delete">🗑 Delete Selected</button>
+  </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -135,11 +197,20 @@
     debounceId: null,
   };
 
+  // Multi-select state. Persisted across renders/filter changes/pagination;
+  // cleared via the sticky bar's Clear button or after a successful delete.
+  // Caps: export 10, delete 25 (enforced in updateActionBar).
+  const selectedIds = new Set();
+  const EXPORT_CAP = 10;
+  const DELETE_CAP = 25;
+  let _multiDeleteInFlight = false;
+
   const $ = function (s) { return document.querySelector(s); };
 
   // ── Bootstrap ────────────────────────────────────────
   async function init() {
     wireFilters();
+    wireActionBar();
 
     // Hard-deletes initiated from the side panel fire this event after the
     // server confirms the row is gone. Drop the row from local state so the
@@ -302,6 +373,7 @@
     const head =
       '<table class="history-table">' +
         '<thead><tr>' +
+          '<th class="hist-table-checkbox-col"></th>' +
           '<th>Date</th><th>Time</th><th>Location</th>' +
           '<th>Project</th><th>Phone Routing</th><th>Respondent</th>' +
           '<th>Caller</th><th>Score</th><th>Status</th><th style="text-align:right;">Actions</th>' +
@@ -330,6 +402,19 @@
     wrap.querySelectorAll(".action-export").forEach(function (a) {
       a.addEventListener("click", function (e) { e.stopPropagation(); });
     });
+
+    // Re-apply checked state from selectedIds (preserved across renders)
+    // and wire change listeners.
+    wrap.querySelectorAll(".hist-row-cb").forEach(function (cb) {
+      const iid = parseInt(cb.dataset.iid, 10);
+      cb.checked = selectedIds.has(iid);
+      cb.addEventListener("change", function () {
+        if (cb.checked) selectedIds.add(iid);
+        else            selectedIds.delete(iid);
+        updateActionBar();
+      });
+    });
+    updateActionBar();
   }
 
   function renderRow(r) {
@@ -358,6 +443,9 @@
       : '<td class="muted">—</td>';
     return (
       '<tr data-iid="' + iid + '">' +
+        '<td class="hist-table-checkbox-col">' +
+          '<input type="checkbox" class="hist-row-cb row-action" data-iid="' + iid + '">' +
+        '</td>' +
         '<td>' + EA.esc(EA.formatDate(r.interaction_date)) + '</td>' +
         '<td class="muted text-small">' + EA.esc(callTime) + '</td>' +
         locCell +
@@ -402,6 +490,122 @@
     // A straight navigation so the browser triggers the download dialog.
     const url = "/api/export/interactions" + (qs.toString() ? "?" + qs : "");
     window.location.href = url;
+  }
+
+  // ── Multi-select action bar ─────────────────────────
+  function wireActionBar() {
+    const clearBtn  = document.getElementById("hist-action-clear");
+    const exportBtn = document.getElementById("hist-action-export");
+    const deleteBtn = document.getElementById("hist-action-delete");
+    if (clearBtn)  clearBtn.addEventListener("click", clearSelection);
+    if (exportBtn) exportBtn.addEventListener("click", onExportSelected);
+    if (deleteBtn) deleteBtn.addEventListener("click", onDeleteSelected);
+  }
+
+  function updateActionBar() {
+    const bar       = document.getElementById("hist-action-bar");
+    const countEl   = document.getElementById("hist-action-count");
+    const warnExp   = document.getElementById("hist-action-warn-export");
+    const warnDel   = document.getElementById("hist-action-warn-delete");
+    const exportBtn = document.getElementById("hist-action-export");
+    const deleteBtn = document.getElementById("hist-action-delete");
+    if (!bar) return;
+    const count = selectedIds.size;
+    countEl.textContent = count;
+    bar.hidden = (count === 0);
+    warnExp.hidden  = (count <= EXPORT_CAP);
+    warnDel.hidden  = (count <= DELETE_CAP);
+    exportBtn.disabled = (count === 0 || count > EXPORT_CAP);
+    deleteBtn.disabled = (count === 0 || count > DELETE_CAP || _multiDeleteInFlight);
+  }
+
+  function clearSelection() {
+    selectedIds.clear();
+    document.querySelectorAll(".hist-row-cb").forEach(function (cb) { cb.checked = false; });
+    updateActionBar();
+  }
+
+  // Resolve selectedIds → [{iid, location_name}] for filename hints in the
+  // progress modal. Rows missing from state.all (filtered out) still export
+  // — name falls back to "Interaction #<iid>".
+  function _resolveSelectedRows() {
+    const byId = new Map();
+    state.all.forEach(function (r) { byId.set(Number(r.interaction_id), r); });
+    return Array.from(selectedIds).map(function (iid) {
+      const r = byId.get(iid);
+      const locName = r && r.location_name ? r.location_name : null;
+      return {
+        iid:  iid,
+        name: locName ? (locName + " #" + iid) : ("Interaction #" + iid),
+      };
+    });
+  }
+
+  function onExportSelected() {
+    const items = _resolveSelectedRows();
+    if (!items.length) { EA.toast("Nothing selected.", "error"); return; }
+    if (items.length > EXPORT_CAP) {
+      EA.toast("Maximum " + EXPORT_CAP + " interactions per export.", "error");
+      return;
+    }
+    const rows = items.map(function (it) {
+      return { name: it.name, url: "/api/interactions/" + it.iid + "/export" };
+    });
+    EA.BulkExportModal.openProgress({ rows: rows });
+  }
+
+  async function onDeleteSelected() {
+    if (_multiDeleteInFlight) return;
+    const items = _resolveSelectedRows();
+    if (!items.length) { EA.toast("Nothing selected.", "error"); return; }
+    if (items.length > DELETE_CAP) {
+      EA.toast("Maximum " + DELETE_CAP + " interactions per delete.", "error");
+      return;
+    }
+    const ok = await EA.confirmDialog({
+      title:       "Permanently delete " + items.length + " interaction" +
+                   (items.length === 1 ? "" : "s") + "?",
+      body:        "This cannot be undone. Audio, transcripts, rubric scores, and " +
+                   "audit history will be removed.",
+      okLabel:     "Delete " + items.length,
+      cancelLabel: "Cancel",
+      variant:     "danger",
+    });
+    if (!ok) return;
+
+    _multiDeleteInFlight = true;
+    updateActionBar();
+    const succeeded = [];
+    const failed    = [];
+    for (const it of items) {
+      try {
+        await EA.fetchJSON("/api/interactions/" + it.iid + "/hard", { method: "DELETE" });
+        succeeded.push(it.iid);
+      } catch (err) {
+        failed.push({ iid: it.iid, message: (err && err.message) || "Delete failed" });
+      }
+    }
+    _multiDeleteInFlight = false;
+
+    // Drop succeeded rows from local state + selection; failed stays selected
+    // so the user can retry without re-checking boxes.
+    if (succeeded.length) {
+      const succeededSet = new Set(succeeded);
+      state.all = state.all.filter(function (r) { return !succeededSet.has(Number(r.interaction_id)); });
+      state.shown = Math.min(state.shown, state.all.length);
+      succeeded.forEach(function (iid) { selectedIds.delete(iid); });
+      render();
+    } else {
+      updateActionBar();
+    }
+
+    if (failed.length === 0) {
+      EA.toast(succeeded.length + " deleted.", "success");
+    } else if (succeeded.length === 0) {
+      EA.toast("Delete failed for all " + failed.length + " selected.", "error");
+    } else {
+      EA.toast(succeeded.length + " deleted, " + failed.length + " failed.", "error");
+    }
   }
 
   document.addEventListener("DOMContentLoaded", init);

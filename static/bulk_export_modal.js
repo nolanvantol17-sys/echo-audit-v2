@@ -644,7 +644,10 @@
     rows.forEach(function (row) {
       const div = document.createElement("div");
       div.className = "loc-progress-row";
-      const fullName = row.location.locationName || ("Location #" + row.location.locationId);
+      // Generic rows use {name}; locations rows nest {location:{locationName,locationId}}.
+      const fullName = row.name
+        || (row.location && (row.location.locationName || ("Location #" + row.location.locationId)))
+        || "Item";
       div.innerHTML =
         '<span class="loc-progress-name" title="' + EA.esc(fullName) + '">' +
           EA.esc(fullName) +
@@ -719,6 +722,32 @@
     return new Promise(function (resolve) { setTimeout(resolve, ms); });
   }
 
+  // ── Generic multi-download progress flow ──────────────────
+  // Used by callers that already know the URLs to hit (no preflight, no
+  // project picker). Each row maps 1:1 to a download. Shares the
+  // _multiInFlight gate with openMulti — only one progress flow at a time.
+  async function openProgress(opts) {
+    if (_multiInFlight) {
+      EA.toast("An export is already in progress.", "error");
+      return;
+    }
+    opts = opts || {};
+    const inputRows = opts.rows || [];
+    if (!inputRows.length) {
+      EA.toast("Nothing to export.", "error");
+      return;
+    }
+    _multiInFlight = true;
+    const rows = inputRows.map(function (r) {
+      return { name: r.name, url: r.url, state: "queued" };
+    });
+    _openProgressModal(rows, function () { _multiInFlight = false; });
+  }
+
   window.EA = window.EA || {};
-  window.EA.BulkExportModal = { open: open, openMulti: openMulti };
+  window.EA.BulkExportModal = {
+    open:         open,
+    openMulti:    openMulti,
+    openProgress: openProgress,
+  };
 })();
