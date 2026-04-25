@@ -62,6 +62,16 @@
         <span class="slider"></span>
       </label>
     </div>
+    <div class="toggle-row">
+      <div>
+        <div class="toggle-label">Split-pane grading view (default ON)</div>
+        <div class="toggle-hint">Submit calls and keep recording while previous calls grade in the background. Disable to use the classic single-call flow.</div>
+      </div>
+      <label class="toggle-sw">
+        <input type="checkbox" id="tg-grade_split_pane">
+        <span class="slider"></span>
+      </label>
+    </div>
   </div>
 </details>
 
@@ -148,6 +158,9 @@
   // Shared caches so child dropdowns don't each refetch.
   const cache = { hints: [] };
 
+  // localStorage key for split-pane grading mode (mirrors grade.html).
+  const SPLIT_PANE_LS_KEY = "echo:grade_split_pane";
+
   // Single source of truth for transcription-hint limits (server-injected).
   const KEYTERMS_MAX_TERMS  = {{ keyterms_prompt_max_terms }};
   const KEYTERM_MIN_LENGTH  = {{ keyterm_min_length }};
@@ -164,6 +177,7 @@
     wireGeneral();
     wireAccount();
     wireHints();
+    wireLocalToggles();
     await Promise.all([
       loadSettings(),
       loadAccount(),
@@ -246,6 +260,19 @@
         }
       });
     });
+  }
+
+  // Local-storage-only toggles — per-browser preferences with no server state.
+  function wireLocalToggles() {
+    const sp = document.getElementById("tg-grade_split_pane");
+    if (sp) {
+      const raw = localStorage.getItem(SPLIT_PANE_LS_KEY);
+      sp.checked = (raw === null) ? true : (raw !== "false");
+      sp.addEventListener("change", () => {
+        localStorage.setItem(SPLIT_PANE_LS_KEY, sp.checked ? "true" : "false");
+        EA.toast("split-pane grading " + (sp.checked ? "on" : "off"), "success");
+      });
+    }
   }
 
   function wireDirtyGuard() {
