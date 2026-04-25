@@ -494,35 +494,36 @@
      text. min-width: 0 lets the column honor its 1fr allotment. */
   .grade-split > * { min-width: 0; }
 
-  /* Queue pane — yellow tint to differentiate from the form. */
+  /* Queue pane — matches .panel surface (dark theme). */
   .gj-pane {
-    background: #fefce8;
-    border: 1px solid #fde047;
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 14px 16px;
     max-height: calc(100vh - 160px);
     overflow-y: auto;
-    color: #422006;
+    color: var(--text);
   }
   .gj-pane-header {
     display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
     gap: 4px 12px;
-    margin-bottom: 10px;
+    padding-bottom: 10px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
   }
   .gj-pane-title {
-    font-weight: 700; font-size: 1.0rem; color: #422006;
+    font-weight: 700; font-size: 1.0rem; color: var(--text);
     letter-spacing: 0.02em;
   }
-  .gj-pane-subtitle { color: #713f12; }
+  /* .gj-pane-subtitle inherits .muted class color from the element. */
 
   .gj-queue-list {
     display: flex; flex-direction: column; gap: 6px;
-    margin-bottom: 14px;
   }
   .gj-queue-list .empty-state {
-    color: #713f12;
-    background: #fef9c3;
-    border: 1px dashed #fde047;
+    color: var(--muted);
+    background: var(--surface-2);
+    border: 1px dashed var(--border);
     border-radius: 6px;
     line-height: 1.45;
   }
@@ -534,31 +535,30 @@
     gap: 10px;
     align-items: center;
     padding: 8px 10px;
-    background: #fef9c3;
-    border: 1px solid #fde047;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
     border-radius: 6px;
     cursor: pointer;
     transition: background 80ms;
   }
-  .gj-row:hover     { background: #fef08a; }
-  .gj-row.selected  { background: #fde047; border-color: #ca8a04; }
-  .gj-row-summary   { min-width: 0; }
-  .gj-row-property  {
-    font-weight: 600; font-size: 0.9rem; color: #422006;
+  .gj-row:hover { background: var(--surface-3); }
+  .gj-row-summary { min-width: 0; }
+  .gj-row-property {
+    font-weight: 600; font-size: 0.9rem; color: var(--text);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .gj-row-meta {
-    font-size: 0.74rem; color: #713f12;
+    font-size: 0.74rem; color: var(--muted);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .gj-row-actions  { display: inline-flex; gap: 4px; align-items: center; flex-shrink: 0; }
+  .gj-row-actions { display: inline-flex; gap: 4px; align-items: center; flex-shrink: 0; }
   .gj-row-action {
     background: none; border: none; cursor: pointer;
-    color: #713f12; padding: 0 4px; font-size: 0.95rem; line-height: 1;
+    color: var(--muted); padding: 0 4px; font-size: 0.95rem; line-height: 1;
   }
-  .gj-row-action:hover { color: #422006; }
+  .gj-row-action:hover { color: var(--text); }
 
-  /* Status pill (queue-row variant — slimmer than the global .status-pill) */
+  /* Status pill — semantic translucent backgrounds, readable on dark surface. */
   .gj-pill {
     display: inline-block;
     padding: 2px 8px;
@@ -569,32 +569,11 @@
     text-transform: uppercase;
     white-space: nowrap;
   }
-  .gj-pill.queued       { background: #e5e7eb; color: #374151; }
-  .gj-pill.transcribing { background: #dbeafe; color: #1e3a8a; }
-  .gj-pill.grading      { background: #fef3c7; color: #78350f; }
-  .gj-pill.graded       { background: #d1fae5; color: #065f46; }
-  .gj-pill.failed       { background: #fee2e2; color: #991b1b; cursor: help; }
-
-  /* Detail viewer below the queue */
-  .gj-detail-wrap {
-    margin-top: 10px;
-    padding-top: 12px;
-    border-top: 1px solid #fde047;
-  }
-  .gj-detail-nav {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 10px;
-  }
-  .gj-detail-host {
-    background: #ffffff;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 12px;
-    color: var(--text);
-    max-height: 60vh;
-    overflow-y: auto;
-  }
+  .gj-pill.queued       { background: var(--accent-soft); color: #93c5fd; }
+  .gj-pill.transcribing { background: var(--accent-soft); color: #93c5fd; }
+  .gj-pill.grading      { background: var(--warning-bg);  color: var(--warning); }
+  .gj-pill.graded       { background: var(--success-bg);  color: var(--success); }
+  .gj-pill.failed       { background: var(--danger-bg);   color: var(--danger); cursor: help; }
 
   /* Medium viewports: shrink queue + tighten gap so the form gets back
      enough room for the 4-field row. */
@@ -608,7 +587,6 @@
   @media (max-width: 960px) {
     .grade-split { grid-template-columns: 1fr; }
     .gj-pane { max-height: none; }
-    .gj-detail-host { max-height: none; }
   }
 </style>
 {% endblock %}
@@ -623,7 +601,7 @@
 
 <div class="grade-split">
 
-  {# ── LEFT pane: queue + detail viewer ─────────────────── #}
+  {# ── LEFT pane: queue (clicks open detail modal) ─────────── #}
   <aside id="gj-pane" class="gj-pane">
     <div class="gj-pane-header">
       <span class="gj-pane-title">Grading queue</span>
@@ -634,14 +612,6 @@
         Submitted calls will appear here for grading.<br>
         Keep recording on the right →
       </div>
-    </div>
-    <div id="gj-detail-wrap" class="gj-detail-wrap" hidden>
-      <div class="gj-detail-nav">
-        <button type="button" class="btn btn-ghost btn-sm" id="gj-prev" disabled>← Prev</button>
-        <span id="gj-detail-pos" class="muted text-small">—</span>
-        <button type="button" class="btn btn-ghost btn-sm" id="gj-next" disabled>Next →</button>
-      </div>
-      <div id="gj-detail-host" class="gj-detail-host"></div>
     </div>
   </aside>
 
@@ -3122,24 +3092,18 @@
   // ── Grade jobs queue (split-pane left) ─────────────────────
   //
   // Polls /api/grade-jobs on a 5s active / 30s idle cadence. Renders one
-  // queue row per non-dismissed job, with status pill + property/project
-  // summary + relative time. Click a row to mount its interaction detail
-  // in the viewer below; prev/next nav scrolls between graded rows. Failed
-  // rows expose Retry; any row exposes Dismiss.
-  //
-  // The submit handler still calls /api/grade today (C4a is layout + queue
-  // only). C4b will swap the submit branch to POST /api/grade-jobs.
+  // queue row per non-dismissed job. Click a graded row to open its
+  // interaction in EA.InteractionPanel (modal). Failed rows expose Retry;
+  // any row exposes Dismiss.
 
   const QUEUE_POLL_ACTIVE_MS = 5000;
   const QUEUE_POLL_IDLE_MS   = 30000;
 
   const queueState = {
-    jobs:          [],     // most recent first; shape from GET /api/grade-jobs
-    selectedJobId: null,   // currently-mounted job in detail viewer
-    pollMs:        QUEUE_POLL_IDLE_MS,
-    pollTimer:     null,
-    loadSeq:       0,      // race guard for overlapping polls
-    detailLoadSeq: 0,      // race guard for detail mount
+    jobs:      [],     // most recent first; shape from GET /api/grade-jobs
+    pollMs:    QUEUE_POLL_IDLE_MS,
+    pollTimer: null,
+    loadSeq:   0,      // race guard for overlapping polls
   };
 
   function gjEl(sel) { return document.querySelector(sel); }
@@ -3164,18 +3128,6 @@
              j.gj_status === "grading";
     });
     setQueuePollRate(hasActive ? QUEUE_POLL_ACTIVE_MS : QUEUE_POLL_IDLE_MS);
-
-    // If the previously-selected job is now graded, refresh the detail view
-    // (silently, only if it's currently mounted).
-    if (queueState.selectedJobId) {
-      const sel = queueState.jobs.find(function (j) {
-        return j.grade_job_id === queueState.selectedJobId;
-      });
-      if (sel && sel.gj_status === "graded" && sel.interaction_id) {
-        // No-op if already mounted to this id — mountInteractionDetail is idempotent.
-        mountInteractionDetail(sel.interaction_id);
-      }
-    }
   }
 
   function renderGradeJobsQueue() {
@@ -3190,9 +3142,6 @@
           'Keep recording on the right →' +
         '</div>';
       if (subtitle) subtitle.textContent = "—";
-      // No detail to show.
-      gjEl("#gj-detail-wrap").hidden = true;
-      queueState.selectedJobId = null;
       return;
     }
 
@@ -3208,12 +3157,6 @@
       subtitle.textContent = parts.length ? parts.join(" · ") : (queueState.jobs.length + " job" + (queueState.jobs.length === 1 ? "" : "s"));
     }
 
-    // Re-highlight selection (which we may have just torn down on re-render).
-    if (queueState.selectedJobId) {
-      const row = list.querySelector('[data-job-id="' + CSS.escape(String(queueState.selectedJobId)) + '"]');
-      if (row) row.classList.add("selected");
-    }
-
     // Wire row interactions.
     list.querySelectorAll(".gj-row").forEach(function (row) {
       row.addEventListener("click", function (e) {
@@ -3222,7 +3165,7 @@
         const jobId = Number(row.dataset.jobId);
         const job   = queueState.jobs.find(function (j) { return j.grade_job_id === jobId; });
         if (!job) return;
-        selectJob(job);
+        onRowClick(job);
       });
     });
     list.querySelectorAll(".gj-row-action[data-action='dismiss']").forEach(function (btn) {
@@ -3297,77 +3240,19 @@
     );
   }
 
-  function selectJob(job) {
-    queueState.selectedJobId = job.grade_job_id;
-    // Re-render to flip the .selected class on the right row without a fresh fetch.
-    renderGradeJobsQueue();
-    if (job.interaction_id && job.gj_status === "graded") {
-      gjEl("#gj-detail-wrap").hidden = false;
-      mountInteractionDetail(job.interaction_id);
-      updateDetailNav();
-    } else {
-      // Selected an in-flight or failed job — hide the viewer (nothing to show yet).
-      gjEl("#gj-detail-wrap").hidden = true;
+  function onRowClick(job) {
+    // Only graded rows have something to show. In-flight rows: no-op (poll
+    // will flip them in a few seconds). Failed rows: error surfaces via the
+    // FAILED pill button, not the row click.
+    if (job.gj_status === "graded" && job.interaction_id) {
+      EA.InteractionPanel.open(job.interaction_id);
     }
-  }
-
-  async function mountInteractionDetail(interactionId) {
-    const host = gjEl("#gj-detail-host");
-    if (!host) return;
-    const seq = ++queueState.detailLoadSeq;
-    host.innerHTML =
-      '<div class="skeleton" style="height:24px;margin:8px 0;"></div>' +
-      '<div class="skeleton" style="height:120px;margin:8px 0;"></div>' +
-      '<div class="skeleton" style="height:80px;margin:8px 0;"></div>';
-    try {
-      const data = await EA.fetchJSON("/api/interactions/" + encodeURIComponent(interactionId));
-      if (seq !== queueState.detailLoadSeq) return;
-      EA.InteractionView.render(host, data, { readOnly: true });
-      EA.AudioPlayer.attachAll(host);
-    } catch (err) {
-      if (seq !== queueState.detailLoadSeq) return;
-      EA.showError(host, err.message || "Failed to load interaction.");
-    }
-  }
-
-  function gradedJobs() {
-    return queueState.jobs.filter(function (j) {
-      return j.gj_status === "graded" && j.interaction_id;
-    });
-  }
-
-  function updateDetailNav() {
-    const grads = gradedJobs();
-    const idx   = grads.findIndex(function (j) { return j.grade_job_id === queueState.selectedJobId; });
-    const prev  = gjEl("#gj-prev");
-    const next  = gjEl("#gj-next");
-    const pos   = gjEl("#gj-detail-pos");
-    if (!prev || !next || !pos) return;
-    if (idx < 0) {
-      prev.disabled = true; next.disabled = true; pos.textContent = "—";
-      return;
-    }
-    prev.disabled = (idx <= 0);
-    next.disabled = (idx >= grads.length - 1);
-    pos.textContent = (idx + 1) + " of " + grads.length;
-  }
-
-  function navDetail(direction) {
-    const grads = gradedJobs();
-    if (!grads.length) return;
-    const idx = grads.findIndex(function (j) { return j.grade_job_id === queueState.selectedJobId; });
-    const next = (idx < 0) ? 0 : idx + direction;
-    if (next < 0 || next >= grads.length) return;
-    selectJob(grads[next]);
   }
 
   async function onDismissJob(jobId) {
     // Optimistic — immediately remove the row, then confirm with the server.
-    const wasSelected = (queueState.selectedJobId === jobId);
     queueState.jobs = queueState.jobs.filter(function (j) { return j.grade_job_id !== jobId; });
-    if (wasSelected) queueState.selectedJobId = null;
     renderGradeJobsQueue();
-    if (wasSelected) gjEl("#gj-detail-wrap").hidden = true;
     try {
       await EA.fetchJSON("/api/grade-jobs/" + encodeURIComponent(jobId) + "/dismiss",
                          { method: "POST", body: {} });
@@ -3428,10 +3313,6 @@
   }
 
   function wireGradeJobsQueue() {
-    const prev = gjEl("#gj-prev");
-    const next = gjEl("#gj-next");
-    if (prev) prev.addEventListener("click", function () { navDetail(-1); });
-    if (next) next.addEventListener("click", function () { navDetail(+1); });
     document.addEventListener("visibilitychange", onQueueVisibilityChange);
 
     // Initial load + start polling.
