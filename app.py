@@ -23,6 +23,7 @@ from api_routes import api_bp
 from audit_log_routes import audit_log_bp
 from location_notes_routes import location_notes_bp
 from dashboard_routes import dashboard_bp
+from grade_jobs_routes import grade_jobs_bp
 from interactions_routes import interactions_bp
 from performance_reports import reports_bp
 from platform_routes import platform_bp
@@ -110,6 +111,9 @@ def create_app():
 
     # Phase 3 grading-flow routes
     app.register_blueprint(interactions_bp)
+
+    # Phase 9: async grading queue (split-pane workflow)
+    app.register_blueprint(grade_jobs_bp)
 
     # Phase 4 routes: rubrics, dashboard, performance reports,
     # platform usage (super_admin), audit log reader.

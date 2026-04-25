@@ -635,7 +635,8 @@ class _GradingAPIError(Exception):
 def _grade_and_persist(*, interaction_id, company_id, project_id,
                        respondent_user_id, transcript,
                        criteria, script_text, context_text, grade_target,
-                       is_initial_grade, location_id=None):
+                       is_initial_grade, location_id=None,
+                       actor_user_id=None):
     """Run grade_with_claude and commit the results.
 
     If is_initial_grade is True we don't bump interaction_regrade_count —
@@ -650,10 +651,15 @@ def _grade_and_persist(*, interaction_id, company_id, project_id,
     location. This determines which (company_id, location_id, name) bucket
     the respondent gets upserted into.
 
+    actor_user_id: the user the audit log will attribute the grade to. Pass
+    explicitly when calling from a background thread (no Flask request
+    context); when None, falls back to current_user.user_id (request path).
+
     Returns a dict shaped like the grade response (interaction_id, scores,
     flags, total_score, respondent_*, transcript). Raises _GradingAPIError
     on failure so the caller can emit the right HTTP status.
     """
+    actor_id = actor_user_id if actor_user_id is not None else current_user.user_id
     ok, msg = check_rate_limit(company_id, "anthropic")
     if not ok:
         raise _GradingAPIError(msg, 429)
@@ -737,7 +743,7 @@ def _grade_and_persist(*, interaction_id, company_id, project_id,
         conn.close()
 
     write_audit_log(
-        current_user.user_id,
+        actor_id,
         ACTION_GRADED if is_initial_grade else ACTION_REGRADED,
         ENTITY_INTERACTION, interaction_id,
         metadata={"project_id": project_id, "total_score": total_score,

@@ -449,6 +449,37 @@ _ADDITIVE_MIGRATIONS = [
     # forward so it doesn't sit in a non-existent flow. We send them to 45
     # (submitted) — visible in the UI for manual retry without losing data.
     "UPDATE interactions SET status_id = 45 WHERE status_id = 41",
+
+    # Phase 9: grade_jobs queue (async grading for split-pane workflow).
+    """CREATE TABLE IF NOT EXISTS grade_jobs (
+        grade_job_id           SERIAL PRIMARY KEY,
+        company_id             INTEGER NOT NULL
+                                   REFERENCES companies (company_id) ON DELETE CASCADE,
+        submitted_by_user_id   INTEGER REFERENCES users (user_id) ON DELETE SET NULL,
+        interaction_id         INTEGER REFERENCES interactions (interaction_id) ON DELETE CASCADE,
+        gj_status              TEXT NOT NULL DEFAULT 'queued',
+        gj_phase_started_at    TIMESTAMPTZ,
+        gj_error               TEXT,
+        gj_dismissed_at        TIMESTAMPTZ,
+        gj_created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        gj_updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT chk_gj_status CHECK (
+            gj_status IN ('queued', 'transcribing', 'grading', 'graded', 'failed')
+        )
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_grade_jobs_company_status "
+    "ON grade_jobs (company_id, gj_status) WHERE gj_dismissed_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS idx_grade_jobs_user "
+    "ON grade_jobs (submitted_by_user_id) WHERE gj_dismissed_at IS NULL",
+    """CREATE OR REPLACE FUNCTION set_gj_updated_at() RETURNS TRIGGER AS $$
+       BEGIN NEW.gj_updated_at = NOW(); RETURN NEW; END;
+       $$ LANGUAGE plpgsql""",
+    """DO $$ BEGIN
+           IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_grade_jobs_updated_at') THEN
+               CREATE TRIGGER trg_grade_jobs_updated_at BEFORE UPDATE ON grade_jobs
+                   FOR EACH ROW EXECUTE FUNCTION set_gj_updated_at();
+           END IF;
+       END $$""",
 ]
 
 
@@ -675,9 +706,45 @@ def seed_company_defaults(company_id, conn=None):
 # ── Flask integration helper ────────────────────────────────────
 
 
+def _recover_stale_grade_jobs():
+    """Mark in-flight grade_jobs as failed at boot.
+
+    A queued/transcribing/grading job whose phase started >5 min ago is almost
+    certainly orphaned by a server restart — the daemon thread that owned it
+    no longer exists. We surface a clear error so the user can retry.
+    Skipped on SQLite (the queue is Postgres-only in production).
+    """
+    if not IS_POSTGRES:
+        return
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            """UPDATE grade_jobs
+                  SET gj_status = 'failed',
+                      gj_error  = 'Server restarted before completion. Please retry.'
+                WHERE gj_status IN ('queued', 'transcribing', 'grading')
+                  AND COALESCE(gj_phase_started_at, gj_created_at) < NOW() - INTERVAL '5 minutes'
+                  AND gj_dismissed_at IS NULL"""
+        )
+        conn.commit()
+        try:
+            n = cur.rowcount
+        except Exception:
+            n = -1
+        if n > 0:
+            logger.info("Recovered %d stale grade_jobs at boot", n)
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        logger.exception("recover_stale_grade_jobs failed (non-fatal)")
+    finally:
+        conn.close()
+
+
 def init_app(app):
     """Wire setup_db() + seed_defaults() into a Flask app at startup."""
     with app.app_context():
         setup_db()
         seed_defaults()
+        _recover_stale_grade_jobs()
         logger.info("Echo Audit V2 database ready (postgres=%s)", IS_POSTGRES)

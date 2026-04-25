@@ -1014,3 +1014,42 @@ BEGIN NEW.ln_updated_at = NOW(); RETURN NEW; END;
 $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_location_notes_updated_at BEFORE UPDATE ON location_notes
     FOR EACH ROW EXECUTE FUNCTION set_ln_updated_at();
+
+
+-- ================================================================
+-- grade_jobs  (Phase 9: async grading queue for split-pane workflow)
+-- ================================================================
+-- Tracks user-submitted calls grading in the background. Each row is
+-- associated with one interaction; the daemon thread that processes the
+-- job updates both rows in lockstep. gj_dismissed_at soft-hides the row
+-- from the queue UI without losing the audit trail. Tenant scope:
+-- grade_jobs.company_id is denormalized for query speed; the FK to
+-- interactions provides the canonical link.
+CREATE TABLE grade_jobs (
+    grade_job_id           SERIAL PRIMARY KEY,
+    company_id             INTEGER NOT NULL
+                               REFERENCES companies (company_id) ON DELETE CASCADE,
+    submitted_by_user_id   INTEGER REFERENCES users (user_id) ON DELETE SET NULL,
+    interaction_id         INTEGER REFERENCES interactions (interaction_id) ON DELETE CASCADE,
+    gj_status              TEXT NOT NULL DEFAULT 'queued',
+    gj_phase_started_at    TIMESTAMPTZ,
+    gj_error               TEXT,
+    gj_dismissed_at        TIMESTAMPTZ,
+    gj_created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    gj_updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT chk_gj_status CHECK (
+        gj_status IN ('queued', 'transcribing', 'grading', 'graded', 'failed')
+    )
+);
+
+CREATE INDEX idx_grade_jobs_company_status ON grade_jobs (company_id, gj_status)
+    WHERE gj_dismissed_at IS NULL;
+CREATE INDEX idx_grade_jobs_user ON grade_jobs (submitted_by_user_id)
+    WHERE gj_dismissed_at IS NULL;
+
+CREATE OR REPLACE FUNCTION set_gj_updated_at() RETURNS TRIGGER AS $$
+BEGIN NEW.gj_updated_at = NOW(); RETURN NEW; END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_grade_jobs_updated_at BEFORE UPDATE ON grade_jobs
+    FOR EACH ROW EXECUTE FUNCTION set_gj_updated_at();
