@@ -443,6 +443,12 @@ _ADDITIVE_MIGRATIONS = [
                    FOR EACH ROW EXECUTE FUNCTION set_ln_updated_at();
            END IF;
        END $$""",
+
+    # Clarifying-questions removal: any interaction left at status 41
+    # (awaiting_clarification) when the wizard was retired needs to move
+    # forward so it doesn't sit in a non-existent flow. We send them to 45
+    # (submitted) — visible in the UI for manual retry without losing data.
+    "UPDATE interactions SET status_id = 45 WHERE status_id = 41",
 ]
 
 
@@ -468,6 +474,7 @@ _STATUS_SEEDS = [
     (30, 'completed',              'Project completed',              'project'),
     (31, 'archived',               'Project archived',               'project'),
     (40, 'transcribing',           'Audio being transcribed',        'interaction'),
+    # status 41 kept for historical interactions; not produced by current code.
     (41, 'awaiting_clarification', 'Waiting for clarifying answers', 'interaction'),
     (42, 'grading',                'AI grading in progress',         'interaction'),
     (43, 'graded',                 'Interaction fully graded',       'interaction'),

@@ -5,26 +5,16 @@ Ported from V1 with DB / CSV / Excel / rubric-CRUD functions removed. This
 module only contains the pure transcription + grading logic. All persistence
 happens in the route layer.
 
-Two-step Claude flow (V2):
-    1. get_clarifying_questions(transcript, …)  → questions Claude needs
-       answered before it can score the call accurately.
-    2. grade_with_claude(transcript, context_answers, …)  → the actual
-       scored grade, using the transcript plus the reviewer's answers.
-
-When Claude returns an empty clarifying-questions list, the route layer
-skips step 1's UI and goes straight to grade_with_claude with no answers.
+Single-pass flow:
+    transcribe(audio_path) → grade_with_claude(transcript, …)
 
 Public API:
     transcribe(audio_path)                          -> str
-    get_clarifying_questions(transcript, rubric_criteria=None,
-                             rubric_script=None, rubric_context=None,
-                             grade_target='respondent') -> list
-    grade_with_claude(transcript, context_answers, rubric_criteria=None,
+    grade_with_claude(transcript, rubric_criteria=None,
                       rubric_script=None, rubric_context=None,
                       grade_target='respondent') -> dict
     build_flags(scores, rubric_criteria=None)       -> str
     calculate_total(scores, rubric_criteria=None)   -> float
-    validate_clarifying_questions(questions)        -> list
     AUDIO_EXTENSIONS                                -> set
 
 Requires env vars ASSEMBLYAI_API_KEY and ANTHROPIC_API_KEY.
@@ -33,8 +23,6 @@ Requires env vars ASSEMBLYAI_API_KEY and ANTHROPIC_API_KEY.
 import json
 import logging
 import os
-import re
-from pathlib import Path
 
 import anthropic
 import assemblyai as aai
@@ -76,14 +64,6 @@ _DEFAULT_CRITERIA = [
     {"name": "Follow-Up Promised",   "type": "yes_no"},
     {"name": "Issue Resolved",       "type": "yes_no"},
 ]
-
-# Red-flag regex: questions that should never be yes_no. Ported verbatim from V1.
-_YES_NO_RED_FLAGS = re.compile(
-    r'\b(how well|how effectively|how clearly|how warm|how professional|how would you|'
-    r'which best describes|what best describes|how did|how was|to what extent|'
-    r'how much|how often|how frequently)\b', re.IGNORECASE,
-)
-
 
 # ── Prompt builder ──────────────────────────────────────────────
 
@@ -239,117 +219,19 @@ def _call_claude_json(prompt, *, max_tokens=4000, timeout=120.0):
         ) from exc
 
 
-# ── Clarifying questions (Step 1 of the two-step flow) ─────────
-
-
-def get_clarifying_questions(
-    transcript: str,
-    rubric_criteria: list = None,
-    rubric_script: str = None,
-    rubric_context: str = None,
-    grade_target: str = "respondent",
-) -> list:
-    """Ask Claude what it would need from a reviewer to grade this call.
-
-    Returns a list of clarifying question objects (possibly empty). Does NOT
-    score the call. Each question has keys: question, reason, format,
-    and optionally options (for multiple_choice).
-
-    The prompt asks Claude to restrict itself to things that cannot be
-    determined from the transcript alone — e.g. whether a promised follow-up
-    actually happened, whether the caller had context the reviewer knows about.
-    """
-    criteria_list = rubric_criteria or _DEFAULT_CRITERIA
-    rubric_text = build_rubric_prompt(criteria_list)
-
-    script_block = ""
-    if rubric_script and rubric_script.strip():
-        script_block = f"\n\nAGENT SCRIPT — They are expected to follow this script:\n{rubric_script.strip()}\n"
-
-    call_context_block = ""
-    if rubric_context and rubric_context.strip():
-        call_context_block = f"\n\nCALL TYPE / CONTEXT:\n{rubric_context.strip()}\n"
-
-    _, grade_target_label = _normalize_grade_target(grade_target)
-    grade_target_block = (
-        f"\n\nGRADE TARGET: Focus on {grade_target_label}. Only ask about "
-        f"their performance.\n"
-    )
-
-    prompt = f"""You are a professional customer service QA specialist preparing to grade a recorded call. Before you grade, identify anything you need the human reviewer to confirm — things that CANNOT be determined from the transcript alone.{call_context_block}{grade_target_block}
-
-{rubric_text}{script_block}
-
-TRANSCRIPT:
-{transcript}
-
-Examples of good clarifying questions:
-- Did the promised follow-up actually happen after the call?
-- Was this caller a first-time shopper or an existing customer?
-- Was there a known outage or known issue at the property that day?
-- Did the agent previously have a conversation with this caller you aren't seeing here?
-
-Examples of BAD clarifying questions (do not ask these — you can determine them from the transcript):
-- How warm was the agent's greeting?
-- Did the agent mention the company name?
-- How long was the hold time?
-
-CLOSED-FORM ONLY — the reviewer answers via a wizard with buttons. Open-text questions are forbidden.
-
-Constraints:
-- Maximum 5 questions. Return an empty array if the transcript is sufficient to grade everything.
-- Each question must include: question, reason (why you can't tell from the transcript), format, and options.
-- format MUST be one of:
-    - "yes_no"           — strictly binary ("Did X happen?"). options must be exactly [].
-    - "yes_no_unclear"   — binary, but the reviewer might genuinely not know
-                           ("Was this a first-time caller?"). options must be exactly [].
-    - "multiple_choice"  — 3 to 5 mutually exclusive concrete outcomes. options
-                           is an array of 3–5 short answer-button strings (NOT
-                           full sentences). Use this when there are a small,
-                           known set of plausible answers.
-- DO NOT ask open-ended, scaled, or numeric questions. If you cannot phrase a
-  question as one of the three formats above, omit it.
-
-Respond with a valid JSON object in exactly this format — no extra text before or after:
-{{
-  "clarifying_questions": [
-    {{
-      "question": "question text for the reviewer",
-      "reason": "I couldn't determine this from the transcript because...",
-      "format": "yes_no",
-      "options": []
-    }}
-  ]
-}}"""
-
-    result = _call_claude_json(prompt, max_tokens=1200, timeout=60.0)
-    return validate_clarifying_questions(result.get("clarifying_questions"))
-
-
-# ── Grading (Step 2 of the two-step flow) ──────────────────────
+# ── Grading ────────────────────────────────────────────────────
 
 
 def grade_with_claude(
     transcript: str,
-    context_answers: dict = None,
     rubric_criteria: list = None,
     rubric_script: str = None,
     rubric_context: str = None,
     grade_target: str = "respondent",
 ) -> dict:
-    """Grade a transcript using Claude, informed by the reviewer's answers
-    to the clarifying questions. Returns scores, insights, and overall
-    assessment. Does NOT return clarifying questions — those belong to
-    get_clarifying_questions() which runs before this call.
+    """Grade a transcript using Claude. Returns scores, insights, and overall
+    assessment.
     """
-    context_answers = context_answers or {}
-
-    context_block = ""
-    if context_answers:
-        context_block = "\n\nAdditional context from the QA reviewer (answers to the clarifying questions you asked earlier):\n"
-        for question, answer in context_answers.items():
-            context_block += f"- {question}: {answer}\n"
-
     criteria_list = rubric_criteria or _DEFAULT_CRITERIA
     rubric_text = build_rubric_prompt(criteria_list)
 
@@ -390,7 +272,6 @@ def grade_with_claude(
 
 TRANSCRIPT:
 {transcript}
-{context_block}
 
 SCORING INSTRUCTIONS — CRITICAL:
 - Score 9-10: Fully satisfied the criterion with no gaps.
@@ -408,8 +289,6 @@ STRENGTHS & WEAKNESSES:
 
 CONFIDENCE: For each criterion give High / Medium / Low.
 TIMESTAMPS: Use the nearest [MM:SS] marker, or "General".
-
-Use the reviewer's answers above to resolve anything you couldn't tell from the transcript alone. Do not ask any more clarifying questions — this is the final grading pass.
 
 Respond with a valid JSON object in exactly this format — no extra text before or after:
 {{
@@ -460,75 +339,3 @@ def calculate_total(scores: dict, rubric_criteria: list = None) -> float:
             weighted_sum += val * w
             total_weight += w
     return round(weighted_sum / total_weight, 1) if total_weight else 0.0
-
-
-# ── Clarifying-question validation ─────────────────────────────
-
-# Closed-form formats produced by the new prompt. scale_1_10 is intentionally
-# NOT in this set — if Claude returns it (or any other legacy/invalid shape)
-# the reviewer-facing UI has no widget for it, so we coerce to skip_only.
-_CLOSED_FORM_FORMATS = ("yes_no", "yes_no_unclear", "multiple_choice")
-_MC_MIN_OPTIONS = 3
-_MC_MAX_OPTIONS = 5
-
-
-def validate_clarifying_questions(questions):
-    """Closed-form-only validation for the wizard UI.
-
-    Each question is coerced into one of:
-        yes_no | yes_no_unclear | multiple_choice | skip_only
-
-    Anything Claude returns that does not cleanly fit (open-text, scale_1_10,
-    multiple_choice with too few/too many/garbage options, missing format,
-    red-flag yes_no, etc.) is downgraded to skip_only — the reviewer sees
-    the question + reason as read-only context and clicks Skip to advance.
-    The original question text and reason are always preserved so the
-    reviewer can still factor them in mentally.
-    """
-    if not questions or not isinstance(questions, list):
-        return []
-    valid = []
-    for qn in questions:
-        if not isinstance(qn, dict) or not qn.get("question"):
-            continue
-
-        fmt = (qn.get("format") or "").lower().strip()
-        # Map legacy variants Claude has returned in the past.
-        if fmt == "scale_1_5":
-            fmt = "scale_1_10"
-
-        # Normalize options to a list-of-clean-strings, regardless of format.
-        opts_raw = qn.get("options") or []
-        if not isinstance(opts_raw, list):
-            opts_raw = []
-        opts_clean = [str(o).strip() for o in opts_raw if str(o).strip()]
-
-        # Apply rules in order. First match wins; fallthrough → skip_only.
-        coerced_fmt = None
-        coerced_opts = []
-
-        if fmt == "yes_no":
-            # Quality/degree questions phrased as yes/no are useless — skip them.
-            if _YES_NO_RED_FLAGS.search(qn["question"]):
-                coerced_fmt = "skip_only"
-            else:
-                coerced_fmt = "yes_no"
-
-        elif fmt == "yes_no_unclear":
-            coerced_fmt = "yes_no_unclear"
-
-        elif fmt == "multiple_choice":
-            if _MC_MIN_OPTIONS <= len(opts_clean) <= _MC_MAX_OPTIONS:
-                coerced_fmt = "multiple_choice"
-                coerced_opts = opts_clean
-            else:
-                coerced_fmt = "skip_only"
-
-        else:
-            # Unknown / open-text / scale_1_10 / missing → skip_only.
-            coerced_fmt = "skip_only"
-
-        qn["format"] = coerced_fmt
-        qn["options"] = coerced_opts
-        valid.append(qn)
-    return valid

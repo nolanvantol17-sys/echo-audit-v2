@@ -13,7 +13,7 @@ Flow for a single queue item:
     4. Download the recording (if URL set) using provider-specific auth,
        store bytes in voip_queue_recording_data
     5. Create an interactions row with status_id = 40 (transcribing)
-    6. Transcribe → 42 (grading) → grade → persist rubric scores + clarifying Qs
+    6. Transcribe → 42 (grading) → grade → persist rubric scores
     7. Interaction status_id = 43 (graded), queue row status = 'graded',
        voip_queue_interaction_id set
     8. Any exception: queue row = 'failed' + error message; interaction (if any)
@@ -41,11 +41,10 @@ logger = logging.getLogger(__name__)
 
 
 # Interaction status IDs — must match statuses seed in db.py.
-STATUS_TRANSCRIBING           = 40
-STATUS_AWAITING_CLARIFICATION = 41
-STATUS_GRADING                = 42
-STATUS_GRADED                 = 43
-STATUS_SUBMITTED              = 45
+STATUS_TRANSCRIBING = 40
+STATUS_GRADING      = 42
+STATUS_GRADED       = 43
+STATUS_SUBMITTED    = 45
 
 
 # ── Public entry points ────────────────────────────────────────
@@ -329,7 +328,7 @@ def _set_interaction_status(interaction_id, status_id):
 
 def _persist_grade(interaction_id, *, grade_result, criteria, total_score,
                    flags, transcript, audio_url, audio_bytes, final_status_id):
-    """Write transcript + scores + clarifying questions in one transaction."""
+    """Write transcript + scores in one transaction."""
     conn = get_conn()
     try:
         scores = grade_result.get("scores") or {}
@@ -387,26 +386,6 @@ def _persist_grade(interaction_id, *, grade_result, criteria, total_score,
                     c.get("scoring_guidance") or None,
                     score_value,
                     explanation,
-                ),
-            )
-
-        # clarifying questions
-        conn.execute(
-            q("DELETE FROM clarifying_questions WHERE interaction_id = ?"),
-            (interaction_id,),
-        )
-        for idx, cq in enumerate(grade_result.get("clarifying_questions") or []):
-            conn.execute(
-                q("""INSERT INTO clarifying_questions (
-                        interaction_id, cq_text, cq_ai_reason, cq_response_format,
-                        cq_answer_value, cq_order
-                     ) VALUES (?, ?, ?, ?, NULL, ?)"""),
-                (
-                    interaction_id,
-                    cq.get("question") or "",
-                    cq.get("reason") or "",
-                    cq.get("format") or "yes_no",
-                    idx,
                 ),
             )
 
@@ -523,7 +502,6 @@ def _process(voip_queue_id: int) -> None:
         try:
             grade_result = grader.grade_with_claude(
                 transcript=transcript,
-                context_answers=None,
                 rubric_criteria=criteria,
                 rubric_script=None,
                 rubric_context=None,
@@ -537,8 +515,6 @@ def _process(voip_queue_id: int) -> None:
         scores = grade_result.get("scores") or {}
         total_score = grader.calculate_total(scores, criteria)
         flags = grader.build_flags(scores, criteria)
-        has_cqs = bool(grade_result.get("clarifying_questions"))
-        final_status = STATUS_AWAITING_CLARIFICATION if has_cqs else STATUS_GRADED
 
         audio_url = _save_audio_url(interaction_id)
         # On SQLite we don't persist the bytes on the interaction; keep them
@@ -555,7 +531,7 @@ def _process(voip_queue_id: int) -> None:
                 transcript=transcript,
                 audio_url=audio_url,
                 audio_bytes=audio_bytes_for_interaction,
-                final_status_id=final_status,
+                final_status_id=STATUS_GRADED,
             )
         except Exception as e:
             _set_interaction_status(interaction_id, STATUS_SUBMITTED)

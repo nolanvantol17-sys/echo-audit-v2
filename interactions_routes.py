@@ -52,17 +52,10 @@ _AUDIO_DIR = Path(os.environ.get("AUDIO_DIR", "./audio_uploads")).resolve()
 
 # Status IDs — must match statuses seed in db.py.
 STATUS_TRANSCRIBING           = 40
-STATUS_AWAITING_CLARIFICATION = 41
 STATUS_GRADING                = 42
 STATUS_GRADED                 = 43
 STATUS_NO_ANSWER              = 44
 STATUS_SUBMITTED              = 45
-
-# Sentinel value persisted in clarifying_questions.cq_answer_value when the
-# reviewer explicitly clicked Skip in the wizard. Distinct from NULL, which
-# means the question was never asked / never answered. Filtered out before
-# context_answers is sent to Claude so the sentinel never leaks into prompts.
-CQ_SKIPPED_SENTINEL = "__SKIPPED__"
 
 
 # ── Response helpers ────────────────────────────────────────────
@@ -447,7 +440,6 @@ def _persist_grade_result(conn, interaction_id, *, grade_result, criteria,
 
     - Overwrites scalar grade fields on interactions
     - Deletes + rebuilds interaction_rubric_scores rows (snapshot pattern)
-    - Replaces clarifying_questions rows with the new set
 
     Caller is responsible for COMMIT.
     """
@@ -542,38 +534,13 @@ def _persist_grade_result(conn, interaction_id, *, grade_result, criteria,
             ),
         )
 
-    # Clarifying questions are managed separately — the two-step flow saves
-    # them up front after get_clarifying_questions() and updates answers on
-    # regrade. We only rewrite CQ rows here if the grade_result includes the
-    # key (legacy single-shot path); V2 grade_with_claude doesn't return them.
-    if "clarifying_questions" in grade_result:
-        conn.execute(
-            q("DELETE FROM clarifying_questions WHERE interaction_id = ?"),
-            (interaction_id,),
-        )
-        for idx, cq in enumerate(grade_result.get("clarifying_questions") or []):
-            conn.execute(
-                q("""INSERT INTO clarifying_questions (
-                        interaction_id, cq_text, cq_ai_reason, cq_response_format,
-                        cq_answer_value, cq_order
-                     ) VALUES (?, ?, ?, ?, NULL, ?)"""),
-                (
-                    interaction_id,
-                    cq.get("question") or "",
-                    cq.get("reason") or "",
-                    cq.get("format") or "yes_no",
-                    idx,
-                ),
-            )
-
 
 def _save_transcript_and_audio(conn, interaction_id, *, transcript,
                                audio_url, audio_bytes, status_id):
     """Write the transcript + audio to the interaction row, no scores.
 
-    Used by the two-step grade flow after transcription completes, before
-    clarifying questions are answered. `status_id` should be
-    STATUS_AWAITING_CLARIFICATION (or STATUS_GRADING if auto-grading).
+    Called between transcription and grading so the row is observable mid-flight.
+    `status_id` should be STATUS_GRADING.
     """
     conn.execute(
         q("""UPDATE interactions SET
@@ -632,85 +599,8 @@ def _fetch_clarifying_questions(conn, interaction_id):
     return [_row_to_dict(r) for r in cur.fetchall()]
 
 
-def _save_clarifying_questions(conn, interaction_id, questions):
-    """Insert fresh CQ rows for an interaction. Wipes existing rows first.
-
-    Called immediately after get_clarifying_questions() returns, before the
-    reviewer has answered anything. cq_answer_value stays NULL until the
-    reviewer submits answers via the regrade endpoint; "__SKIPPED__" is the
-    sentinel for explicitly-skipped questions, distinct from never-answered.
-
-    For multiple_choice rows we persist the validated option list as a JSON
-    array string in cq_options so the wizard can render answer buttons
-    without re-asking Claude. Other formats store NULL.
-    """
-    conn.execute(
-        q("DELETE FROM clarifying_questions WHERE interaction_id = ?"),
-        (interaction_id,),
-    )
-    for idx, cq in enumerate(questions or []):
-        fmt = cq.get("format") or "skip_only"
-        opts = cq.get("options") or []
-        cq_options_json = (
-            json.dumps(opts) if fmt == "multiple_choice" and opts else None
-        )
-        conn.execute(
-            q("""INSERT INTO clarifying_questions (
-                    interaction_id, cq_text, cq_ai_reason, cq_response_format,
-                    cq_options, cq_answer_value, cq_order
-                 ) VALUES (?, ?, ?, ?, ?, NULL, ?)"""),
-            (
-                interaction_id,
-                cq.get("question") or "",
-                cq.get("reason") or "",
-                fmt,
-                cq_options_json,
-                idx,
-            ),
-        )
-
-
-def _apply_clarifying_answers(conn, interaction_id, answers):
-    """Persist the reviewer's answers onto existing clarifying_questions rows.
-
-    `answers` is a {question_text: answer_value} dict as submitted from the UI.
-    We match each row by cq_text and update its cq_answer_value. Rows without
-    a matching answer keep cq_answer_value = NULL (never asked / not yet
-    answered). The literal string CQ_SKIPPED_SENTINEL ("__SKIPPED__") is a
-    distinct value meaning "reviewer explicitly skipped" — it is persisted
-    verbatim so the audit trail can distinguish it from never-answered.
-    """
-    if not answers:
-        return
-    for question_text, value in answers.items():
-        if value is None:
-            continue
-        conn.execute(
-            q("""UPDATE clarifying_questions
-                    SET cq_answer_value = ?
-                  WHERE interaction_id = ? AND cq_text = ?"""),
-            (str(value), interaction_id, question_text),
-        )
-
-
-def _strip_skipped_answers(answers):
-    """Return answers dict with skipped + empty entries removed.
-
-    Used right before grade_with_claude so Claude never sees the sentinel
-    string as if it were a substantive reviewer answer. Skipped questions
-    are persisted to the DB (see _apply_clarifying_answers) but contribute
-    nothing to the grading prompt.
-    """
-    if not answers:
-        return {}
-    return {
-        k: v for k, v in answers.items()
-        if v is not None and str(v).strip() and str(v) != CQ_SKIPPED_SENTINEL
-    }
-
-
 def _build_grade_response(interaction_id, grade_result, total_score, flags, transcript=None):
-    """Shape the response body returned from POST /api/grade and the regrade routes."""
+    """Shape the response body returned from POST /api/grade and regrade routes."""
     return {
         "interaction_id":      interaction_id,
         "respondent_name":     grade_result.get("responder_name"),
@@ -723,16 +613,14 @@ def _build_grade_response(interaction_id, grade_result, total_score, flags, tran
         "weaknesses":          grade_result.get("weaknesses") or "",
         "flags":               flags,
         "total_score":         total_score,
-        "clarifying_questions": grade_result.get("clarifying_questions") or [],
         "transcript":          transcript,
     }
 
 
 # ── Shared grade-and-persist helper ────────────────────────────
 #
-# Used by both /api/grade (auto-grade path when there are no clarifying
-# questions) and /api/interactions/<id>/regrade (reviewer submits CQ
-# answers, we grade with them as context). Assumes transcript + audio
+# Used by /api/grade (initial single-pass grade) and the manager-only
+# /api/interactions/<id>/regrade-with-context. Assumes transcript + audio
 # are already saved on the interaction row — only the score fields,
 # rubric-score snapshots, respondent link, and status get written here.
 
@@ -745,7 +633,7 @@ class _GradingAPIError(Exception):
 
 
 def _grade_and_persist(*, interaction_id, company_id, project_id,
-                       respondent_user_id, transcript, context_answers,
+                       respondent_user_id, transcript,
                        criteria, script_text, context_text, grade_target,
                        is_initial_grade, location_id=None):
     """Run grade_with_claude and commit the results.
@@ -773,7 +661,6 @@ def _grade_and_persist(*, interaction_id, company_id, project_id,
     try:
         grade_result = grader.grade_with_claude(
             transcript=transcript,
-            context_answers=context_answers or {},
             rubric_criteria=criteria,
             rubric_script=script_text,
             rubric_context=context_text,
@@ -855,7 +742,6 @@ def _grade_and_persist(*, interaction_id, company_id, project_id,
         ENTITY_INTERACTION, interaction_id,
         metadata={"project_id": project_id, "total_score": total_score,
                   "final_status_id": STATUS_GRADED,
-                  "has_context_answers": bool(context_answers),
                   "location_id": effective_location_id},
     )
     update_performance_report_async(
@@ -872,7 +758,6 @@ def _grade_and_persist(*, interaction_id, company_id, project_id,
     )
     response["respondent_id"] = respondent_id
     response["respondent_name"] = respondent_name_final
-    response["awaiting_clarification"] = False
     return response
 
 
@@ -1061,8 +946,8 @@ def submit_grade():
 
         increment_usage(company_id, "assemblyai")
 
-        # Persist transcript + audio immediately so the regrade route can
-        # load the transcript when the reviewer submits CQ answers.
+        # Persist transcript + audio so the row is fully observable mid-flight
+        # (and so a grading failure leaves a recoverable interaction behind).
         with open(tmp.name, "rb") as f:
             audio_bytes = f.read()
         audio_url, audio_data = _save_audio(interaction_id, audio_bytes, ext)
@@ -1073,82 +958,36 @@ def submit_grade():
                 transcript=transcript,
                 audio_url=audio_url,
                 audio_bytes=audio_data,
-                status_id=STATUS_GRADING,   # about to ask Claude for CQs
+                status_id=STATUS_GRADING,
             )
             conn.commit()
         finally:
             conn.close()
 
-        # ── Step 2: ask Claude for clarifying questions ──
+        # ── Step 2: grade ──
         try:
-            questions = grader.get_clarifying_questions(
+            grade_outcome = _grade_and_persist(
+                interaction_id=interaction_id,
+                company_id=company_id,
+                project_id=project_id,
+                respondent_user_id=respondent_user_id,
+                location_id=location_id,
                 transcript=transcript,
-                rubric_criteria=criteria,
-                rubric_script=script_text,
-                rubric_context=context_text,
+                criteria=criteria,
+                script_text=script_text,
+                context_text=context_text,
                 grade_target=grade_target,
+                is_initial_grade=True,
             )
-        except Exception:
-            logger.exception("Clarifying-question step failed for interaction %s",
-                             interaction_id)
-            conn = get_conn()
-            try:
-                _update_interaction_status(conn, interaction_id, STATUS_SUBMITTED)
-            finally:
-                conn.close()
-            return _err("Preparing questions failed. Please try again.", 502)
-
-        increment_usage(company_id, "anthropic")
-
-        # Save CQ rows now. They'll be fetched back on the regrade path with
-        # cq_answer_value filled in from the reviewer's inputs.
-        conn = get_conn()
-        try:
-            _save_clarifying_questions(conn, interaction_id, questions)
-            conn.commit()
-        finally:
-            conn.close()
-
-        # ── Step 3: if Claude asked no questions, auto-grade immediately ──
-        if not questions:
-            try:
-                grade_outcome = _grade_and_persist(
-                    interaction_id=interaction_id,
-                    company_id=company_id,
-                    project_id=project_id,
-                    respondent_user_id=respondent_user_id,
-                    location_id=location_id,
-                    transcript=transcript,
-                    context_answers={},
-                    criteria=criteria,
-                    script_text=script_text,
-                    context_text=context_text,
-                    grade_target=grade_target,
-                    is_initial_grade=True,
-                )
-            except _GradingAPIError as exc:
-                return _err(exc.message, exc.status_code)
-            return jsonify(grade_outcome)
-
-        # ── Path B: return questions; reviewer answers on regrade ──
-        conn = get_conn()
-        try:
-            _update_interaction_status(conn, interaction_id, STATUS_AWAITING_CLARIFICATION)
-            conn.commit()
-        finally:
-            conn.close()
+        except _GradingAPIError as exc:
+            return _err(exc.message, exc.status_code)
     finally:
         try:
             os.unlink(tmp.name)
         except OSError:
             pass
 
-    return jsonify({
-        "interaction_id":        interaction_id,
-        "transcript":            transcript,
-        "clarifying_questions":  questions,
-        "awaiting_clarification": True,
-    })
+    return jsonify(grade_outcome)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1509,99 +1348,6 @@ def update_interaction_respondent(interaction_id):
 
 
 # ═══════════════════════════════════════════════════════════════
-# POST /api/interactions/<id>/regrade  —  apply clarifying answers
-# ═══════════════════════════════════════════════════════════════
-
-
-@interactions_bp.route("/interactions/<int:interaction_id>/regrade", methods=["POST"])
-@login_required
-def regrade_with_answers(interaction_id):
-    """Submit clarifying-question answers and grade the call.
-
-    This is the second leg of the two-step grade flow (POST /api/grade
-    returns the questions, this endpoint receives the reviewer's answers
-    and produces the final scores). Also handles re-grading a call that
-    has already been graded once — we detect that case by status_id.
-    """
-    company_id, err = _require_company()
-    if err: return err
-
-    body = _body()
-    context_answers = body.get("context_answers") or {}
-    if not isinstance(context_answers, dict):
-        return _err("context_answers must be an object", 400)
-
-    client_rubric = body.get("rubric")
-
-    conn = get_conn()
-    try:
-        interaction = _get_interaction_in_company(conn, interaction_id, company_id)
-        if not interaction or interaction["interaction_deleted_at"] is not None:
-            return _err("Interaction not found", 404)
-        if not interaction["interaction_transcript"]:
-            return _err("Interaction has no transcript to grade", 400)
-
-        project = _get_project_in_company(conn, interaction["project_id"], company_id)
-        if not project:
-            return _err("Interaction's project is missing", 404)
-
-        grade_target = "respondent"
-        script_text = context_text = None
-        if client_rubric is not None:
-            criteria, script_text, context_text = _build_criteria_from_request_rubric(client_rubric)
-            if not criteria:
-                return _err("Rubric payload contained no criteria", 400)
-        else:
-            rubric_group = _load_rubric_group(conn, project["rubric_group_id"])
-            grade_target = (rubric_group or {}).get("rg_grade_target") or "respondent"
-            items = _load_rubric_items(conn, project["rubric_group_id"])
-            if not items:
-                return _err("Project rubric has no items", 400)
-            criteria = _items_to_criteria(items)
-
-        transcript = interaction["interaction_transcript"]
-        project_id = interaction["project_id"]
-        respondent_user_id = interaction["respondent_user_id"]
-        # Source-of-truth: the location stamped on the interaction row at
-        # creation time. _grade_and_persist's "or _project_location_id"
-        # fallback handles legacy rows that predate the column.
-        location_id = interaction["interaction_location_id"]
-        # "First grade" path = status is awaiting-clarification or earlier.
-        # "Real regrade" path = status is already GRADED.
-        is_initial_grade = interaction["status_id"] != STATUS_GRADED
-
-        # Persist the reviewer's answers on the existing CQ rows so they're
-        # visible in history and can be inspected later. Skipped answers are
-        # persisted as the sentinel; only substantive answers reach Claude.
-        _apply_clarifying_answers(conn, interaction_id, context_answers)
-        conn.commit()
-    finally:
-        conn.close()
-
-    grading_context = _strip_skipped_answers(context_answers)
-
-    try:
-        response = _grade_and_persist(
-            interaction_id=interaction_id,
-            company_id=company_id,
-            project_id=project_id,
-            respondent_user_id=respondent_user_id,
-            location_id=location_id,
-            transcript=transcript,
-            context_answers=grading_context,
-            criteria=criteria,
-            script_text=script_text,
-            context_text=context_text,
-            grade_target=grade_target,
-            is_initial_grade=is_initial_grade,
-        )
-    except _GradingAPIError as exc:
-        return _err(exc.message, exc.status_code)
-
-    return jsonify(response)
-
-
-# ═══════════════════════════════════════════════════════════════
 # POST /api/interactions/<id>/regrade-with-context
 # ═══════════════════════════════════════════════════════════════
 
@@ -1664,7 +1410,6 @@ def regrade_with_context(interaction_id):
     try:
         grade_result = grader.grade_with_claude(
             transcript=transcript,
-            context_answers=None,
             rubric_criteria=criteria,
             rubric_script=script_text,
             rubric_context=grading_context,
@@ -1679,8 +1424,6 @@ def regrade_with_context(interaction_id):
     scores = grade_result.get("scores") or {}
     total_score = grader.calculate_total(scores, criteria)
     flags = grader.build_flags(scores, criteria)
-    has_cqs = bool(grade_result.get("clarifying_questions"))
-    final_status = STATUS_AWAITING_CLARIFICATION if has_cqs else STATUS_GRADED
 
     conn = get_conn()
     respondent_id = interaction.get("respondent_id")
@@ -1690,7 +1433,7 @@ def regrade_with_context(interaction_id):
             conn, interaction_id,
             grade_result=grade_result,
             criteria=criteria,
-            final_status_id=final_status,
+            final_status_id=STATUS_GRADED,
             audio_url=None,
             audio_bytes=None,
             total_score=total_score,
@@ -1720,7 +1463,7 @@ def regrade_with_context(interaction_id):
             current_user.user_id, ACTION_REGRADED, ENTITY_INTERACTION,
             interaction_id,
             metadata={"mode": "reviewer_context", "total_score": total_score,
-                      "final_status_id": final_status,
+                      "final_status_id": STATUS_GRADED,
                       "location_id": effective_location_id},
             conn=conn,
         )
