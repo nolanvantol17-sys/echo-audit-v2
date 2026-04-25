@@ -482,8 +482,8 @@
   /* ── Split-pane layout (left=queue, right=form) ─────────── */
   .grade-split {
     display: grid;
-    grid-template-columns: minmax(320px, 1fr) 2fr;
-    gap: 18px;
+    grid-template-columns: 300px 1fr;
+    gap: 24px;
     align-items: start;
   }
 
@@ -498,8 +498,8 @@
     color: #422006;
   }
   .gj-pane-header {
-    display: flex; align-items: baseline; justify-content: space-between;
-    gap: 12px;
+    display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+    gap: 4px 12px;
     margin-bottom: 10px;
   }
   .gj-pane-title {
