@@ -891,6 +891,22 @@
   // dump the trace from DevTools console with:
   //   copy(JSON.stringify(JSON.parse(sessionStorage.getItem("ea.dbg.campaign")), null, 2))
   // and paste into the bug report.
+  // ── Split-pane mode toggle ─────────────────────────────
+  // C4b reads this from localStorage; C5 will add the settings UI to
+  // flip it. Default = ON for everyone on first ship (per spec).
+  // Submit handler branches on this — split-pane mode posts to
+  // /api/grade-jobs (async); legacy mode keeps the inline /api/grade flow.
+  const SPLIT_PANE_LS_KEY = "echo:grade_split_pane";
+  function isSplitPaneMode() {
+    try {
+      const raw = localStorage.getItem(SPLIT_PANE_LS_KEY);
+      if (raw === null) return true;        // default ON
+      return raw !== "false";
+    } catch (_) {
+      return true;                          // private mode / blocked → default ON
+    }
+  }
+
   function dbg(event, data) {
     try {
       const log = JSON.parse(sessionStorage.getItem("ea.dbg.campaign") || "[]");
@@ -1986,27 +2002,12 @@
     if (submitBtn && submitBtn.disabled) return;   // already in flight
     if (submitBtn) submitBtn.disabled = true;
 
-    const overlay = EA.showOverlay("Uploading audio…");
-    try {
-      if (activeTab === "voip") {
-        overlay.set("Queuing VoIP grade…");
-        await EA.fetchJSON(
-          "/api/voip/queue/" + encodeURIComponent(state.selectedQueueId) + "/grade",
-          { method: "POST" }
-        );
-        overlay.close();
-        EA.toast("Grading started — check Past Grades in a moment.", "info");
-        resetForm();
-        return;
-      }
-
-      // Multipart upload (upload OR live-recording tab)
+    // Build the multipart body up front — used by both the split-pane
+    // (POST /api/grade-jobs) and legacy (POST /api/grade) branches below.
+    function _buildGradeFormData() {
       const fd = new FormData();
       if (activeTab === "record") {
         fd.append("audio", state.liveRecordingBlob, "live_recording.webm");
-        // Pass through wall-clock timestamps captured when the user clicked
-        // Record / Stop. Uploaded audio leaves these out — server stores NULL
-        // for the call_start/end/duration columns and only stamps uploaded_at.
         if (state.callStartTime)        fd.append("call_start_time",       state.callStartTime);
         if (state.callEndTime)          fd.append("call_end_time",         state.callEndTime);
         if (state.callDurationSeconds != null)
@@ -2024,6 +2025,79 @@
       if (campaignId !== null && campaignId !== undefined) {
         fd.append("campaign_id", String(campaignId));
       }
+      return fd;
+    }
+
+    // VoIP tab uses its own queue and is unaffected by the split-pane toggle.
+    // Both modes show the same overlay + toast + reset.
+    if (activeTab === "voip") {
+      const vOverlay = EA.showOverlay("Queuing VoIP grade…");
+      try {
+        await EA.fetchJSON(
+          "/api/voip/queue/" + encodeURIComponent(state.selectedQueueId) + "/grade",
+          { method: "POST" }
+        );
+        vOverlay.close();
+        EA.toast("Grading started — check Past Grades in a moment.", "info");
+        resetForm();
+      } catch (err) {
+        vOverlay.close();
+        EA.toast(err.message || "Could not start VoIP grade.", "error");
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+      return;
+    }
+
+    // ── Split-pane mode: POST to /api/grade-jobs (async, non-blocking) ──
+    if (isSplitPaneMode()) {
+      try {
+        const fd = _buildGradeFormData();
+        const result = await EA.fetchJSON("/api/grade-jobs", {
+          method: "POST",
+          body: fd,
+          headers: {},  // browser sets multipart boundary
+        });
+
+        // Optimistically prepend a stub queue row so the user sees instant
+        // feedback. The next poll (bumped to 5s below) will replace it with
+        // the canonical row from the server.
+        const stub = {
+          grade_job_id:               result.grade_job_id,
+          gj_status:                  "queued",
+          gj_phase_started_at:        null,
+          gj_error:                   null,
+          gj_created_at:              new Date().toISOString(),
+          interaction_id:             result.interaction_id,
+          status_id:                  45,
+          interaction_overall_score:  null,
+          interaction_responder_name: null,
+          interaction_location_id:    parseInt(locationId, 10) || null,
+          location_name:              state.locationNameDisplay || null,
+          project_id:                 parseInt(projectId, 10) || null,
+          project_name:               null,
+        };
+        if (typeof queueState !== "undefined") {
+          queueState.jobs.unshift(stub);
+          renderGradeJobsQueue();
+          setQueuePollRate(QUEUE_POLL_ACTIVE_MS);
+        }
+
+        // Q5: no success toast — the queue row appearing IS the feedback.
+        resetFormPreserveContext();
+      } catch (err) {
+        // DON'T reset the form — let the user retry without re-entering.
+        EA.toast(err.message || "Could not submit for grading.", "error");
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+      return;
+    }
+
+    // ── Legacy mode (toggle OFF): inline /api/grade with overlay + modal ──
+    const overlay = EA.showOverlay("Uploading audio…");
+    try {
+      const fd = _buildGradeFormData();
 
       // Two-step flow — pace the overlay messages through the server's
       // phases: upload → transcribe → grade.
@@ -2485,6 +2559,41 @@
         }
       }
     }
+  }
+
+  // Split-pane mode reset after a successful submit. Keeps project +
+  // location + rubric/campaign so the user can immediately submit the
+  // next call at the same property; only clears audio + caller + date.
+  // The form section stays visible (no modal opens in split-pane mode).
+  function resetFormPreserveContext() {
+    dbg("resetFormPreserveContext:enter");
+    window.gradeComplete = false;
+    state.currentInteraction = null;
+    state.callerNameDisplay = "";
+    // Audio: clear both source buffers so the next call starts fresh.
+    clearAudioFile();
+    cleanupLiveRecording(true);
+    // Caller field: reset to "—". Q3: re-apply the init()-time auto-select
+    // when the current user is a caller — they're the most likely answer
+    // for back-to-back calls.
+    const caller = $("#gf-caller");
+    if (caller) {
+      caller.value = "";
+      if (window.__USER_ROLE === "caller" && window.__USER_ID) {
+        caller.value = String(window.__USER_ID);
+      }
+    }
+    // Date: re-stamp today so back-to-back calls don't carry yesterday.
+    const _t = new Date();
+    $("#gf-date").value = _t.getFullYear() + "-"
+      + String(_t.getMonth()+1).padStart(2,"0") + "-"
+      + String(_t.getDate()).padStart(2,"0");
+    $("#form-hint").textContent = "";
+    // Re-arm the audio source panel that the user was on so the contextual
+    // submit button (record/upload/voip) gets reset along with its state.
+    switchTab(state.activePanel || (window.MediaRecorder ? "record" : "upload"));
+    // Form section stays visible — no modal in split-pane mode. Don't
+    // touch project/location/campaign/intel-card — those are preserved.
   }
 
   function resetForm() {
