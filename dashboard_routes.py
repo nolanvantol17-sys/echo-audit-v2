@@ -150,16 +150,17 @@ def get_dashboard():
         )
         active_projects = _scalar(_row_to_dict(cur.fetchone()), "cnt", 0)
 
-        # leaderboard: top 3 callers this month, aggregated by respondent name
-        # (so the same person at multiple locations rolls up to one row).
-        # Each row is enriched with a locations roll-up (this month), a trend
-        # signal (rolling 30-day window), the most-recent-call timestamp, and
-        # a deep-link into Performance Reports keyed on either pr_id (1 PR
-        # under that name) or focus_name (multiple PRs across locations).
+        # leaderboard: top 3 callers this month, keyed on respondent_id so
+        # same-named respondents at different locations remain distinct cards.
+        # Each row is enriched with the home-location roll-up, a rolling
+        # 30-day trend, most-recent-call timestamp, and a Performance Reports
+        # deep-link by respondent_id (PR is 1:1 with respondent).
         # NULL / empty / 'Name Not Detected' names are excluded.
         cur = conn.execute(
             q("""SELECT
+                    r.respondent_id,
                     TRIM(r.respondent_name) AS respondent_name,
+                    r.location_id,
                     AVG(i.interaction_overall_score) AS avg_score,
                     COUNT(*) AS call_count
                  FROM interactions i
@@ -174,7 +175,7 @@ def get_dashboard():
                    AND r.respondent_name IS NOT NULL
                    AND TRIM(r.respondent_name) <> ''
                    AND TRIM(r.respondent_name) <> 'Name Not Detected'
-                 GROUP BY TRIM(r.respondent_name)
+                 GROUP BY r.respondent_id, r.respondent_name, r.location_id
                  ORDER BY avg_score DESC
                  LIMIT 3"""),
             (company_id, STATUS_NO_ANSWER, month_start, month_end),
@@ -182,10 +183,11 @@ def get_dashboard():
         rolling_start = date.today() - timedelta(days=30)
         leaderboard = []
         for row in _rows(cur):
+            respondent_id = row["respondent_id"]
             name = row["respondent_name"]
             avg = row.get("avg_score")
 
-            # Per-name month-scoped detail → locations + last_call.
+            # Per-respondent month-scoped detail → locations + last_call.
             cur2 = conn.execute(
                 q("""SELECT
                         l.location_name,
@@ -202,8 +204,8 @@ def get_dashboard():
                        AND i.interaction_overall_score IS NOT NULL
                        AND i.interaction_date >= ?
                        AND i.interaction_date <  ?
-                       AND TRIM(r.respondent_name) = ?"""),
-                (company_id, STATUS_NO_ANSWER, month_start, month_end, name),
+                       AND i.respondent_id = ?"""),
+                (company_id, STATUS_NO_ANSWER, month_start, month_end, respondent_id),
             )
             month_calls = _rows(cur2)
             locations = _roll_up_locations(month_calls)
@@ -220,7 +222,7 @@ def get_dashboard():
                              if hasattr(last_call, "isoformat")
                              else (str(last_call) if last_call else None))
 
-            # Per-name rolling-30-day trend (independent of the calendar
+            # Per-respondent rolling-30-day trend (independent of the calendar
             # month, so early-in-the-month dashboards still surface trend
             # signal from the prior weeks).
             cur3 = conn.execute(
@@ -229,28 +231,26 @@ def get_dashboard():
                         i.interaction_overall_score
                      FROM interactions i
                      JOIN projects    p ON p.project_id    = i.project_id
-                     JOIN respondents r ON r.respondent_id = i.respondent_id
                      WHERE p.company_id = ?
                        AND i.interaction_deleted_at IS NULL
                        AND i.status_id <> ?
                        AND i.interaction_overall_score IS NOT NULL
                        AND i.interaction_date >= ?
-                       AND TRIM(r.respondent_name) = ?"""),
-                (company_id, STATUS_NO_ANSWER, rolling_start, name),
+                       AND i.respondent_id = ?"""),
+                (company_id, STATUS_NO_ANSWER, rolling_start, respondent_id),
             )
             trend = _trend_for_calls(_rows(cur3))
 
             cur4 = conn.execute(
                 q("""SELECT pr.performance_report_id
                      FROM performance_reports pr
-                     JOIN respondents r ON r.respondent_id = pr.respondent_id
-                     WHERE r.company_id = ?
-                       AND TRIM(r.respondent_name) = ?"""),
-                (company_id, name),
+                     WHERE pr.respondent_id = ?"""),
+                (respondent_id,),
             )
             report_url = _report_url_for(name, _rows(cur4))
 
             leaderboard.append({
+                "respondent_id":   respondent_id,
                 "respondent_name": name,
                 "avg_score":       round(float(avg), 1) if avg is not None else None,
                 "call_count":      row["call_count"],

@@ -1657,16 +1657,19 @@ def get_project_summary(project_id):
         """), (project_id,))
         recent_calls = _rows(cur)
 
-        # Top callers for this project, aggregated by respondent name (so the
-        # same person at multiple locations rolls up to one row). Month-scoped
-        # ranking matches the global /app dashboard. Each row is enriched with
-        # a project-scoped locations roll-up + last_call timestamp, a rolling
-        # 30-day trend, and a company-scoped Performance Reports deep-link.
+        # Top callers for this project, keyed on respondent_id so same-named
+        # respondents at different locations remain distinct cards. Month-
+        # scoped ranking matches the global /app dashboard. Each row is
+        # enriched with a project-scoped locations roll-up + last_call
+        # timestamp, a rolling 30-day trend, and a Performance Reports
+        # deep-link by respondent_id (PR is 1:1 with respondent).
         # NULL / empty / 'Name Not Detected' names are excluded.
         rolling_start = date.today() - timedelta(days=30)
 
         cur = conn.execute(q("""
-            SELECT TRIM(r.respondent_name) AS respondent_name,
+            SELECT r.respondent_id,
+                   TRIM(r.respondent_name) AS respondent_name,
+                   r.location_id,
                    AVG(i.interaction_overall_score) AS avg_score,
                    COUNT(*) AS call_count
             FROM interactions i
@@ -1680,17 +1683,18 @@ def get_project_summary(project_id):
               AND r.respondent_name IS NOT NULL
               AND TRIM(r.respondent_name) <> ''
               AND TRIM(r.respondent_name) <> 'Name Not Detected'
-            GROUP BY TRIM(r.respondent_name)
+            GROUP BY r.respondent_id, r.respondent_name, r.location_id
             ORDER BY avg_score DESC
             LIMIT 3
         """), (project_id, STATUS_NO_ANSWER, month_start, month_end))
 
         top_agents = []
         for row in _rows(cur):
+            respondent_id = row["respondent_id"]
             name = row["respondent_name"]
             a = row.get("avg_score")
 
-            # Per-name month-scoped detail (project-scoped) → locations + last_call.
+            # Per-respondent month-scoped detail (project-scoped) → locations + last_call.
             cur2 = conn.execute(q("""
                 SELECT
                     l.location_name,
@@ -1706,8 +1710,8 @@ def get_project_summary(project_id):
                   AND i.interaction_overall_score IS NOT NULL
                   AND i.interaction_date >= ?
                   AND i.interaction_date <  ?
-                  AND TRIM(r.respondent_name) = ?
-            """), (project_id, STATUS_NO_ANSWER, month_start, month_end, name))
+                  AND i.respondent_id = ?
+            """), (project_id, STATUS_NO_ANSWER, month_start, month_end, respondent_id))
             month_calls = _rows(cur2)
             locations = _roll_up_locations(month_calls)
 
@@ -1723,35 +1727,31 @@ def get_project_summary(project_id):
                              if hasattr(last_call, "isoformat")
                              else (str(last_call) if last_call else None))
 
-            # Per-name rolling-30-day trend, project-scoped.
+            # Per-respondent rolling-30-day trend, project-scoped.
             cur3 = conn.execute(q("""
                 SELECT
                     i.interaction_date,
                     i.interaction_overall_score
                 FROM interactions i
-                JOIN respondents r ON r.respondent_id = i.respondent_id
                 WHERE i.project_id = ?
                   AND i.interaction_deleted_at IS NULL
                   AND i.status_id <> ?
                   AND i.interaction_overall_score IS NOT NULL
                   AND i.interaction_date >= ?
-                  AND TRIM(r.respondent_name) = ?
-            """), (project_id, STATUS_NO_ANSWER, rolling_start, name))
+                  AND i.respondent_id = ?
+            """), (project_id, STATUS_NO_ANSWER, rolling_start, respondent_id))
             trend = _trend_for_calls(_rows(cur3))
 
-            # PR resolution is COMPANY-scoped: performance_reports aren't
-            # project-scoped, and the deep-link goes to the global /app/reports
-            # page either way.
+            # PR is 1:1 with respondent; lookup returns 0 or 1 row.
             cur4 = conn.execute(q("""
                 SELECT pr.performance_report_id
                 FROM performance_reports pr
-                JOIN respondents r ON r.respondent_id = pr.respondent_id
-                WHERE r.company_id = ?
-                  AND TRIM(r.respondent_name) = ?
-            """), (company_id, name))
+                WHERE pr.respondent_id = ?
+            """), (respondent_id,))
             report_url = _report_url_for(name, _rows(cur4))
 
             top_agents.append({
+                "respondent_id":   respondent_id,
                 "respondent_name": name,
                 "avg_score":       round(float(a), 1) if a is not None else None,
                 "call_count":      row["call_count"],
