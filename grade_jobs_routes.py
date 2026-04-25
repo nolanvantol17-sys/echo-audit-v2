@@ -208,11 +208,14 @@ def list_grade_jobs():
                         i.status_id,
                         i.interaction_overall_score,
                         i.interaction_responder_name,
+                        i.interaction_location_id,
+                        l.location_name,
                         i.project_id,
                         p.project_name
                    FROM grade_jobs j
                    LEFT JOIN interactions i ON i.interaction_id = j.interaction_id
                    LEFT JOIN projects p     ON p.project_id     = i.project_id
+                   LEFT JOIN locations l    ON l.location_id    = i.interaction_location_id
                   WHERE j.company_id = ?
                     AND j.submitted_by_user_id = ?
                     AND j.gj_dismissed_at IS NULL
@@ -222,6 +225,82 @@ def list_grade_jobs():
         return jsonify(_rows(cur))
     finally:
         conn.close()
+
+
+# ── POST /api/grade-jobs/<id>/retry ──
+
+
+@grade_jobs_bp.route("/grade-jobs/<int:job_id>/retry", methods=["POST"])
+@login_required
+def retry_grade_job(job_id):
+    """Re-enqueue a failed job.
+
+    Resets gj_status to 'queued', clears gj_error, sets the underlying
+    interaction back to status_id=45 (submitted), and fires the daemon
+    thread again. Author or admin only. 404 if job not in 'failed' state
+    (so the UI can't accidentally re-fire a successful or in-flight job).
+    """
+    company_id, err = _require_company()
+    if err: return err
+
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            q("""SELECT grade_job_id, submitted_by_user_id, company_id,
+                        interaction_id, gj_status, gj_dismissed_at
+                   FROM grade_jobs
+                  WHERE grade_job_id = ?"""),
+            (job_id,),
+        )
+        row = _row_to_dict(cur.fetchone())
+        if not row or row["company_id"] != company_id:
+            return _err("Grade job not found", 404)
+        if row["gj_dismissed_at"] is not None:
+            return _err("Grade job has been dismissed", 404)
+        if row["gj_status"] != "failed":
+            return _err("Only failed jobs can be retried", 409)
+
+        is_author = row["submitted_by_user_id"] == current_user.user_id
+        is_admin  = current_user.role in ("admin", "super_admin")
+        if not (is_author or is_admin):
+            return _err("Forbidden", 403)
+
+        try:
+            if IS_POSTGRES:
+                conn.execute(
+                    """UPDATE grade_jobs
+                          SET gj_status = 'queued',
+                              gj_error = NULL,
+                              gj_phase_started_at = NULL
+                        WHERE grade_job_id = %s""",
+                    (job_id,),
+                )
+                conn.execute(
+                    "UPDATE interactions SET status_id = 45 WHERE interaction_id = %s",
+                    (row["interaction_id"],),
+                )
+            else:
+                conn.execute(
+                    """UPDATE grade_jobs
+                          SET gj_status = 'queued',
+                              gj_error = NULL,
+                              gj_phase_started_at = NULL
+                        WHERE grade_job_id = ?""",
+                    (job_id,),
+                )
+                conn.execute(
+                    "UPDATE interactions SET status_id = 45 WHERE interaction_id = ?",
+                    (row["interaction_id"],),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    finally:
+        conn.close()
+
+    process_grade_job_async(job_id, current_user.user_id)
+    return jsonify({"ok": True, "grade_job_id": job_id, "gj_status": "queued"})
 
 
 # ── POST /api/grade-jobs/<id>/dismiss ──
