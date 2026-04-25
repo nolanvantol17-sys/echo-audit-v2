@@ -145,7 +145,7 @@
           '<div class="panel-title" style="color:#ef4444;">Danger zone</div>' +
           '<div class="muted text-small" style="margin-bottom:10px;">' +
             'Permanently delete this interaction and everything attached to it ' +
-            '(rubric scores, clarifying questions, audio file, audit-log entries). ' +
+            '(rubric scores, audio file, audit-log entries). ' +
             'A deletion receipt is preserved for accountability — the content itself is not.' +
           '</div>' +
           '<button type="button" class="btn btn-danger btn-sm" ' +
@@ -310,8 +310,6 @@
       "The interaction record itself",
       impact.rubric_scores + " " +
         pluralize(impact.rubric_scores, "rubric score", "rubric scores"),
-      impact.clarifying_questions + " " +
-        pluralize(impact.clarifying_questions, "clarifying question", "clarifying questions"),
       impact.audit_entries + " " +
         pluralize(impact.audit_entries, "audit-log entry", "audit-log entries"),
       "The " + audioLabel(impact),

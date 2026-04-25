@@ -646,7 +646,6 @@
   function statusIdToName(id) {
     switch (Number(id)) {
       case 40: return "Transcribing";
-      case 41: return "Awaiting clarification";
       case 42: return "Grading";
       case 43: return "Graded";
       case 44: return "No answer";
@@ -657,7 +656,6 @@
   function statusIdToSlug(id) {
     switch (Number(id)) {
       case 40: return "transcribing";
-      case 41: return "awaiting-clarification";
       case 42: return "grading";
       case 43: return "graded";
       case 44: return "no-answer";

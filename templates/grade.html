@@ -623,21 +623,6 @@
   </form>
 </section>
 
-{# ── Clarifying questions screen (Step 2 of the two-step grade flow) ── #}
-<section id="clarifying-section" class="panel" hidden>
-  <div class="panel-title" style="margin-bottom:6px;">A few questions before grading</div>
-  <p class="muted" style="margin-top:0;margin-bottom:18px;">
-    Our AI reviewed the transcript and wants to confirm a few things with you
-    before producing a final score. Answer each question below, then submit.
-  </p>
-  <div id="clarifying-list"></div>
-  <div class="hstack-wrap" style="margin-top:22px;">
-    <button type="button" class="btn btn-primary" id="btn-submit-answers">Submit &amp; Grade</button>
-    <span class="spacer"></span>
-    <span class="text-small muted" id="clarifying-hint"></span>
-  </div>
-</section>
-
 {# ── Grade result panel (hidden until a successful grade) ── #}
 <section id="grade-result-section" hidden></section>
 
@@ -719,7 +704,6 @@
     callDurationSeconds:  null,    // integer, derived from start/end
     intelFetchSeq:        0,       // race guard for location intel fetches
     activePanel:          "record", // which audio source is showing
-    cqWizard:             null,    // active CQ wizard handle (createCqWizard)
     projectLocked:        false,   // true when ?project_id= URL lock is in effect
     recordingConfirmed:   false,   // two-click morph: 1st click confirms preview, 2nd click submits
   };
@@ -1876,12 +1860,11 @@
         fd.append("campaign_id", String(campaignId));
       }
 
-      // Three-step flow — pace the overlay messages through the server's
-      // phases: upload → transcribe → ask clarifying questions.
+      // Two-step flow — pace the overlay messages through the server's
+      // phases: upload → transcribe → grade.
       const pulse = [
         [ 1500, "Transcribing call…" ],
-        [ 8000, "Preparing questions…" ],
-        [ 20000, "Almost there…" ],
+        [ 15000, "Almost there…" ],
       ];
       const timers = pulse.map(function (p) {
         return setTimeout(function () { overlay.set(p[1]); }, p[0]);
@@ -1896,16 +1879,8 @@
 
       state.currentInteraction = result;
 
-      // Branch:
-      //   awaiting_clarification=true  → server saved transcript + CQs, wants answers
-      //   otherwise                    → auto-graded (no CQs needed); result is final
-      if (result.awaiting_clarification) {
-        overlay.close();
-        renderClarifyingScreen(result.interaction_id, result.clarifying_questions || []);
-      } else {
-        overlay.close();
-        openGradeResultPanel(result.interaction_id);
-      }
+      overlay.close();
+      openGradeResultPanel(result.interaction_id);
     } catch (err) {
       overlay.close();
       $("#form-hint").textContent = "";
@@ -1941,17 +1916,12 @@
     return s;
   }
 
-  // Phase 2c: grade success now lands in EA.InteractionPanel instead of the
-  // inline result section. We do the same teardown that renderGradeResult
-  // used to (hide form, kill the CQ wizard, hide clarifying section), then
-  // open the panel and arm an onClose hook that re-prepares the form for
-  // the next grade — saving caller-only sticky context first so resetForm's
+  // Phase 2c: grade success lands in EA.InteractionPanel. We hide the form,
+  // open the panel, and arm an onClose hook that re-prepares the form for the
+  // next grade — saving caller-only sticky context first so resetForm's
   // applyGradeContext call can rehydrate the caller dropdown.
   function openGradeResultPanel(interactionId) {
     $("#grade-form-section").hidden = true;
-    teardownCqWizard();
-    const cs = document.getElementById("clarifying-section");
-    if (cs) { cs.hidden = true; }
 
     // Suppress the beforeunload "unsaved changes" prompt — the grade is
     // saved server-side; closing the panel is not a data-loss event.
@@ -2081,9 +2051,6 @@
 
     section.hidden = false;
     $("#grade-form-section").hidden = true;
-    teardownCqWizard();
-    const cs = document.getElementById("clarifying-section");
-    if (cs) { cs.hidden = true; }
     EA.AudioPlayer.attachAll(section);
     window.scrollTo({ top: 0, behavior: "smooth" });
 
@@ -2141,256 +2108,6 @@
     return '<ul class="bullet-list ' + className + '">' +
       items.map(function (s) { return '<li>' + EA.esc(s) + '</li>'; }).join("") +
       '</ul>';
-  }
-
-  // ── Clarifying-questions wizard ─────────────────────────────
-  // One question at a time, auto-advance on answer click. State lives in a
-  // closure — there is no persistent draft; each /api/grade response starts
-  // a fresh wizard. The server expects context_answers as
-  //   { cq_text: "user answer" | CQ_SKIPPED }
-  // Keys omitted from the payload mean "never asked / never answered" and
-  // are stored as NULL in cq_answer_value (vs. CQ_SKIPPED = explicit skip).
-  const CQ_SKIPPED = "__SKIPPED__";
-
-  function renderClarifyingScreen(interactionId, cqs) {
-    // cqs should be non-empty — the server auto-grades when there are no
-    // questions, so we shouldn't end up here with zero. Guard anyway.
-    if (!cqs || !cqs.length) {
-      submitAnswersAndGrade(interactionId, {});
-      return;
-    }
-
-    teardownCqWizard();  // belt-and-suspenders: drop any stale listener
-
-    const section = document.getElementById("clarifying-section");
-    const list    = document.getElementById("clarifying-list");
-    list.innerHTML = "";
-
-    // The wizard owns its own submit (auto-advance on last answer).
-    // Hide the legacy footer that held "Submit & Grade" + the missing-answer
-    // hint so neither competes with the wizard chrome.
-    const submitBtn = document.getElementById("btn-submit-answers");
-    if (submitBtn && submitBtn.parentElement) submitBtn.parentElement.hidden = true;
-    document.getElementById("clarifying-hint").textContent = "";
-
-    const wizard = createCqWizard(interactionId, cqs);
-    list.appendChild(wizard.element);
-    state.cqWizard = wizard;
-
-    $("#grade-form-section").hidden = true;
-    $("#grade-result-section").hidden = true;
-    section.hidden = false;
-    wizard.start();
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  function teardownCqWizard() {
-    if (state.cqWizard && typeof state.cqWizard.destroy === "function") {
-      try { state.cqWizard.destroy(); } catch (_) {}
-    }
-    state.cqWizard = null;
-  }
-
-  function createCqWizard(interactionId, questions) {
-    const root = document.createElement("div");
-    root.className = "cq-wizard";
-
-    let currentIdx = 0;
-    const answers = {};            // { cq_text: answer_value }
-    const skipped = new Set();     // Set<cq_text> — explicit skips
-    let keyHandler = null;
-    let submitting = false;
-
-    function destroy() {
-      if (keyHandler) {
-        document.removeEventListener("keydown", keyHandler);
-        keyHandler = null;
-      }
-    }
-
-    function buildPayload() {
-      const out = {};
-      questions.forEach(function (q) {
-        const text = q.question || q.cq_text || "";
-        if (!text) return;
-        if (skipped.has(text)) {
-          out[text] = CQ_SKIPPED;
-        } else if (Object.prototype.hasOwnProperty.call(answers, text)) {
-          out[text] = answers[text];
-        }
-        // Otherwise omit → server stores NULL (never answered).
-      });
-      return out;
-    }
-
-    async function finish() {
-      if (submitting) return;
-      submitting = true;
-      destroy();
-      await submitAnswersAndGrade(interactionId, buildPayload());
-    }
-
-    function advance() {
-      if (currentIdx >= questions.length - 1) {
-        finish();
-      } else {
-        currentIdx += 1;
-        renderCurrent();
-      }
-    }
-
-    function answer(text, value) {
-      answers[text] = value;
-      skipped.delete(text);
-      advance();
-    }
-
-    function skipCurrent() {
-      const q = questions[currentIdx];
-      const text = q.question || q.cq_text || "";
-      if (text) {
-        skipped.add(text);
-        delete answers[text];
-      }
-      advance();
-    }
-
-    async function skipAll() {
-      const ok = await EA.confirmDialog({
-        title: "Skip remaining questions?",
-        body:  "Skip all remaining follow-ups? The grade will be based on " +
-               "the transcript alone, without your context refinement.",
-        okLabel:     "Skip all and grade",
-        cancelLabel: "Continue answering",
-      });
-      if (!ok) return;
-      for (let i = currentIdx; i < questions.length; i++) {
-        const t = questions[i].question || questions[i].cq_text || "";
-        if (t) {
-          skipped.add(t);
-          delete answers[t];
-        }
-      }
-      finish();
-    }
-
-    function optionsForQuestion(q, fmt) {
-      if (fmt === "yes_no") return ["Yes", "No"];
-      if (fmt === "yes_no_unclear") return ["Yes", "No", "Unclear"];
-      if (fmt === "multiple_choice") {
-        let opts = q.options;
-        if (typeof opts === "string") {
-          try { opts = JSON.parse(opts); } catch (_) { opts = []; }
-        }
-        if (!Array.isArray(opts)) opts = [];
-        return opts.slice(0, 5);
-      }
-      // skip_only and legacy scale_1_10 → no buttons
-      return [];
-    }
-
-    function renderCurrent() {
-      const q = questions[currentIdx];
-      const fmt = String(q.format || q.cq_response_format || "yes_no").toLowerCase();
-      const text = q.question || q.cq_text || "";
-      const reason = q.reason || q.cq_ai_reason || "";
-      const total = questions.length;
-      const pct = Math.round(((currentIdx + 1) / total) * 100);
-      const opts = optionsForQuestion(q, fmt);
-
-      let optionsHtml;
-      if (!opts.length) {
-        optionsHtml =
-          '<div class="cq-wizard-noop muted text-small">' +
-            'No options to choose — use Skip to continue.' +
-          '</div>';
-      } else {
-        optionsHtml = opts.map(function (o, i) {
-          return (
-            '<button type="button" class="cq-wizard-option" data-value="' +
-              EA.esc(o) + '">' +
-              '<span class="cq-wizard-key">' + (i + 1) + '</span>' +
-              '<span class="cq-wizard-label">' + EA.esc(o) + '</span>' +
-            '</button>'
-          );
-        }).join("");
-      }
-
-      root.innerHTML =
-        '<div class="cq-wizard-header">' +
-          '<span class="cq-wizard-progress">Question ' + (currentIdx + 1) +
-            ' of ' + total + '</span>' +
-          '<button type="button" class="btn btn-ghost cq-wizard-skip-all" ' +
-            'title="Skip all remaining (Esc)">Skip all follow-ups</button>' +
-        '</div>' +
-        '<div class="cq-wizard-bar" role="progressbar" aria-valuemin="0" ' +
-          'aria-valuemax="100" aria-valuenow="' + pct + '">' +
-          '<div class="cq-wizard-bar-fill" style="width:' + pct + '%"></div>' +
-        '</div>' +
-        '<div class="cq-wizard-body">' +
-          '<div class="cq-wizard-text">' + EA.esc(text) + '</div>' +
-          (reason ? '<div class="cq-wizard-reason">' + EA.esc(reason) + '</div>' : '') +
-          '<div class="cq-wizard-options">' + optionsHtml + '</div>' +
-        '</div>' +
-        '<div class="cq-wizard-footer">' +
-          '<button type="button" class="btn btn-ghost cq-wizard-skip" ' +
-            'title="Skip this question (S)">Skip this question</button>' +
-        '</div>';
-
-      root.querySelectorAll(".cq-wizard-option").forEach(function (btn) {
-        btn.addEventListener("click", function () {
-          answer(text, btn.dataset.value);
-        });
-      });
-      root.querySelector(".cq-wizard-skip").addEventListener("click", skipCurrent);
-      root.querySelector(".cq-wizard-skip-all").addEventListener("click", skipAll);
-    }
-
-    function onKey(e) {
-      // Don't intercept while a confirm dialog is open — it has its own keys.
-      if (document.querySelector(".modal-backdrop")) return;
-      // Don't intercept while typing in an input/textarea/contentEditable.
-      const t = e.target;
-      const tag = t && t.tagName ? t.tagName.toLowerCase() : "";
-      if (tag === "input" || tag === "textarea" || (t && t.isContentEditable)) return;
-
-      if (e.key >= "1" && e.key <= "5") {
-        const idx = Number(e.key) - 1;
-        const btns = root.querySelectorAll(".cq-wizard-option");
-        if (btns[idx]) { e.preventDefault(); btns[idx].click(); }
-      } else if (e.key === "s" || e.key === "S") {
-        e.preventDefault();
-        skipCurrent();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        skipAll();
-      }
-    }
-
-    return {
-      element: root,
-      start: function () {
-        renderCurrent();
-        keyHandler = onKey;
-        document.addEventListener("keydown", keyHandler);
-      },
-      destroy: destroy,
-    };
-  }
-
-  async function submitAnswersAndGrade(interactionId, answers) {
-    const overlay = EA.showOverlay("Grading call…");
-    try {
-      const result = await EA.fetchJSON(
-        "/api/interactions/" + encodeURIComponent(interactionId) + "/regrade",
-        { method: "POST", body: { context_answers: answers || {} } }
-      );
-      overlay.close();
-      openGradeResultPanel(result.interaction_id);
-    } catch (err) {
-      overlay.close();
-      EA.toast(err.message || "Grading failed", "error");
-    }
   }
 
   // ── Respondent inline edit ─────────────────────────
@@ -2610,13 +2327,6 @@
     window.gradeComplete = false;
     $("#grade-result-section").hidden = true;
     $("#grade-result-section").innerHTML = "";
-    teardownCqWizard();
-    const cs = document.getElementById("clarifying-section");
-    if (cs) {
-      cs.hidden = true;
-      document.getElementById("clarifying-list").innerHTML = "";
-      document.getElementById("clarifying-hint").textContent = "";
-    }
     $("#grade-form-section").hidden = false;
     $("#grade-form").reset();
     clearAudioFile();
