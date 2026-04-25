@@ -227,6 +227,14 @@
     .grade-fields-row { grid-template-columns: 1fr; }
   }
 
+  /* Detail mode steals 480-560px from the right column, so the 4-field row
+     gets cramped (Date overflows, Campaign label clips) at any reasonable
+     viewport. Force 2-col whenever detail mode is active — applies on top
+     of the viewport breakpoints above. */
+  .grade-split.detail-mode .grade-fields-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
   /* Render-on-demand project field — collapses smoothly when hidden. */
   .project-row {
     display: grid;
