@@ -504,6 +504,13 @@
   .grade-split.detail-mode {
     grid-template-columns: 560px 1fr;
   }
+  /* Legacy mode (split-pane toggle OFF): hide queue pane, form takes full width. */
+  .grade-split.legacy-mode {
+    grid-template-columns: 1fr;
+  }
+  .grade-split.legacy-mode #gj-pane {
+    display: none;
+  }
   /* CSS-Grid items default to min-width: auto (= min-content), which lets
      the form column grow past the viewport when selects have long option
      text. min-width: 0 lets the column honor its 1fr allotment. */
@@ -996,9 +1003,14 @@
     const recordAudio = document.getElementById("record-audio");
     if (recordAudio) EA.AudioPlayer.enhance(recordAudio);
 
-    // C4a: split-pane left (grade jobs queue). Layout is mounted unconditionally;
-    // submit handler still posts to /api/grade in C4a (queue stays empty until C4b).
-    wireGradeJobsQueue();
+    // Layout + queue polling only when split-pane mode is active. Legacy mode
+    // collapses the .grade-split shell to a single column via CSS and skips
+    // queue polling entirely.
+    if (isSplitPaneMode()) {
+      wireGradeJobsQueue();
+    } else {
+      document.querySelector(".grade-split").classList.add("legacy-mode");
+    }
   }
 
   async function applyLockedProject(projectId) {
