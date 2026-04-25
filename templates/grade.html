@@ -488,6 +488,13 @@
     grid-template-columns: 300px 1fr;
     gap: 24px;
     align-items: start;
+    transition: grid-template-columns 200ms ease;
+  }
+  /* Detail mode — pane widens to give InteractionView room to breathe.
+     Form on the right wraps via existing min-width:0 + .grade-fields-row
+     responsive grid; nothing extra needed here. */
+  .grade-split.detail-mode {
+    grid-template-columns: 560px 1fr;
   }
   /* CSS-Grid items default to min-width: auto (= min-content), which lets
      the form column grow past the viewport when selects have long option
@@ -575,17 +582,30 @@
   .gj-pill.graded       { background: var(--success-bg);  color: var(--success); }
   .gj-pill.failed       { background: var(--danger-bg);   color: var(--danger); cursor: help; }
 
+  /* Detail view (replaces queue list when a graded row is clicked). */
+  .gj-detail-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 10px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .gj-detail-close {
+    background: none; border: none; cursor: pointer;
+    color: var(--muted); font-size: 1.2rem; line-height: 1; padding: 2px 8px;
+  }
+  .gj-detail-close:hover { color: var(--text); }
+
   /* Medium viewports: shrink queue + tighten gap so the form gets back
      enough room for the 4-field row. */
   @media (max-width: 1300px) {
-    .grade-split {
-      grid-template-columns: 240px 1fr;
-      gap: 16px;
-    }
+    .grade-split { grid-template-columns: 240px 1fr; gap: 16px; }
+    .grade-split.detail-mode { grid-template-columns: 480px 1fr; }
   }
   /* Mobile: stack queue above form, drop scroll cap. */
   @media (max-width: 960px) {
-    .grade-split { grid-template-columns: 1fr; }
+    .grade-split,
+    .grade-split.detail-mode { grid-template-columns: 1fr; }
     .gj-pane { max-height: none; }
   }
 </style>
@@ -601,17 +621,28 @@
 
 <div class="grade-split">
 
-  {# ── LEFT pane: queue (clicks open detail modal) ─────────── #}
+  {# ── LEFT pane: queue + inline detail view ────────────────
+     Default: queue list visible. Click a graded row → pane widens
+     to 560px, queue swaps for EA.InteractionView mount. Back/× returns. #}
   <aside id="gj-pane" class="gj-pane">
-    <div class="gj-pane-header">
-      <span class="gj-pane-title">Grading queue</span>
-      <span class="gj-pane-subtitle muted text-small" id="gj-pane-subtitle">—</span>
-    </div>
-    <div id="gj-queue-list" class="gj-queue-list" aria-live="polite">
-      <div class="empty-state" style="padding:18px;">
-        Submitted calls will appear here for grading.<br>
-        Keep recording on the right →
+    <div id="gj-queue-view">
+      <div class="gj-pane-header">
+        <span class="gj-pane-title">Grading queue</span>
+        <span class="gj-pane-subtitle muted text-small" id="gj-pane-subtitle">—</span>
       </div>
+      <div id="gj-queue-list" class="gj-queue-list" aria-live="polite">
+        <div class="empty-state" style="padding:18px;">
+          Submitted calls will appear here for grading.<br>
+          Keep recording on the right →
+        </div>
+      </div>
+    </div>
+    <div id="gj-detail-view" hidden>
+      <div class="gj-detail-header">
+        <button type="button" class="btn btn-ghost btn-sm" id="gj-back">← Back to queue</button>
+        <button type="button" class="gj-detail-close" id="gj-close" title="Close" aria-label="Close detail view">×</button>
+      </div>
+      <div id="gj-detail-host"></div>
     </div>
   </aside>
 
@@ -3092,18 +3123,23 @@
   // ── Grade jobs queue (split-pane left) ─────────────────────
   //
   // Polls /api/grade-jobs on a 5s active / 30s idle cadence. Renders one
-  // queue row per non-dismissed job. Click a graded row to open its
-  // interaction in EA.InteractionPanel (modal). Failed rows expose Retry;
-  // any row exposes Dismiss.
+  // queue row per non-dismissed job. Click a graded row to swap the pane
+  // for an inline EA.InteractionView (pane widens to 560px to fit). Back
+  // button returns to the queue list. Failed rows expose Retry; any row
+  // exposes Dismiss. Polling continues silently while detail view is
+  // mounted — when the user clicks Back, the queue reflects the latest
+  // state.
 
   const QUEUE_POLL_ACTIVE_MS = 5000;
   const QUEUE_POLL_IDLE_MS   = 30000;
 
   const queueState = {
-    jobs:      [],     // most recent first; shape from GET /api/grade-jobs
-    pollMs:    QUEUE_POLL_IDLE_MS,
-    pollTimer: null,
-    loadSeq:   0,      // race guard for overlapping polls
+    jobs:          [],     // most recent first; shape from GET /api/grade-jobs
+    pollMs:        QUEUE_POLL_IDLE_MS,
+    pollTimer:     null,
+    loadSeq:       0,      // race guard for overlapping polls
+    detailJobId:   null,   // grade_job_id currently mounted in detail view (null = queue mode)
+    detailLoadSeq: 0,      // race guard for detail mount
   };
 
   function gjEl(sel) { return document.querySelector(sel); }
@@ -3245,7 +3281,45 @@
     // will flip them in a few seconds). Failed rows: error surfaces via the
     // FAILED pill button, not the row click.
     if (job.gj_status === "graded" && job.interaction_id) {
-      EA.InteractionPanel.open(job.interaction_id);
+      enterDetailMode(job);
+    }
+  }
+
+  function enterDetailMode(job) {
+    queueState.detailJobId = job.grade_job_id;
+    document.querySelector(".grade-split").classList.add("detail-mode");
+    gjEl("#gj-queue-view").hidden = true;
+    gjEl("#gj-detail-view").hidden = false;
+    // Scroll the pane to top in case the user had scrolled the queue.
+    gjEl("#gj-pane").scrollTop = 0;
+    mountInteractionDetail(job.interaction_id);
+  }
+
+  function exitDetailMode() {
+    queueState.detailJobId = null;
+    document.querySelector(".grade-split").classList.remove("detail-mode");
+    gjEl("#gj-detail-view").hidden = true;
+    gjEl("#gj-queue-view").hidden = false;
+    // Re-render in case poll updates arrived silently while in detail mode.
+    renderGradeJobsQueue();
+  }
+
+  async function mountInteractionDetail(interactionId) {
+    const host = gjEl("#gj-detail-host");
+    if (!host) return;
+    const seq = ++queueState.detailLoadSeq;
+    host.innerHTML =
+      '<div class="skeleton" style="height:24px;margin:8px 0;"></div>' +
+      '<div class="skeleton" style="height:120px;margin:8px 0;"></div>' +
+      '<div class="skeleton" style="height:80px;margin:8px 0;"></div>';
+    try {
+      const data = await EA.fetchJSON("/api/interactions/" + encodeURIComponent(interactionId));
+      if (seq !== queueState.detailLoadSeq) return;
+      EA.InteractionView.render(host, data, { readOnly: true });
+      EA.AudioPlayer.attachAll(host);
+    } catch (err) {
+      if (seq !== queueState.detailLoadSeq) return;
+      EA.showError(host, err.message || "Failed to load interaction.");
     }
   }
 
@@ -3313,6 +3387,10 @@
   }
 
   function wireGradeJobsQueue() {
+    const back  = gjEl("#gj-back");
+    const close = gjEl("#gj-close");
+    if (back)  back.addEventListener("click", exitDetailMode);
+    if (close) close.addEventListener("click", exitDetailMode);
     document.addEventListener("visibilitychange", onQueueVisibilityChange);
 
     // Initial load + start polling.
