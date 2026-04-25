@@ -15,9 +15,6 @@
       Add reviewer context
     </button>
     {% endif %}
-    {% if user_role in ('admin','super_admin') %}
-    <button type="button" class="btn btn-ghost btn-sm" id="btn-delete">Remove</button>
-    {% endif %}
   </div>
 </div>
 
@@ -74,9 +71,6 @@
 
   // ── Actions ────────────────────────────────────────
   function wireActions() {
-    const btnDelete = document.getElementById("btn-delete");
-    if (btnDelete) btnDelete.addEventListener("click", onDelete);
-
     const btnToggle = document.getElementById("btn-toggle-context");
     if (btnToggle) btnToggle.addEventListener("click", function () {
       const panel = document.getElementById("context-panel");
@@ -100,24 +94,6 @@
         },
       });
     });
-  }
-
-  async function onDelete() {
-    const ok = await EA.confirmDialog({
-      title: "Remove interaction?",
-      body:  "This removes interaction #" + INTERACTION_ID + " from the list.",
-      okLabel: "Remove",
-      cancelLabel: "Cancel",
-      variant: "danger",
-    });
-    if (!ok) return;
-    try {
-      await EA.fetchJSON("/api/interactions/" + INTERACTION_ID, { method: "DELETE" });
-      EA.toast("Interaction removed.", "success");
-      setTimeout(function () { window.location.href = "/app/history"; }, 600);
-    } catch (err) {
-      EA.toast(err.message || "Remove failed", "error");
-    }
   }
 
   async function onContextRegrade() {

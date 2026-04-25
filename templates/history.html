@@ -393,7 +393,10 @@
     wrap.querySelectorAll(".action-delete").forEach(function (btn) {
       btn.addEventListener("click", function (e) {
         e.stopPropagation();
-        onDelete(btn.dataset.iid);
+        // Hard-delete via the strong-confirm flow. The window-level
+        // ea:interaction-deleted listener (init) drops the row from
+        // local state on success — no manual cleanup here.
+        EA.hardDeleteInteractionFlow(Number(btn.dataset.iid));
       });
     });
     wrap.querySelectorAll(".action-view").forEach(function (a) {
@@ -458,30 +461,6 @@
         '<td style="text-align:right; white-space:nowrap;">' + actions + '</td>' +
       '</tr>'
     );
-  }
-
-  // ── Delete ───────────────────────────────────────────
-  async function onDelete(interactionId) {
-    const ok = await EA.confirmDialog({
-      title:   "Remove interaction?",
-      body:    "This removes interaction #" + interactionId + " from the list.",
-      okLabel: "Remove",
-      cancelLabel: "Cancel",
-      variant: "danger",
-    });
-    if (!ok) return;
-    try {
-      await EA.fetchJSON("/api/interactions/" + encodeURIComponent(interactionId), {
-        method: "DELETE",
-      });
-      // Remove from local state and re-render without re-fetching
-      state.all = state.all.filter(function (r) { return r.interaction_id !== Number(interactionId); });
-      state.shown = Math.min(state.shown, state.all.length);
-      render();
-      EA.toast("Interaction removed.", "success");
-    } catch (err) {
-      EA.toast(err.message || "Remove failed", "error");
-    }
   }
 
   // ── Export ──────────────────────────────────────────

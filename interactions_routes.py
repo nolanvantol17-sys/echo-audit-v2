@@ -27,7 +27,7 @@ from flask_login import current_user, login_required
 import grader
 import pdf_export
 from audit_log import (
-    ACTION_DELETED, ACTION_EXPORTED, ACTION_GRADED, ACTION_REGRADED,
+    ACTION_EXPORTED, ACTION_GRADED, ACTION_REGRADED,
     ACTION_SUBMITTED, ENTITY_INTERACTION, write_audit_log,
 )
 from auth import role_required
@@ -1604,44 +1604,6 @@ def get_audio(interaction_id):
 # ═══════════════════════════════════════════════════════════════
 
 
-@interactions_bp.route("/interactions/<int:interaction_id>", methods=["DELETE"])
-@login_required
-@role_required("admin", "super_admin")
-def delete_interaction(interaction_id):
-    company_id, err = _require_company()
-    if err: return err
-
-    conn = get_conn()
-    try:
-        interaction = _get_interaction_in_company(conn, interaction_id, company_id)
-        if not interaction or interaction["interaction_deleted_at"] is not None:
-            return _err("Interaction not found", 404)
-
-        if IS_POSTGRES:
-            conn.execute(
-                "UPDATE interactions SET interaction_deleted_at = NOW() "
-                "WHERE interaction_id = %s",
-                (interaction_id,),
-            )
-        else:
-            conn.execute(
-                "UPDATE interactions SET interaction_deleted_at = CURRENT_TIMESTAMP "
-                "WHERE interaction_id = ?",
-                (interaction_id,),
-            )
-        write_audit_log(
-            current_user.user_id, ACTION_DELETED, ENTITY_INTERACTION,
-            interaction_id, conn=conn,
-        )
-        conn.commit()
-        return jsonify({"ok": True})
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-
 # ═══════════════════════════════════════════════════════════════
 # Hard-delete — irreversibly removes an interaction and all
 # children (rubric scores, clarifying questions, audio, audit_log
@@ -1649,6 +1611,9 @@ def delete_interaction(interaction_id):
 #
 # admin: own-tenant only.
 # super_admin: cross-tenant allowed.
+#
+# (Soft-delete endpoint was removed — frontend "Remove" actions all
+# route through DELETE /interactions/<id>/hard now.)
 # ═══════════════════════════════════════════════════════════════
 
 
