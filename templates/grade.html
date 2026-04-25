@@ -313,101 +313,62 @@
     margin-top: 12px;
   }
 
-  /* ── Location notes pad — yellow post-it, fixed bottom-right ──
-     Yellow palette: bg=yellow-100 (#fef9c3), border=yellow-300 (#fde047),
-     header strip=yellow-200 (#fde68a), text=yellow-900 (#422006). */
-  .loc-notes-pad {
-    position: fixed;
-    left: 24px;
-    top: 200px;            /* Default; JS may override; user drag mutates */
-    width: 300px;
-    max-height: 460px;
-    background: #fef9c3;
-    border: 1px solid #fde047;
-    border-radius: 6px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.18);
-    color: #422006;
-    font-size: 0.86rem;
-    z-index: 100;
-    display: flex;
-    flex-direction: column;
-    animation: loc-notes-slide-in 200ms ease-out;
+  /* ── Notes / audio 2-col layout below the form fields row ─── */
+  .grade-notes-audio {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+    margin-top: 14px;
   }
-  .loc-notes-pad[hidden] { display: none !important; }
-  @keyframes loc-notes-slide-in {
-    from { transform: translateX(-20px); opacity: 0; }
-    to   { transform: translateX(0);     opacity: 1; }
+  @media (max-width: 960px) {
+    .grade-notes-audio { grid-template-columns: 1fr; }
+  }
+
+  /* ── Inline location-notes panel (replaces the floating post-it) ── */
+  .loc-notes-panel {
+    display: flex; flex-direction: column;
+    max-height: 420px;
+    padding: 14px 16px;
   }
   .loc-notes-header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 8px 12px;
-    background: #fde68a;
-    border-bottom: 1px solid #fde047;
-    border-radius: 6px 6px 0 0;
-    cursor: move;          /* drag handle for repositioning */
-    user-select: none;     /* prevent text selection while dragging */
+    padding-bottom: 10px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
   }
   .loc-notes-title {
-    font-weight: 600; font-size: 0.84rem;
+    font-weight: 600; font-size: 0.92rem; color: var(--text);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     flex: 1; min-width: 0;
   }
-  .loc-notes-close,
-  .loc-notes-minimize {
-    background: none; border: none; cursor: pointer;
-    font-size: 1.2rem; line-height: 1;
-    color: #713f12; padding: 0 4px;
-  }
-  .loc-notes-minimize { margin-left: 8px; }
-  .loc-notes-close    { margin-left: 4px; }
-  .loc-notes-close:hover,
-  .loc-notes-minimize:hover { color: #422006; }
+  .loc-notes-body { overflow-y: auto; flex: 1; }
 
-  /* Minimized icon — small yellow square with note count. Drag-compatible. */
-  .loc-notes-icon {
-    position: fixed;
-    left: 24px;
-    top: 200px;            /* mirrors pad's verticalOffset */
-    width: 40px;
-    height: 40px;
-    background: #fef9c3;
-    border: 1px solid #fde047;
-    border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.18);
-    color: #422006;
-    cursor: pointer;
-    z-index: 100;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 600;
-    font-size: 0.95rem;
-    font-family: inherit;
-    padding: 0;
-  }
-  .loc-notes-icon[hidden] { display: none !important; }
-  .loc-notes-icon:hover { background: #fde68a; }
-  .loc-notes-body {
-    padding: 10px 12px; overflow-y: auto; flex: 1;
-  }
   .loc-notes-add-btn {
-    background: none; border: 1px dashed #ca8a04;
-    color: #713f12; width: 100%;
+    background: none;
+    border: 1px dashed var(--border-strong);
+    color: var(--muted);
+    width: 100%;
     padding: 6px 10px; border-radius: 4px;
     cursor: pointer; font-size: 0.84rem;
+    transition: color 80ms, border-color 80ms, background 80ms;
   }
-  .loc-notes-add-btn:hover { background: rgba(234,179,8,0.10); }
+  .loc-notes-add-btn:hover {
+    color: var(--text);
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
   .loc-notes-add-form {
     margin-bottom: 10px;
     padding-bottom: 10px;
-    border-bottom: 1px dashed rgba(202,138,4,0.4);
+    border-bottom: 1px solid var(--border);
   }
   .loc-notes-add-form textarea,
   .loc-note-edit-text {
     width: 100%;
-    border: 1px solid #fde047;
-    background: #fffbeb;
-    color: #422006;
+    border: 1px solid var(--border-strong);
+    background: var(--surface-2);
+    color: var(--text);
     border-radius: 4px;
     padding: 6px 8px;
     font: inherit;
@@ -417,7 +378,7 @@
   }
   .loc-notes-add-form textarea:focus,
   .loc-note-edit-text:focus {
-    outline: 2px solid #facc15;
+    outline: 2px solid var(--accent);
     outline-offset: -1px;
   }
   .loc-notes-add-meta,
@@ -425,8 +386,8 @@
     display: flex; align-items: center; justify-content: space-between;
     margin-top: 6px;
   }
-  .loc-notes-counter { font-size: 0.74rem; color: #713f12; }
-  .loc-notes-counter.warn { color: #c2410c; }
+  .loc-notes-counter { font-size: 0.74rem; color: var(--muted); }
+  .loc-notes-counter.warn { color: var(--warning); }
   .loc-notes-add-actions, .loc-note-edit-actions {
     display: flex; gap: 6px;
   }
@@ -435,14 +396,14 @@
     margin-top: 8px;
   }
   .loc-notes-empty {
-    text-align: center; color: #713f12;
+    text-align: center; color: var(--muted);
     font-style: italic;
     padding: 20px 4px 12px;
     font-size: 0.84rem;
   }
   .loc-note {
-    background: rgba(255,255,255,0.40);
-    border: 1px solid rgba(202,138,4,0.20);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
     border-radius: 4px;
     padding: 8px 10px;
   }
@@ -452,10 +413,11 @@
     margin-bottom: 4px;
     font-size: 0.86rem;
     line-height: 1.4;
+    color: var(--text);
   }
   .loc-note-meta {
     display: flex; align-items: center; justify-content: space-between;
-    font-size: 0.72rem; color: #713f12;
+    font-size: 0.72rem; color: var(--muted);
     gap: 8px;
   }
   .loc-note-edited::after {
@@ -473,22 +435,12 @@
   .loc-note:focus-within .loc-note-actions { opacity: 1; }
   .loc-note-edit, .loc-note-delete {
     background: none; border: none; cursor: pointer;
-    color: #713f12;
+    color: var(--muted);
     font-size: 0.9rem;
     padding: 0 3px;
     line-height: 1;
   }
-  .loc-note-edit:hover, .loc-note-delete:hover { color: #422006; }
-
-  /* Mobile: stretch pad to viewport, suppress drag affordance, reposition icon. */
-  @media (max-width: 520px) {
-    .loc-notes-pad {
-      left: 12px; right: 12px; top: 12px;
-      bottom: auto; width: auto; max-width: none;
-    }
-    .loc-notes-header { cursor: default; }
-    .loc-notes-icon   { left: 12px; top: 12px; }
-  }
+  .loc-note-edit:hover, .loc-note-delete:hover { color: var(--text); }
 
   /* ── Split-pane layout (left=queue, right=form) ─────────── */
   .grade-split {
@@ -707,93 +659,128 @@
       </div>
     </div>
 
-    {# Primary audio surface: Record Live (when MediaRecorder available)
-       — Upload + VoIP demoted to text links below. #}
-    <div id="panel-record" hidden>
-      <div class="record-wrap" id="record-wrap">
-        <div id="record-permission-error" class="section-error" hidden></div>
+    {# ── 2-col layout: notes (left) + audio source surface (right) ── #}
+    <div class="grade-notes-audio">
 
-        <div id="record-idle" class="record-panel">
-          <div class="record-action-row">
-            <button type="button" id="btn-record-start" class="btn btn-danger record-btn">
-              <span class="record-icon"></span>
-              Start Recording
-            </button>
-            <button type="button" class="btn btn-ghost" id="btn-no-answer-record">Log Unanswered Call</button>
+      {# LEFT: inline location-notes panel (replaces the floating post-it). #}
+      <section id="loc-notes-panel" class="panel loc-notes-panel">
+        <div class="loc-notes-header">
+          <span class="loc-notes-title">Notes — <span id="loc-notes-loc-name">—</span></span>
+        </div>
+        <div class="loc-notes-body">
+          <div class="loc-notes-add-row" id="loc-notes-add-row" hidden>
+            <button type="button" class="loc-notes-add-btn" id="loc-notes-add-btn">+ Add note</button>
           </div>
-          <div class="muted text-small" style="margin-top:10px; text-align:center;">
-            Records from your device microphone. You'll be asked to grant permission.
+          <div class="loc-notes-add-form" id="loc-notes-add-form" hidden>
+            <textarea id="loc-notes-add-text" maxlength="500" rows="3"
+                      placeholder="What should the next caller know?"></textarea>
+            <div class="loc-notes-add-meta">
+              <span class="loc-notes-counter" id="loc-notes-counter">0 / 500</span>
+              <div class="loc-notes-add-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="loc-notes-add-cancel">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" id="loc-notes-add-save" disabled>Save</button>
+              </div>
+            </div>
+          </div>
+          <div class="loc-notes-list" id="loc-notes-list">
+            <div class="loc-notes-empty">Pick a location to see notes.</div>
+          </div>
+        </div>
+      </section>
+
+      {# RIGHT: audio source surface (record / upload / voip + source links + intel + hint). #}
+      <div class="grade-audio-col">
+
+        {# Primary audio surface: Record Live (when MediaRecorder available)
+           — Upload + VoIP demoted to text links below. #}
+        <div id="panel-record" hidden>
+          <div class="record-wrap" id="record-wrap">
+            <div id="record-permission-error" class="section-error" hidden></div>
+
+            <div id="record-idle" class="record-panel">
+              <div class="record-action-row">
+                <button type="button" id="btn-record-start" class="btn btn-danger record-btn">
+                  <span class="record-icon"></span>
+                  Start Recording
+                </button>
+                <button type="button" class="btn btn-ghost" id="btn-no-answer-record">Log Unanswered Call</button>
+              </div>
+              <div class="muted text-small" style="margin-top:10px; text-align:center;">
+                Records from your device microphone. You'll be asked to grant permission.
+              </div>
+            </div>
+
+            <div id="record-active" class="record-panel" hidden>
+              <div class="record-indicator">
+                <span class="record-pulse"></span>
+                Recording
+              </div>
+              <div id="record-timer" class="record-timer">0:00</div>
+              <button type="button" id="btn-record-stop" class="btn btn-primary record-btn">
+                Stop Recording
+              </button>
+            </div>
+
+            <div id="record-preview" class="record-panel" hidden style="width:100%;max-width:420px;">
+              <audio id="record-audio" class="app-audio" controls></audio>
+              <div id="record-duration" class="muted text-small" style="margin-top:6px;text-align:center;"></div>
+              <div class="hstack-wrap" style="margin-top:12px;justify-content:center;">
+                <button type="button" class="btn btn-ghost btn-sm" id="btn-record-redo">Re-record</button>
+                <button type="button" class="btn btn-ghost btn-sm btn-record-use" id="btn-record-use">Use This Recording</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="btn-no-answer-record-preview">Log Unanswered Call</button>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div id="record-active" class="record-panel" hidden>
-          <div class="record-indicator">
-            <span class="record-pulse"></span>
-            Recording
-          </div>
-          <div id="record-timer" class="record-timer">0:00</div>
-          <button type="button" id="btn-record-stop" class="btn btn-primary record-btn">
-            Stop Recording
-          </button>
-        </div>
-
-        <div id="record-preview" class="record-panel" hidden style="width:100%;max-width:420px;">
-          <audio id="record-audio" class="app-audio" controls></audio>
-          <div id="record-duration" class="muted text-small" style="margin-top:6px;text-align:center;"></div>
-          <div class="hstack-wrap" style="margin-top:12px;justify-content:center;">
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-record-redo">Re-record</button>
-            <button type="button" class="btn btn-ghost btn-sm btn-record-use" id="btn-record-use">Use This Recording</button>
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-no-answer-record-preview">Log Unanswered Call</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div id="panel-upload" hidden>
-      <label class="dropzone" id="dropzone" for="audio-file">
-        <div id="dropzone-placeholder">
-          <div>Drop an audio file here or click to browse.</div>
-          <div class="dropzone-meta">
-            Accepts .mp3, .mp4, .m4a, .wav, .aac, .ogg, .flac, .webm
+        <div id="panel-upload" hidden>
+          <label class="dropzone" id="dropzone" for="audio-file">
+            <div id="dropzone-placeholder">
+              <div>Drop an audio file here or click to browse.</div>
+              <div class="dropzone-meta">
+                Accepts .mp3, .mp4, .m4a, .wav, .aac, .ogg, .flac, .webm
+              </div>
+            </div>
+            <div id="dropzone-filled" hidden>
+              <div class="dropzone-filename" id="dz-filename"></div>
+              <div class="dropzone-meta" id="dz-meta"></div>
+              <button type="button" class="btn btn-ghost btn-sm" id="dz-clear" style="margin-top:8px;">Remove</button>
+            </div>
+          </label>
+          <input id="audio-file" name="audio" type="file"
+                 accept=".mp3,.mp4,.m4a,.wav,.aac,.ogg,.flac,.webm" hidden>
+          <div class="panel-action-row">
+            <button type="button" class="btn btn-primary" id="btn-upload-submit" hidden>Submit for grading</button>
+            <button type="button" class="btn btn-ghost" id="btn-no-answer-upload">Log Unanswered Call</button>
           </div>
         </div>
-        <div id="dropzone-filled" hidden>
-          <div class="dropzone-filename" id="dz-filename"></div>
-          <div class="dropzone-meta" id="dz-meta"></div>
-          <button type="button" class="btn btn-ghost btn-sm" id="dz-clear" style="margin-top:8px;">Remove</button>
+
+        <div id="panel-voip" hidden>
+          <div id="voip-queue-wrap">
+            <div class="skeleton" style="height:16px;margin:10px 0;"></div>
+            <div class="skeleton" style="height:16px;margin:10px 0;"></div>
+            <div class="skeleton" style="height:16px;margin:10px 0;"></div>
+          </div>
+          <input type="hidden" id="voip-queue-id">
+          <div class="panel-action-row">
+            <button type="button" class="btn btn-primary" id="btn-voip-submit" hidden>Submit for grading</button>
+          </div>
         </div>
-      </label>
-      <input id="audio-file" name="audio" type="file"
-             accept=".mp3,.mp4,.m4a,.wav,.aac,.ogg,.flac,.webm" hidden>
-      <div class="panel-action-row">
-        <button type="button" class="btn btn-primary" id="btn-upload-submit" hidden>Submit for grading</button>
-        <button type="button" class="btn btn-ghost" id="btn-no-answer-upload">Log Unanswered Call</button>
-      </div>
-    </div>
 
-    <div id="panel-voip" hidden>
-      <div id="voip-queue-wrap">
-        <div class="skeleton" style="height:16px;margin:10px 0;"></div>
-        <div class="skeleton" style="height:16px;margin:10px 0;"></div>
-        <div class="skeleton" style="height:16px;margin:10px 0;"></div>
-      </div>
-      <input type="hidden" id="voip-queue-id">
-      <div class="panel-action-row">
-        <button type="button" class="btn btn-primary" id="btn-voip-submit" hidden>Submit for grading</button>
-      </div>
-    </div>
+        {# Secondary audio source links — built dynamically by renderSourceLinks().
+           Shows "Or: <other source> · <other source>". Active source is omitted. #}
+        <div id="source-links" class="source-links" hidden></div>
 
-    {# Secondary audio source links — built dynamically by renderSourceLinks().
-       Shows "Or: <other source> · <other source>". Active source is omitted. #}
-    <div id="source-links" class="source-links" hidden></div>
+        {# Property intel card — compact-by-default. Empty / loading states
+           collapse to a single muted line; the full card expands when data exists. #}
+        <div id="location-intel-card" class="intel-card compact" hidden></div>
 
-    {# Property intel card — compact-by-default. Empty / loading states
-       collapse to a single muted line; the full card expands when data exists. #}
-    <div id="location-intel-card" class="intel-card compact" hidden></div>
+        <div class="hstack-wrap" style="margin-top:20px;justify-content:center;">
+          <span class="text-small muted" id="form-hint"></span>
+        </div>
 
-    <div class="hstack-wrap" style="margin-top:20px;justify-content:center;">
-      <span class="text-small muted" id="form-hint"></span>
-    </div>
+      </div>{# /.grade-audio-col #}
+    </div>{# /.grade-notes-audio #}
   </form>
 </section>
 
@@ -802,41 +789,6 @@
 
   </div>{# /.grade-right #}
 </div>{# /.grade-split #}
-
-{# ── Location notes pad — yellow post-it, fixed bottom-right.
-     Mounted at body-level so position:fixed is relative to viewport.
-     Hidden until a location is selected and the pad isn't user-dismissed. #}
-<aside id="location-notes-pad" class="loc-notes-pad" hidden>
-  <div class="loc-notes-header">
-    <span class="loc-notes-title">Notes — <span id="loc-notes-loc-name">…</span></span>
-    <button type="button" class="loc-notes-minimize" id="loc-notes-minimize" title="Minimize">—</button>
-    <button type="button" class="loc-notes-close"    id="loc-notes-close"    title="Close">×</button>
-  </div>
-  <div class="loc-notes-body">
-    <div class="loc-notes-add-row" id="loc-notes-add-row">
-      <button type="button" class="loc-notes-add-btn" id="loc-notes-add-btn">+ Add note</button>
-    </div>
-    <div class="loc-notes-add-form" id="loc-notes-add-form" hidden>
-      <textarea id="loc-notes-add-text" maxlength="500" rows="3"
-                placeholder="What should the next caller know?"></textarea>
-      <div class="loc-notes-add-meta">
-        <span class="loc-notes-counter" id="loc-notes-counter">0 / 500</span>
-        <div class="loc-notes-add-actions">
-          <button type="button" class="btn btn-ghost btn-sm" id="loc-notes-add-cancel">Cancel</button>
-          <button type="button" class="btn btn-primary btn-sm" id="loc-notes-add-save" disabled>Save</button>
-        </div>
-      </div>
-    </div>
-    <div class="loc-notes-list" id="loc-notes-list"></div>
-  </div>
-</aside>
-
-{# ── Minimized notes icon — small yellow square with note count.
-     Lives at body-level (sibling to pad). Click to restore; drag to reposition. #}
-<button type="button" id="loc-notes-icon" class="loc-notes-icon" hidden
-        title="Show notes" aria-label="Show notes">
-  <span id="loc-notes-icon-count">0</span>
-</button>
 
 {% endblock %}
 
@@ -885,17 +837,12 @@
     recordingConfirmed:   false,   // two-click morph: 1st click confirms preview, 2nd click submits
   };
 
-  // Location notes — per-page-load state for the post-it pad.
-  // dismissed flag resets on every location change so the pad reappears;
-  // minimized + verticalOffset are sticky preferences within the session.
+  // Location notes — per-page-load state for the inline notes panel.
   const notesState = {
-    notesByLocation: {},  // {location_id: [note, ...]}
-    dismissed:       false,
+    notesByLocation: {},   // {location_id: [note, ...]}
     currentLocId:    null,
-    loadSeq:         0,   // race guard for rapid location switches
+    loadSeq:         0,    // race guard for rapid location switches
     editingNoteId:   null, // null = no edit; <id> = inline editing this note
-    minimized:       false, // true → show icon instead of pad
-    verticalOffset:  200,  // pixels from viewport top; mutated by drag
   };
 
   const $ = function (sel) { return document.querySelector(sel); };
@@ -1617,7 +1564,7 @@
     // Location change — update phone + re-filter projects
     $("#gf-location").addEventListener("change", onLocationChange);
     $("#gf-project").addEventListener("change", onProjectChange);
-    wireNotesPad();
+    wireNotesPanel();
 
     // Dropzone: <label for="audio-file"> natively forwards clicks to the input —
     // don't also call fi.click() from JS, that causes Chrome to open-and-immediately-
@@ -2735,52 +2682,34 @@
   // is selected. CRUD via /api/locations/<id>/notes + /api/location-notes/<id>.
   // ════════════════════════════════════════════════════════════
 
-  function getNotesPad() { return document.getElementById("location-notes-pad"); }
-
   function isAdmin() {
     const role = (window.EA_USER && window.EA_USER.role) || "";
     return role === "admin" || role === "super_admin";
   }
 
   async function loadLocationNotes(locId) {
-    const pad  = getNotesPad();
-    const icon = document.getElementById("loc-notes-icon");
-    if (!pad) return;
+    const titleEl = document.getElementById("loc-notes-loc-name");
+    const list    = document.getElementById("loc-notes-list");
+    const addRow  = document.getElementById("loc-notes-add-row");
+    if (!titleEl || !list) return;
     if (!locId) {
-      pad.hidden = true;
-      if (icon) icon.hidden = true;
+      titleEl.textContent = "—";
+      if (addRow) addRow.hidden = true;
+      closeAddForm();
+      list.innerHTML = '<div class="loc-notes-empty">Pick a location to see notes.</div>';
       notesState.currentLocId = null;
       return;
     }
-    // Reset close-state + per-pad transient state on location change.
-    // notesState.minimized + verticalOffset are intentionally PRESERVED
-    // — minimize is a sticky preference, close is per-location.
     if (String(locId) !== String(notesState.currentLocId)) {
-      notesState.dismissed     = false;
       notesState.currentLocId  = locId;
       notesState.editingNoteId = null;
       closeAddForm();
     }
-    // Set header location name from cached locations list
     const loc = state.allLocations.find(
       function (l) { return String(l.location_id) === String(locId); }
     );
-    document.getElementById("loc-notes-loc-name").textContent =
-      (loc && loc.location_name) || "—";
-    if (notesState.dismissed) {
-      pad.hidden = true;
-      if (icon) icon.hidden = true;
-      return;
-    }
-    // Show either the pad or the icon depending on minimized state.
-    if (notesState.minimized) {
-      pad.hidden = true;
-      if (icon) icon.hidden = false;
-    } else {
-      pad.hidden = false;
-      if (icon) icon.hidden = true;
-    }
-    applyVerticalOffset();
+    titleEl.textContent = (loc && loc.location_name) || "—";
+    if (addRow) addRow.hidden = false;
     renderNotesList(null);   // skeleton
     const seq = ++notesState.loadSeq;
     try {
@@ -2799,9 +2728,6 @@
   function renderNotesList(notes) {
     const list = document.getElementById("loc-notes-list");
     if (!list) return;
-    // Keep the minimized icon count in sync on every render (covers
-    // initial load, add, edit, delete; null = loading skeleton, no count change).
-    if (notes !== null) updateMinimizedIcon();
     if (notes === null) {
       list.innerHTML = '<div class="muted text-small" style="text-align:center;padding:8px;">Loading…</div>';
       return;
@@ -3027,90 +2953,13 @@
     }
   }
 
-  // ── Drag + minimize helpers ─────────────────────────────
-  function applyVerticalOffset() {
-    const pad  = getNotesPad();
-    const icon = document.getElementById("loc-notes-icon");
-    const top  = notesState.verticalOffset + "px";
-    if (pad)  pad.style.top  = top;
-    if (icon) icon.style.top = top;
-  }
-
-  function clampVerticalOffset(px) {
-    const pad = getNotesPad();
-    const padHeight = (pad && !pad.hidden) ? pad.offsetHeight : 60;  // icon ~60
-    const minTop = 70;   // below topbar (62px) + breathing room
-    const maxTop = Math.max(minTop, window.innerHeight - padHeight - 24);
-    return Math.max(minTop, Math.min(maxTop, px));
-  }
-
-  // Returns true if the drag handler was attached, false if it bailed
-  // (mobile / non-left-click). Calls onDragEnd(didDrag) when mouse releases.
-  function startDrag(e, onDragEnd) {
-    if (e.button !== 0) return false;
-    if (window.innerWidth < 520) return false;
-
-    const startY      = e.clientY;
-    const startOffset = notesState.verticalOffset;
-    let didDrag = false;
-
-    function onMove(e2) {
-      const dy = e2.clientY - startY;
-      if (!didDrag && Math.abs(dy) >= 5) didDrag = true;
-      if (didDrag) {
-        notesState.verticalOffset = clampVerticalOffset(startOffset + dy);
-        applyVerticalOffset();
-      }
-    }
-    function onUp() {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup",   onUp);
-      if (onDragEnd) onDragEnd(didDrag);
-    }
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup",   onUp);
-    e.preventDefault();
-    return true;
-  }
-
-  function minimizePad() {
-    notesState.minimized = true;
-    getNotesPad().hidden = true;
-    document.getElementById("loc-notes-icon").hidden = false;
-    updateMinimizedIcon();
-    applyVerticalOffset();   // ensure icon picks up current offset
-  }
-
-  function restorePad() {
-    notesState.minimized = false;
-    document.getElementById("loc-notes-icon").hidden = true;
-    getNotesPad().hidden = false;
-    applyVerticalOffset();
-  }
-
-  function updateMinimizedIcon() {
-    const countEl = document.getElementById("loc-notes-icon-count");
-    if (!countEl) return;
-    const notes = notesState.notesByLocation[notesState.currentLocId] || [];
-    countEl.textContent = String(notes.length);
-  }
-
-  function wireNotesPad() {
-    const closeBtn    = document.getElementById("loc-notes-close");
-    const minimizeBtn = document.getElementById("loc-notes-minimize");
-    const addBtn      = document.getElementById("loc-notes-add-btn");
-    const addCancel   = document.getElementById("loc-notes-add-cancel");
-    const addSave     = document.getElementById("loc-notes-add-save");
-    const addText     = document.getElementById("loc-notes-add-text");
-    const header      = document.querySelector(".loc-notes-header");
-    const icon        = document.getElementById("loc-notes-icon");
-    if (!closeBtn || !addBtn) return;   // pad markup absent → no-op
-    closeBtn.addEventListener("click", function () {
-      notesState.dismissed = true;
-      getNotesPad().hidden = true;
-      if (icon) icon.hidden = true;
-    });
-    if (minimizeBtn) minimizeBtn.addEventListener("click", minimizePad);
+  // ── Inline notes panel wiring ───────────────────────────
+  function wireNotesPanel() {
+    const addBtn    = document.getElementById("loc-notes-add-btn");
+    const addCancel = document.getElementById("loc-notes-add-cancel");
+    const addSave   = document.getElementById("loc-notes-add-save");
+    const addText   = document.getElementById("loc-notes-add-text");
+    if (!addBtn) return;   // notes panel markup absent → no-op
     addBtn.addEventListener("click", openAddForm);
     addCancel.addEventListener("click", closeAddForm);
     addSave.addEventListener("click", onAddSave);
@@ -3121,23 +2970,6 @@
         document.getElementById("loc-notes-add-save")
       );
     });
-    // Drag handle: header strip on the pad. Skip if press is on a header button.
-    if (header) {
-      header.addEventListener("mousedown", function (e) {
-        if (e.target.closest("button")) return;
-        startDrag(e);
-      });
-    }
-    // Icon: drag OR click (restore). startDrag returns false on mobile / non-left;
-    // in that case treat as click. Otherwise the onDragEnd callback decides.
-    if (icon) {
-      icon.addEventListener("mousedown", function (e) {
-        const ok = startDrag(e, function (didDrag) {
-          if (!didDrag) restorePad();
-        });
-        if (!ok) restorePad();
-      });
-    }
   }
 
   // ── Grade jobs queue (split-pane left) ─────────────────────
