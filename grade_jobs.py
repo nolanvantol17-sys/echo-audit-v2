@@ -1,10 +1,11 @@
 """
 grade_jobs.py — Async grading queue for split-pane workflow.
 
-The /api/grade-jobs endpoint enqueues a call (saving audio bytes to disk +
-inserting an interaction row + a grade_jobs row) and fires a daemon thread
-that does the actual transcribe-then-grade work in the background. Frontend
-polls GET /api/grade-jobs to track phase transitions.
+The /api/grade-jobs endpoint enqueues a call (persisting audio bytes onto
+the interaction row + inserting a grade_jobs row in one transaction) and
+fires a daemon thread that does the actual transcribe-then-grade work in
+the background. Frontend polls GET /api/grade-jobs to track phase
+transitions.
 
 Public entry points:
     enqueue_grade_job(...)            — request-context safe; returns IDs
@@ -16,15 +17,15 @@ outside the request context). Failure paths set gj_status='failed' with a
 meaningful error and leave the interaction at status_id=45 (submitted) so
 it's visible for manual retry.
 
-Audio handling: the request handler writes audio bytes to a tempfile under
-_AUDIO_DIR/queue/. The daemon transcribes from that path, then calls the
-existing _save_audio + _save_transcript_and_audio machinery to persist
-audio onto the interaction (BYTEA on PG, file path on SQLite). The queue
-file is deleted at the end of processing.
+Audio handling: bytes are persisted onto interactions.interaction_audio_data
+(PG BYTEA) — or onto disk under _AUDIO_DIR for SQLite — at enqueue time
+via the existing _save_audio machinery. The daemon reads bytes back from
+the canonical interaction row (no separate queue directory; nothing to lose
+on container ephemeral storage). Mirrors voip/processor.py's pattern.
 """
 
 import logging
-import os
+import tempfile
 import threading
 from datetime import date
 from pathlib import Path
@@ -36,7 +37,6 @@ from helpers import (
 )
 from interactions_routes import (
     STATUS_GRADING, STATUS_SUBMITTED, STATUS_TRANSCRIBING,
-    _AUDIO_DIR,
     _GradingAPIError,
     _grade_and_persist,
     _insert_interaction_row,
@@ -44,14 +44,10 @@ from interactions_routes import (
     _load_rubric_group,
     _load_rubric_items,
     _save_audio,
-    _save_transcript_and_audio,
     _update_interaction_status,
 )
 
 logger = logging.getLogger(__name__)
-
-
-_QUEUE_AUDIO_DIR = _AUDIO_DIR / "queue"
 
 
 # ── Helpers ─────────────────────────────────────────────────────
@@ -120,18 +116,6 @@ def _mark_failed(job_id, message):
         logger.exception("Could not mark grade_job %s as failed", job_id)
 
 
-def _queue_audio_path(job_id, ext):
-    _QUEUE_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-    return _QUEUE_AUDIO_DIR / f"queued_{job_id}{ext or '.bin'}"
-
-
-def _delete_queue_audio(path):
-    try:
-        Path(path).unlink(missing_ok=True)
-    except Exception:
-        logger.warning("Could not delete queued audio %s", path, exc_info=True)
-
-
 # ── Enqueue (request-context safe) ─────────────────────────────
 
 
@@ -151,10 +135,16 @@ def enqueue_grade_job(
     call_end_time=None,
     call_duration_seconds=None,
 ):
-    """Create the interaction row + grade_jobs row + persist audio bytes.
+    """Create interaction row + persist audio onto it + insert grade_jobs row.
 
-    Returns (grade_job_id, interaction_id). Raises on validation failure.
-    Caller has already verified project + location ownership and rate limits.
+    All four steps run in one transaction; any failure rolls back the whole
+    enqueue. Audio bytes go straight into interactions.interaction_audio_data
+    (BYTEA on PG) via the existing _save_audio machinery — the canonical
+    audio storage path the rest of the app already reads from. The daemon
+    will read bytes back from the interaction row, not from a separate
+    queue directory.
+
+    Returns (grade_job_id, interaction_id). Raises on failure.
     """
     conn = get_conn()
     try:
@@ -171,6 +161,18 @@ def enqueue_grade_job(
             call_end_time=call_end_time,
             call_duration_seconds=call_duration_seconds,
             set_uploaded_at=True,
+        )
+
+        # Persist audio onto the interaction row. PG: bytes into BYTEA.
+        # SQLite: file written to _AUDIO_DIR by _save_audio, only the URL
+        # path lands in the row.
+        audio_url, audio_data = _save_audio(interaction_id, audio_bytes, audio_ext)
+        conn.execute(
+            q("""UPDATE interactions
+                    SET interaction_audio_url  = ?,
+                        interaction_audio_data = ?
+                  WHERE interaction_id = ?"""),
+            (audio_url, audio_data, interaction_id),
         )
 
         if IS_POSTGRES:
@@ -196,16 +198,6 @@ def enqueue_grade_job(
         conn.close()
         raise
     conn.close()
-
-    # Save audio to queue directory; the daemon owns it from here.
-    try:
-        path = _queue_audio_path(job_id, audio_ext)
-        path.write_bytes(audio_bytes)
-    except Exception:
-        # If we can't even land the bytes, mark the job failed and bail —
-        # we still return the IDs so the UI can surface the error.
-        logger.exception("Could not save queued audio for job %s", job_id)
-        _mark_failed(job_id, "Could not save audio for processing.")
 
     return job_id, interaction_id
 
@@ -235,7 +227,7 @@ def _process_safely(job_id, actor_user_id):
 
 
 def _load_job_and_interaction(job_id):
-    """Returns (job_dict, interaction_dict) or (None, None) if missing."""
+    """Returns the joined job+interaction dict or None if missing."""
     conn = get_conn()
     try:
         cur = conn.execute(
@@ -243,7 +235,8 @@ def _load_job_and_interaction(job_id):
                         j.interaction_id, j.gj_status,
                         i.project_id,
                         i.respondent_user_id,
-                        i.interaction_location_id
+                        i.interaction_location_id,
+                        i.interaction_audio_url
                    FROM grade_jobs j
                    JOIN interactions i ON i.interaction_id = j.interaction_id
                   WHERE j.grade_job_id = ?"""),
@@ -253,6 +246,43 @@ def _load_job_and_interaction(job_id):
         return row
     finally:
         conn.close()
+
+
+def _load_audio_bytes(interaction_id, audio_url):
+    """Load audio bytes for transcription. PG: from BYTEA. SQLite: from disk."""
+    if IS_POSTGRES:
+        conn = get_conn()
+        try:
+            cur = conn.execute(
+                q("SELECT interaction_audio_data FROM interactions WHERE interaction_id = ?"),
+                (interaction_id,),
+            )
+            row = cur.fetchone()
+            blob = row["interaction_audio_data"] if row is not None else None
+            if blob is None:
+                return None
+            return bytes(blob) if isinstance(blob, memoryview) else blob
+        finally:
+            conn.close()
+    # SQLite: audio_url is a filesystem path written by _save_audio.
+    if not audio_url:
+        return None
+    try:
+        return Path(audio_url).read_bytes()
+    except Exception:
+        logger.exception("Could not read audio file %s", audio_url)
+        return None
+
+
+def _set_transcript_and_status(conn, interaction_id, transcript, status_id):
+    """Update transcript + status only. Audio was persisted at enqueue time."""
+    conn.execute(
+        q("""UPDATE interactions
+                SET interaction_transcript = ?,
+                    status_id              = ?
+              WHERE interaction_id = ?"""),
+        (transcript, status_id, interaction_id),
+    )
 
 
 def _load_criteria_for_project(project_id):
@@ -307,21 +337,30 @@ def _process(job_id, actor_user_id):
         _mark_failed(job_id, f"Loading rubric failed: {e}")
         return
 
-    # Find the queued audio file by scanning for any extension.
-    queue_path = _find_queue_audio(job_id)
-    if not queue_path or not queue_path.exists():
-        _mark_failed(job_id, "Queued audio file not found on disk.")
+    # Load audio bytes from the canonical interaction row (BYTEA on PG;
+    # disk file on SQLite via the audio_url path).
+    audio_bytes = _load_audio_bytes(interaction_id, job.get("interaction_audio_url"))
+    if not audio_bytes:
+        _mark_failed(job_id, "Audio data missing for this interaction.")
         _set_job_committed_interaction_status(interaction_id, STATUS_SUBMITTED)
         return
 
+    # Stage the audio in a tempfile for AssemblyAI (it takes a path, not bytes).
+    # The file is deleted in the finally block regardless of outcome.
+    suffix = _ext_from_url(job.get("interaction_audio_url"))
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp_path = tmp.name
     try:
+        tmp.write(audio_bytes)
+        tmp.close()
+
         # ── Phase: transcribing ──
         _set_job_committed(job_id, status="transcribing", phase_started=True)
         _set_job_committed_interaction_status(interaction_id, STATUS_TRANSCRIBING)
 
         hints = load_active_hints(company_id)
         try:
-            transcript = grader.transcribe(str(queue_path), keyterms_prompt=hints)
+            transcript = grader.transcribe(tmp_path, keyterms_prompt=hints)
         except grader.EmptyTranscriptError:
             _mark_failed(job_id, "Transcription returned no audible content.")
             _set_job_committed_interaction_status(interaction_id, STATUS_SUBMITTED)
@@ -334,25 +373,18 @@ def _process(job_id, actor_user_id):
 
         increment_usage(company_id, "assemblyai")
 
-        # Persist transcript + audio onto the interaction row.
-        try:
-            audio_bytes = queue_path.read_bytes()
-        except Exception as e:
-            _mark_failed(job_id, f"Could not read audio for storage: {e}")
-            _set_job_committed_interaction_status(interaction_id, STATUS_SUBMITTED)
-            return
-
-        audio_url, audio_data = _save_audio(interaction_id, audio_bytes, queue_path.suffix)
+        # Persist transcript onto the interaction row + flip status to grading.
+        # Audio was already written at enqueue time; we don't touch it here.
         conn = get_conn()
         try:
-            _save_transcript_and_audio(
-                conn, interaction_id,
-                transcript=transcript,
-                audio_url=audio_url,
-                audio_bytes=audio_data,
-                status_id=STATUS_GRADING,
+            _set_transcript_and_status(
+                conn, interaction_id, transcript, STATUS_GRADING,
             )
             conn.commit()
+        except Exception:
+            try: conn.rollback()
+            except Exception: pass
+            raise
         finally:
             conn.close()
 
@@ -375,7 +407,6 @@ def _process(job_id, actor_user_id):
                 actor_user_id=actor_user_id,
             )
         except _GradingAPIError as e:
-            # _grade_and_persist already rolled the interaction back to SUBMITTED.
             _mark_failed(job_id, e.message)
             return
         except Exception as e:
@@ -388,16 +419,19 @@ def _process(job_id, actor_user_id):
         _set_job_committed(job_id, status="graded", error="")
 
     finally:
-        _delete_queue_audio(queue_path)
+        try:
+            Path(tmp_path).unlink(missing_ok=True)
+        except Exception:
+            logger.warning("Could not delete tempfile %s", tmp_path, exc_info=True)
 
 
-def _find_queue_audio(job_id):
-    """Locate the queued audio file by job_id (any extension)."""
-    if not _QUEUE_AUDIO_DIR.exists():
-        return None
-    for p in _QUEUE_AUDIO_DIR.glob(f"queued_{job_id}.*"):
-        return p
-    return None
+def _ext_from_url(url):
+    """Pull the extension off the audio URL — used to suffix the tempfile so
+    AssemblyAI can sniff the audio format. Falls back to .bin."""
+    if not url:
+        return ".bin"
+    suffix = Path(url).suffix
+    return suffix if suffix else ".bin"
 
 
 def _set_job_committed_interaction_status(interaction_id, status_id):
