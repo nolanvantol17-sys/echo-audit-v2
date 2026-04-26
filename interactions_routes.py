@@ -1657,6 +1657,96 @@ def _load_interaction_for_hard_delete(conn, interaction_id):
     return (row, row["owning_company_id"], row["owning_project_id"])
 
 
+def _purge_iid_from_performance_reports(conn, interaction_id):
+    """Remove interaction_id from every performance_reports row that references
+    it in pr_processed_interaction_ids. Recompute pr_call_count + pr_average_score
+    from the remaining IDs. DELETE the report when no IDs remain.
+
+    Caller commits. Mirrors the score-aggregation contract used by
+    update_performance_report() (avg over the current ID set).
+
+    pr_data (Claude-written strengths/weaknesses/coaching) is intentionally
+    LEFT IN PLACE — Claude updates incrementally on the next grade for the
+    same subject, so the AI text drifts correct over time. Wiping it would
+    leave reports with no insights until the next grade arrives.
+    """
+    if IS_POSTGRES:
+        cur = conn.execute(
+            "SELECT performance_report_id, pr_processed_interaction_ids "
+            "FROM performance_reports "
+            "WHERE pr_processed_interaction_ids @> %s::jsonb",
+            (json.dumps([interaction_id]),),
+        )
+    else:
+        # SQLite: pr_processed_interaction_ids is TEXT-encoded JSON. Scan all.
+        cur = conn.execute(
+            "SELECT performance_report_id, pr_processed_interaction_ids "
+            "FROM performance_reports"
+        )
+
+    matches = []
+    for r in cur.fetchall():
+        d = _row_to_dict(r)
+        ids_raw = d.get("pr_processed_interaction_ids")
+        if isinstance(ids_raw, str):
+            try: ids = json.loads(ids_raw)
+            except Exception: ids = []
+        else:
+            ids = list(ids_raw or [])
+        ids_int = [int(x) for x in ids]
+        if interaction_id in ids_int:
+            matches.append((d["performance_report_id"], ids_int))
+
+    for pr_id, ids_int in matches:
+        new_ids = [i for i in ids_int if i != interaction_id]
+        if not new_ids:
+            # Last contributing call gone — drop the empty shell.
+            if IS_POSTGRES:
+                conn.execute(
+                    "DELETE FROM performance_reports WHERE performance_report_id = %s",
+                    (pr_id,),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM performance_reports WHERE performance_report_id = ?",
+                    (pr_id,),
+                )
+            continue
+
+        # Recompute avg over the remaining IDs.
+        placeholders = ",".join(["?"] * len(new_ids))
+        cur = conn.execute(
+            q(f"""SELECT AVG(interaction_overall_score) AS avg_score
+                    FROM interactions
+                   WHERE interaction_id IN ({placeholders})
+                     AND interaction_overall_score IS NOT NULL"""),
+            new_ids,
+        )
+        avg_row = _row_to_dict(cur.fetchone()) or {}
+        avg_raw = avg_row.get("avg_score")
+        avg_score = round(float(avg_raw), 2) if avg_raw is not None else None
+        ids_json = json.dumps(new_ids)
+
+        if IS_POSTGRES:
+            conn.execute(
+                """UPDATE performance_reports SET
+                       pr_processed_interaction_ids = %s::jsonb,
+                       pr_call_count = %s,
+                       pr_average_score = %s
+                   WHERE performance_report_id = %s""",
+                (ids_json, len(new_ids), avg_score, pr_id),
+            )
+        else:
+            conn.execute(
+                """UPDATE performance_reports SET
+                       pr_processed_interaction_ids = ?,
+                       pr_call_count = ?,
+                       pr_average_score = ?
+                   WHERE performance_report_id = ?""",
+                (ids_json, len(new_ids), avg_score, pr_id),
+            )
+
+
 @interactions_bp.route(
     "/interactions/<int:interaction_id>/hard-delete-impact", methods=["GET"]
 )
@@ -1741,11 +1831,16 @@ def hard_delete_interaction(interaction_id):
       2. INSERT interaction_deletions (returns deletion_id).
       3. DELETE FROM audit_log entries targeting this interaction.
          (al_target_entity_id has no FK so no automatic cascade.)
-      4. DELETE FROM interactions — cascades IRS + CQs + audio bytes,
+      4. Purge interaction_id from performance_reports.pr_processed_interaction_ids
+         and recompute aggregates (DELETE the report if last call gone).
+      5. DELETE FROM interactions — cascades IRS + CQs + audio bytes,
          nulls api_call_log.interaction_id and voip_call_queue.interaction_id.
-      5. Commit.
-      6. Best-effort post-commit unlink of SQLite on-disk audio (failure
+      6. Commit.
+      7. Best-effort post-commit unlink of SQLite on-disk audio (failure
          is logged, not raised — DB is the source of truth).
+      8. Post-commit fire-and-forget refresh of location_intel for the
+         interaction's location (recomputes from fresh state; rate-limited
+         AI brief regenerates if quota allows).
     """
     conn = get_conn()
     try:
@@ -1755,12 +1850,14 @@ def hard_delete_interaction(interaction_id):
         if not interaction:
             return _err("Interaction not found", 404)
 
-        # Capture audio path before the row vanishes — needed for SQLite cleanup.
+        # Capture state we'll need post-commit. Both must be captured before
+        # the row vanishes in step 5 below.
         sqlite_audio_path = None
         if not IS_POSTGRES:
             audio_url = interaction.get("interaction_audio_url")
             if audio_url and not str(audio_url).startswith("db://"):
                 sqlite_audio_path = audio_url
+        loc_for_intel = interaction.get("interaction_location_id")
 
         # 1. Insert deletion receipt.
         if IS_POSTGRES:
@@ -1793,7 +1890,12 @@ def hard_delete_interaction(interaction_id):
             (ENTITY_INTERACTION, str(interaction_id)),
         )
 
-        # 3. Delete the interaction — cascades take care of children.
+        # 3. Purge interaction_id from performance_reports JSONB lists +
+        #    recompute aggregates. Done in-transaction so the row's removal
+        #    and the derived-data fix are atomic.
+        _purge_iid_from_performance_reports(conn, interaction_id)
+
+        # 4. Delete the interaction — cascades take care of children.
         conn.execute(
             q("DELETE FROM interactions WHERE interaction_id = ?"),
             (interaction_id,),
@@ -1801,7 +1903,7 @@ def hard_delete_interaction(interaction_id):
 
         conn.commit()
 
-        # 4. Post-commit: best-effort SQLite audio unlink. DB is canonical.
+        # 5. Post-commit: best-effort SQLite audio unlink. DB is canonical.
         if sqlite_audio_path:
             try:
                 Path(sqlite_audio_path).unlink()
@@ -1811,6 +1913,13 @@ def hard_delete_interaction(interaction_id):
                     "(deletion_id=%s, path=%s): %s",
                     interaction_id, deletion_id, sqlite_audio_path, e,
                 )
+
+        # 6. Post-commit: fire async location-intel refresh. compute_location_intel
+        #    is idempotent + recomputes from fresh state; the gone iid drops out
+        #    of stats + AI brief on next refresh. Rate-limit gating + thread
+        #    daemon are inside intel.py — fire-and-forget here.
+        if loc_for_intel:
+            compute_location_intel_async(loc_for_intel, owning_company_id)
 
         return jsonify({"ok": True, "deletion_id": deletion_id})
     except Exception:
