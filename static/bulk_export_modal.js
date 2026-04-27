@@ -54,8 +54,13 @@
         '<div class="muted text-small">No interactions match these filters.</div>';
       return false;
     }
+    const noAnsCt  = Number(res.no_answer_count || 0);
+    const gradedCt = Number(res.graded_count || 0);
+    const breakdown = (noAnsCt > 0)
+      ? (' (' + gradedCt + ' graded + ' + noAnsCt + ' no-answer)')
+      : '';
     const parts = [
-      '<strong>' + res.count + '</strong> interaction' + (res.count === 1 ? '' : 's'),
+      '<strong>' + res.count + '</strong> interaction' + (res.count === 1 ? '' : 's') + breakdown,
       res.audio_count + ' with audio',
       '~' + res.est_zip_mb + ' MB estimated',
     ];
@@ -91,7 +96,7 @@
 
     const state = {
       projectId:     lockedProject ? opts.projectId : null,
-      includeNoAns:  false,
+      includeNoAns:  true,
       includeFailed: false,
       hasResults:    false,
       allCampaigns:         true,    // default: All campaigns checked
@@ -120,7 +125,7 @@
       '</div>' +
       '<div class="field" style="margin-bottom:8px;">' +
         '<label class="field-label" style="display:flex;align-items:center;gap:8px;font-weight:normal;">' +
-          '<input type="checkbox" data-role="toggle-noans">' +
+          '<input type="checkbox" data-role="toggle-noans" checked>' +
           'Include no-answer calls' +
         '</label>' +
       '</div>' +
@@ -343,7 +348,7 @@
 
     const state = {
       projectId:            null,
-      includeNoAns:         false,
+      includeNoAns:         true,
       includeFailed:        false,
       hasResults:           false,
       allCampaigns:         true,
@@ -373,7 +378,7 @@
       '</div>' +
       '<div class="field" style="margin-bottom:8px;">' +
         '<label class="field-label" style="display:flex;align-items:center;gap:8px;font-weight:normal;">' +
-          '<input type="checkbox" data-role="toggle-noans">' +
+          '<input type="checkbox" data-role="toggle-noans" checked>' +
           'Include no-answer calls' +
         '</label>' +
       '</div>' +

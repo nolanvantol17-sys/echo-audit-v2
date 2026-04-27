@@ -167,6 +167,11 @@ def _make_styles():
         fontName="Helvetica-Oblique", fontSize=10, textColor=SLATE,
         leading=14, spaceBefore=20, alignment=TA_CENTER,
     )
+    out["noans_banner"] = ParagraphStyle(
+        "noans_banner", parent=base["Normal"],
+        fontName="Helvetica-Bold", fontSize=13, textColor=AMBER_TXT,
+        leading=16, alignment=TA_CENTER,
+    )
     return out
 
 
@@ -212,6 +217,7 @@ def _fetch_interaction(conn, interaction_id):
                 i.interaction_transcript, i.interaction_responder_name,
                 i.interaction_call_duration_seconds,
                 i.interaction_audio_url,
+                i.interaction_location_id,
                 p.project_name,
                 c.campaign_name,
                 loc.location_name,
@@ -239,6 +245,25 @@ def _fetch_rubric_scores(conn, interaction_id):
              WHERE interaction_id = ?
              ORDER BY interaction_rubric_score_id ASC"""),
         (interaction_id,),
+    )
+    return [dict(r) for r in cur.fetchall()]
+
+
+def _fetch_location_notes(conn, location_id):
+    """Active notes for the location, newest-first. Mirrors
+    location_notes_routes.list_location_notes for ordering + soft-delete
+    filter so the PDF and the in-app view show the same set."""
+    if not location_id:
+        return []
+    cur = conn.execute(
+        q("""SELECT ln.ln_text, ln.ln_created_at,
+                    u.user_first_name, u.user_last_name
+               FROM location_notes ln
+               LEFT JOIN users u ON u.user_id = ln.ln_author_user_id
+              WHERE ln.location_id = ?
+                AND ln.ln_deleted_at IS NULL
+              ORDER BY ln.ln_created_at DESC, ln.location_note_id DESC"""),
+        (location_id,),
     )
     return [dict(r) for r in cur.fetchall()]
 
@@ -472,6 +497,33 @@ def _build_transcript(intr, styles):
     return out
 
 
+def _build_location_notes(notes, styles):
+    """Render the location notes section. Returns [] when there are no
+    notes so the section header is suppressed entirely (no empty card)."""
+    if not notes:
+        return []
+    out = [Paragraph("Location Notes", styles["section_header"])]
+    for n in notes:
+        author = (
+            ((n.get("user_first_name") or "") + " " +
+             (n.get("user_last_name")  or "")).strip()
+            or "Unknown author"
+        )
+        # ln_created_at: datetime in PG, str in SQLite — handle both.
+        ts = n.get("ln_created_at")
+        try:
+            date_str = ts.strftime("%B %d, %Y") if ts else "—"
+        except AttributeError:
+            date_str = str(ts)[:10] if ts else "—"
+        meta_html = (f'<font color="{TEXT_MUTED.hexval()}" size="8">'
+                     f'{author} &middot; {date_str}</font>')
+        out.append(Paragraph(meta_html, styles["body"]))
+        body_text = (n.get("ln_text") or "").replace("\n", "<br/>")
+        out.append(Paragraph(body_text, styles["body"]))
+        out.append(Spacer(1, 6))
+    return out
+
+
 # ── Document assembly ──
 
 def _make_doc(buf, intr):
@@ -494,19 +546,30 @@ def _build_story(intr, scores, styles):
     """Compose the flowable story for this interaction's variant."""
     status = intr.get("status_id")
     story = []
+    notes = intr.get("location_notes") or []
 
     if status == STATUS_NO_ANSWER:
-        # Slim variant: header (no score badge), then a single note.
+        # Slim variant: amber banner across the top, then header (no score
+        # badge), audio-attached note if applicable, then location notes.
+        banner_p = Paragraph(
+            "NO ANSWER &mdash; CALL ATTEMPTED BUT UNANSWERED",
+            styles["noans_banner"],
+        )
+        banner = Table([[banner_p]], colWidths=[6.5*inch])
+        banner.setStyle(TableStyle([
+            ("BACKGROUND",     (0,0), (-1,-1), AMBER_BG),
+            ("TOPPADDING",     (0,0), (-1,-1), 10),
+            ("BOTTOMPADDING",  (0,0), (-1,-1), 10),
+        ]))
+        story.append(banner)
+        story.append(Spacer(1, 12))
         story.extend(_build_header(intr, styles, show_score=False))
-        story.append(Paragraph(
-            "This call was <b>unanswered</b>. No grade or transcript is available.",
-            styles["empty_note"],
-        ))
         if intr.get("interaction_audio_url"):
             story.append(Paragraph(
                 "An audio recording is attached.",
                 styles["empty_note"],
             ))
+        story.extend(_build_location_notes(notes, styles))
         return story
 
     if status != STATUS_GRADED:
@@ -519,6 +582,7 @@ def _build_story(intr, scores, styles):
         ))
         story.extend(_build_writeups(intr, styles))
         story.extend(_build_rubric(scores, styles))
+        story.extend(_build_location_notes(notes, styles))
         if intr.get("interaction_transcript"):
             story.append(PageBreak())
             story.extend(_build_transcript(intr, styles))
@@ -528,6 +592,9 @@ def _build_story(intr, scores, styles):
     story.extend(_build_header(intr, styles, show_score=True))
     story.extend(_build_writeups(intr, styles))
     story.extend(_build_rubric(scores, styles))
+    # Location notes belong on page 1 with the other call-summary content,
+    # before any optional transcript page break.
+    story.extend(_build_location_notes(notes, styles))
     if intr.get("interaction_transcript"):
         story.append(PageBreak())
         story.extend(_build_transcript(intr, styles))
@@ -548,6 +615,9 @@ def render_interaction_pdf(conn, interaction_id):
         raise ValueError(f"Interaction {interaction_id} not found")
     scores = _fetch_rubric_scores(conn, interaction_id) \
              if intr.get("status_id") == STATUS_GRADED else []
+    intr["location_notes"] = _fetch_location_notes(
+        conn, intr.get("interaction_location_id")
+    )
 
     styles = _make_styles()
     buf    = io.BytesIO()

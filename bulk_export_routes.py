@@ -152,6 +152,8 @@ def export_preflight(location_id):
         row = conn.execute(
             q(f"""SELECT
                     COUNT(*)                                                         AS total_count,
+                    SUM(CASE WHEN i.status_id = 43 THEN 1 ELSE 0 END)                AS graded_count,
+                    SUM(CASE WHEN i.status_id = 44 THEN 1 ELSE 0 END)                AS no_answer_count,
                     COUNT(*) FILTER (WHERE i.interaction_audio_data IS NOT NULL)     AS audio_count,
                     COALESCE(SUM(LENGTH(i.interaction_audio_data)), 0)               AS audio_bytes,
                     MIN(i.interaction_date)                                          AS oldest_date,
@@ -167,20 +169,24 @@ def export_preflight(location_id):
     finally:
         conn.close()
 
-    total_count = int(row["total_count"] or 0)
-    audio_count = int(row["audio_count"] or 0)
-    audio_bytes = int(row["audio_bytes"] or 0)
+    total_count  = int(row["total_count"]    or 0)
+    graded_ct    = int(row["graded_count"]   or 0)
+    no_answer_ct = int(row["no_answer_count"] or 0)
+    audio_count  = int(row["audio_count"]    or 0)
+    audio_bytes  = int(row["audio_bytes"]    or 0)
     est_zip_bytes = audio_bytes + (total_count * _AVG_PDF_BYTES)
     est_zip_mb    = round(est_zip_bytes / 1_048_576, 1)
 
     return jsonify({
-        "count":         total_count,
-        "audio_count":   audio_count,
-        "est_zip_mb":    est_zip_mb,
-        "oldest_date":   row["oldest_date"].isoformat() if row["oldest_date"] else None,
-        "newest_date":   row["newest_date"].isoformat() if row["newest_date"] else None,
-        "location_name": loc["location_name"],
-        "project_name":  proj["project_name"],
+        "count":           total_count,
+        "graded_count":    graded_ct,
+        "no_answer_count": no_answer_ct,
+        "audio_count":     audio_count,
+        "est_zip_mb":      est_zip_mb,
+        "oldest_date":     row["oldest_date"].isoformat() if row["oldest_date"] else None,
+        "newest_date":     row["newest_date"].isoformat() if row["newest_date"] else None,
+        "location_name":   loc["location_name"],
+        "project_name":    proj["project_name"],
     })
 
 
