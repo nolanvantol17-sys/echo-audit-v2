@@ -2007,7 +2007,7 @@
         );
         vOverlay.close();
         EA.toast("Grading started — check Past Grades in a moment.", "info");
-        resetForm();
+        resetFormPreserveContext();
       } catch (err) {
         vOverlay.close();
         EA.toast(err.message || "Could not start VoIP grade.", "error");
@@ -2124,9 +2124,9 @@
   }
 
   // Phase 2c: grade success lands in EA.InteractionPanel. We hide the form,
-  // open the panel, and arm an onClose hook that re-prepares the form for the
-  // next grade — saving caller-only sticky context first so resetForm's
-  // applyGradeContext call can rehydrate the caller dropdown.
+  // open the panel, and arm an onClose hook that preserves location/project/
+  // campaign/caller so the user lands on a ready-to-go form when they
+  // dismiss the panel.
   function openGradeResultPanel(interactionId) {
     $("#grade-form-section").hidden = true;
 
@@ -2137,8 +2137,7 @@
 
     EA.InteractionPanel.open(interactionId, {
       onClose: function () {
-        saveGradeContextSticky();
-        resetForm();
+        resetFormPreserveContext();
       },
     });
   }
@@ -2529,10 +2528,10 @@
     }
   }
 
-  // Split-pane mode reset after a successful submit. Keeps project +
-  // location + rubric/campaign so the user can immediately submit the
-  // next call at the same property; only clears audio + caller + date.
-  // The form section stays visible (no modal opens in split-pane mode).
+  // Reset after a successful submit (split-pane / legacy / voip / no-answer).
+  // Preserves caller + location + project + campaign + intel card + notes
+  // draft. Clears audio + date + per-call state. The form section stays
+  // visible (legacy mode hides + restores around the modal lifecycle).
   function resetFormPreserveContext() {
     dbg("resetFormPreserveContext:enter");
     window.gradeComplete = false;
@@ -2541,16 +2540,11 @@
     // Audio: clear both source buffers so the next call starts fresh.
     clearAudioFile();
     cleanupLiveRecording(true);
-    // Caller field: reset to "—". Q3: re-apply the init()-time auto-select
-    // when the current user is a caller — they're the most likely answer
-    // for back-to-back calls.
-    const caller = $("#gf-caller");
-    if (caller) {
-      caller.value = "";
-      if (window.__USER_ROLE === "caller" && window.__USER_ID) {
-        caller.value = String(window.__USER_ID);
-      }
-    }
+    // VoIP: clear queue selection so the next submit doesn't re-fire on
+    // the same queued call.
+    state.selectedQueueId = null;
+    // Caller field: fully preserved across submits — same caller usually
+    // does back-to-back calls regardless of role.
     // Date: re-stamp today so back-to-back calls don't carry yesterday.
     const _t = new Date();
     $("#gf-date").value = _t.getFullYear() + "-"
@@ -2659,8 +2653,7 @@
       } else {
         EA.toast("Unanswered call logged (#" + res.interaction_id + ").", "success");
       }
-      saveGradeContext();
-      resetForm();
+      resetFormPreserveContext();
     } catch (err) {
       if (overlay) overlay.close();
       EA.toast(err.message || "Couldn't log the call", "error");
