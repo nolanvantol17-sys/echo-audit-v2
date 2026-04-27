@@ -301,7 +301,7 @@ def export_location_bulk(location_id):
         # render_interaction_pdf and the audio fetch each do their own SELECT
         # so a single row's failure doesn't poison the whole result set).
         rows = conn.execute(
-            q(f"""SELECT i.interaction_id, i.interaction_date,
+            q(f"""SELECT i.interaction_id, i.interaction_date, i.status_id,
                          (caller.user_first_name || ' ' || caller.user_last_name) AS caller_name
                   FROM interactions i
                   LEFT JOIN users caller ON caller.user_id = i.caller_user_id
@@ -327,6 +327,11 @@ def export_location_bulk(location_id):
                 caller_raw  = (r["caller_name"] or "Unknown").strip() or "Unknown"
                 caller_safe = _safe_filename_segment(caller_raw, max_len=30)
                 entry_base  = f"{date_str}_{caller_safe}_#{iid}"
+                # Tag no-answer PDFs in the filename so they're identifiable
+                # without opening. Suffix (not prefix) preserves the natural
+                # date-sorted order when browsing the unzipped folder.
+                if r["status_id"] == _NO_ANSWER_STATUS:
+                    entry_base += "_NO_ANSWER"
 
                 # PDF: per-row try/except so one malformed row doesn't kill the export.
                 try:

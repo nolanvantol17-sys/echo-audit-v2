@@ -1970,6 +1970,11 @@ def export_interaction(interaction_id):
         date_str = (row["interaction_date"].isoformat()
                     if row["interaction_date"] else "unknown-date")
         base_name = f"{location}_Call_{date_str}_#{interaction_id}"
+        # Tag no-answer downloads so the ZIP filename + every entry inside
+        # carries the marker. Strongly identifiable in the user's Downloads
+        # folder without opening.
+        if row["status_id"] == STATUS_NO_ANSWER:
+            base_name += "_NO_ANSWER"
 
         # Build the ZIP in memory. PDF deflates (text), audio stores raw.
         zip_buf = io.BytesIO()
