@@ -486,10 +486,17 @@ def list_location_calls(location_id):
                    i.interaction_call_duration_seconds,
                    i.status_id, i.interaction_overall_score,
                    i.caller_user_id,
-                   NULLIF(TRIM(u.user_first_name || ' ' || u.user_last_name), '') AS caller_name
+                   NULLIF(TRIM(u.user_first_name || ' ' || u.user_last_name), '') AS caller_name,
+                   COALESCE(
+                       r.respondent_name,
+                       NULLIF(TRIM(u_resp.user_first_name || ' ' || u_resp.user_last_name), ''),
+                       i.interaction_responder_name
+                   ) AS respondent_name
               FROM interactions i
               JOIN projects p   ON p.project_id = i.project_id
               LEFT JOIN users u ON u.user_id    = i.caller_user_id
+              LEFT JOIN users       u_resp ON u_resp.user_id    = i.respondent_user_id
+              LEFT JOIN respondents r      ON r.respondent_id   = i.respondent_id
              WHERE i.interaction_location_id = ?
                AND p.company_id              = ?
                AND i.status_id IN (43, 44)

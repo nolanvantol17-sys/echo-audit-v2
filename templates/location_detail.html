@@ -137,7 +137,7 @@
       '<div class="panel" style="margin-top:14px;">' +
         '<div class="panel-title">Call history</div>' +
         '<table class="history-table"><thead><tr>' +
-          '<th>Date</th><th>Time</th><th>Caller</th>' +
+          '<th>Date</th><th>Time</th><th>Caller</th><th>Respondent</th>' +
           '<th style="text-align:right;">Outcome</th>' +
         '</tr></thead><tbody>' + rowsHtml + '</tbody></table>' +
       '</div>'
@@ -160,6 +160,7 @@
         '<td>' + EA.esc(EA.formatDate(c.interaction_date)) + '</td>' +
         '<td class="muted text-small">' + EA.esc(callTime) + '</td>' +
         '<td>' + EA.esc(c.caller_name || "—") + '</td>' +
+        '<td>' + EA.esc(c.respondent_name || "—") + '</td>' +
         '<td style="text-align:right;">' + outcome + '</td>' +
       '</tr>'
     );
