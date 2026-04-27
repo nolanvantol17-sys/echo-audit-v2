@@ -1350,15 +1350,15 @@
   }
 
   function renderLocationIntel(card, intel) {
-    const noAns = (intel && intel.recent_no_answers) || [];
+    const noAnsRows = (intel && intel.recent_no_answers) || [];
 
     // Edge case: no cached intel row yet, but the location already has
     // logged no-answers (intel daemon hasn't fired or has been skipped).
     // Surface the no-answers list standalone — still useful pre-call info.
-    if (!intel.computed && noAns.length) {
+    if (!intel.computed && noAnsRows.length) {
       card.classList.remove("compact");
       card.classList.remove("empty");
-      card.innerHTML = renderRecentNoAnswers(noAns);
+      card.innerHTML = renderRecentNoAnswers(noAnsRows);
       return;
     }
 
@@ -1430,7 +1430,7 @@
         '</div>';
     }
 
-    const noAnsHtml = renderRecentNoAnswers(noAns);
+    const noAnsHtml = renderRecentNoAnswers(noAnsRows);
 
     let staleHtml = '';
     if (intel.li_last_computed_at) {
