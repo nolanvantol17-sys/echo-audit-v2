@@ -716,6 +716,12 @@ def register_routes(app):
     def locations_page():
         return render_template("locations.html")
 
+    @app.route("/app/locations/<int:location_id>")
+    @login_required
+    @auth.role_required("admin", "super_admin")
+    def location_detail_page(location_id):
+        return render_page("location_detail.html", location_id=location_id)
+
     @app.route("/app/voip")
     @login_required
     @auth.role_required("admin", "super_admin")

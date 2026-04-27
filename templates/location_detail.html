@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Location | {{ client_name or "Echo Audit" }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  /* NO ANSWER badge in the call list — matches warning color used in
+     the locations table no-answer cell. */
+  .score-pill.no-answer {
+    background: var(--warning-bg);
+    color: var(--warning);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .loc-detail-stats {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    align-items: baseline;
+    font-size: 0.85rem;
+    margin-top: 8px;
+  }
+  .loc-detail-stat-label {
+    color: var(--muted);
+    margin-right: 4px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <div class="page-subtitle">
+      <a href="/app/locations" style="color:var(--muted);">← Back to Locations</a>
+    </div>
+    <div class="page-title" id="loc-title">Location</div>
+  </div>
+</div>
+
+<div id="loc-detail-wrap">
+  <div class="skeleton" style="height:80px;margin:10px 0;"></div>
+  <div class="skeleton" style="height:300px;margin:10px 0;"></div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  "use strict";
+  const EA = window.EA;
+  const LOCATION_ID = {{ location_id|int }};
+
+  const $ = function (s) { return document.querySelector(s); };
+
+  function init() { loadAll(); }
+
+  if (window.EA && EA.PageRouter) {
+    EA.PageRouter.register({
+      match: function (u) { return /^\/app\/locations\/\d+$/.test(u.pathname); },
+      init: init,
+    });
+  } else {
+    document.addEventListener("DOMContentLoaded", init);
+  }
+
+  async function loadAll() {
+    const wrap = $("#loc-detail-wrap");
+    try {
+      const [loc, calls] = await Promise.all([
+        EA.fetchJSON("/api/locations/" + LOCATION_ID),
+        EA.fetchJSON("/api/locations/" + LOCATION_ID + "/calls"),
+      ]);
+      const name = loc.location_name || "Location";
+      document.title = name + " | Echo Audit";
+      $("#loc-title").textContent = name;
+      wrap.innerHTML = renderHeader(loc) + renderCallsPanel(calls);
+      wireRows(wrap);
+    } catch (err) {
+      EA.showError(wrap, err.message || "Failed to load location.");
+    }
+  }
+
+  function renderHeader(loc) {
+    const phone   = loc.location_phone || "—";
+    const firstC  = loc.location_engagement_date
+                    ? EA.formatDate(loc.location_engagement_date) : "—";
+    const total   = loc.total_calls    || 0;
+    const graded  = loc.graded_count   || 0;
+    const noAns   = loc.no_answer_count || 0;
+    const rate    = loc.no_answer_rate;
+    const noAnsCell = (noAns === 0)
+      ? '<span style="color:var(--muted);">0</span>'
+      : ('<span style="color:var(--warning);">' + noAns + '</span>' +
+         (rate != null
+           ? (' <span style="color:var(--muted);">(' +
+                (rate * 100).toFixed(1) + '%)</span>')
+           : ''));
+    const avgPill = (loc.avg_score != null)
+      ? '<span class="score-pill ' + EA.scoreClass(loc.avg_score) + '">' +
+          EA.formatScore(loc.avg_score) + '</span>'
+      : '<span style="color:var(--muted);">—</span>';
+    const lastCall = loc.last_call_date
+      ? EA.formatRelativeTime(loc.last_call_date) : "—";
+
+    return (
+      '<div class="panel">' +
+        '<div class="loc-detail-stats">' +
+          '<div><span class="loc-detail-stat-label">Phone:</span>' +
+            EA.esc(phone) + '</div>' +
+          '<div><span class="loc-detail-stat-label">First contact:</span>' +
+            EA.esc(firstC) + '</div>' +
+          '<div><span class="loc-detail-stat-label">Total:</span>' +
+            total + '</div>' +
+          '<div><span class="loc-detail-stat-label">Graded:</span>' +
+            graded + '</div>' +
+          '<div><span class="loc-detail-stat-label">No-answer:</span>' +
+            noAnsCell + '</div>' +
+          '<div><span class="loc-detail-stat-label">Avg score:</span>' +
+            avgPill + '</div>' +
+          '<div><span class="loc-detail-stat-label">Last call:</span>' +
+            EA.esc(lastCall) + '</div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function renderCallsPanel(calls) {
+    if (!calls || !calls.length) {
+      return (
+        '<div class="panel" style="margin-top:14px;">' +
+          '<div class="panel-title">Call history</div>' +
+          '<div class="empty-state">No calls logged at this location yet.</div>' +
+        '</div>'
+      );
+    }
+    const rowsHtml = calls.map(rowHtml).join("");
+    return (
+      '<div class="panel" style="margin-top:14px;">' +
+        '<div class="panel-title">Call history</div>' +
+        '<table class="history-table"><thead><tr>' +
+          '<th>Date</th><th>Time</th><th>Caller</th>' +
+          '<th style="text-align:right;">Outcome</th>' +
+        '</tr></thead><tbody>' + rowsHtml + '</tbody></table>' +
+      '</div>'
+    );
+  }
+
+  function rowHtml(c) {
+    const callTime = EA.formatCallTime(
+      c.interaction_call_start_time,
+      c.interaction_uploaded_at,
+      c.interaction_call_duration_seconds
+    );
+    const cls = EA.scoreClass(c.interaction_overall_score);
+    const outcome = Number(c.status_id) === 44
+      ? '<span class="score-pill no-answer">NO ANSWER</span>'
+      : ('<span class="score-pill ' + cls + '">' +
+          EA.formatScore(c.interaction_overall_score) + '</span>');
+    return (
+      '<tr data-iid="' + c.interaction_id + '">' +
+        '<td>' + EA.esc(EA.formatDate(c.interaction_date)) + '</td>' +
+        '<td class="muted text-small">' + EA.esc(callTime) + '</td>' +
+        '<td>' + EA.esc(c.caller_name || "—") + '</td>' +
+        '<td style="text-align:right;">' + outcome + '</td>' +
+      '</tr>'
+    );
+  }
+
+  function wireRows(wrap) {
+    wrap.querySelectorAll("tr[data-iid]").forEach(function (tr) {
+      tr.addEventListener("click", function () {
+        window.location.href = "/app/history/" + tr.dataset.iid;
+      });
+    });
+  }
+})();
+</script>
+{% endblock %}

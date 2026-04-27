@@ -390,6 +390,126 @@ def list_locations():
         conn.close()
 
 
+# ── Single-location read (header for the detail page) ─────────
+# Reuses the same aggregating subquery as list_locations() so
+# no_answer_rate semantics stay in lockstep across the two surfaces.
+
+
+@api_bp.route("/locations/<int:location_id>", methods=["GET"])
+@login_required
+@role_required("admin", "super_admin")
+def get_location(location_id):
+    company_id, err = _require_company()
+    if err: return err
+
+    conn = get_conn()
+    try:
+        cur = conn.execute(q("""
+            SELECT l.location_id, l.location_name, l.location_phone,
+                   l.location_engagement_date, l.status_id, s.status_name,
+                   COALESCE(m.total_calls, 0)     AS total_calls,
+                   COALESCE(m.graded_count, 0)    AS graded_count,
+                   COALESCE(m.no_answer_count, 0) AS no_answer_count,
+                   m.avg_score                    AS avg_score,
+                   m.last_call_date               AS last_call_date
+            FROM locations l
+            LEFT JOIN statuses s ON s.status_id = l.status_id
+            LEFT JOIN (
+                SELECT i.interaction_location_id AS location_id,
+                       COUNT(*)                                                  AS total_calls,
+                       SUM(CASE WHEN i.status_id = 43 THEN 1 ELSE 0 END)         AS graded_count,
+                       SUM(CASE WHEN i.status_id = 44 THEN 1 ELSE 0 END)         AS no_answer_count,
+                       AVG(CASE WHEN i.status_id = 43
+                                THEN i.interaction_overall_score END)            AS avg_score,
+                       MAX(CASE WHEN i.status_id = 43
+                                THEN i.interaction_date END)                     AS last_call_date
+                  FROM interactions i
+                  JOIN projects p ON p.project_id = i.project_id
+                 WHERE p.company_id = ?
+                   AND i.interaction_location_id = ?
+                   AND i.interaction_deleted_at IS NULL
+                 GROUP BY i.interaction_location_id
+            ) m ON m.location_id = l.location_id
+            WHERE l.location_id = ? AND l.company_id = ?
+              AND l.location_deleted_at IS NULL
+        """), (company_id, location_id, location_id, company_id))
+        r = _row_to_dict(cur.fetchone())
+    finally:
+        conn.close()
+
+    if r is None:
+        return _err("Location not found", 404)
+
+    avg = r.get("avg_score")
+    r["avg_score"] = round(float(avg), 1) if avg is not None else None
+    for k in ("total_calls", "graded_count", "no_answer_count"):
+        v = r.get(k)
+        if v is not None:
+            r[k] = int(v)
+    g = r.get("graded_count") or 0
+    n = r.get("no_answer_count") or 0
+    r["no_answer_rate"] = (n / (g + n)) if (g + n) else None
+    return jsonify(r)
+
+
+# ── Per-location chronological call list ──────────────────────
+# Terminal interactions only (status 43 graded, 44 no-answer). In-flight
+# (40, 42, 45) and legacy (41) are excluded — they'd clutter the view
+# with calls that haven't resolved yet. Pre-checks tenant ownership of
+# the location before returning any rows.
+
+
+@api_bp.route("/locations/<int:location_id>/calls", methods=["GET"])
+@login_required
+@role_required("admin", "super_admin")
+def list_location_calls(location_id):
+    company_id, err = _require_company()
+    if err: return err
+
+    conn = get_conn()
+    try:
+        # Tenant scope: location must belong to the current company.
+        own = conn.execute(
+            q("""SELECT 1 FROM locations
+                  WHERE location_id = ? AND company_id = ?
+                    AND location_deleted_at IS NULL"""),
+            (location_id, company_id),
+        ).fetchone()
+        if own is None:
+            return _err("Location not found", 404)
+
+        # NULLS LAST is PG-only; SQLite already defaults to NULLs-last on
+        # DESC sorts, so the merged behavior is consistent across envs.
+        cur = conn.execute(q("""
+            SELECT i.interaction_id, i.interaction_date,
+                   i.interaction_call_start_time, i.interaction_uploaded_at,
+                   i.interaction_call_duration_seconds,
+                   i.status_id, i.interaction_overall_score,
+                   i.caller_user_id,
+                   NULLIF(TRIM(u.user_first_name || ' ' || u.user_last_name), '') AS caller_name
+              FROM interactions i
+              JOIN projects p   ON p.project_id = i.project_id
+              LEFT JOIN users u ON u.user_id    = i.caller_user_id
+             WHERE i.interaction_location_id = ?
+               AND p.company_id              = ?
+               AND i.status_id IN (43, 44)
+               AND i.interaction_deleted_at IS NULL
+             ORDER BY COALESCE(i.interaction_call_start_time,
+                               i.interaction_uploaded_at) DESC NULLS LAST,
+                      i.interaction_date DESC,
+                      i.interaction_id  DESC
+        """), (location_id, company_id))
+        rows = _rows(cur)
+    finally:
+        conn.close()
+
+    for r in rows:
+        s = r.get("interaction_overall_score")
+        if s is not None:
+            r["interaction_overall_score"] = float(s)
+    return jsonify(rows)
+
+
 @api_bp.route("/locations", methods=["POST"])
 @login_required
 @role_required("admin", "super_admin")
