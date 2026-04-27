@@ -98,6 +98,7 @@
       projectId:     lockedProject ? opts.projectId : null,
       includeNoAns:  true,
       includeFailed: false,
+      includeSummary: true,
       hasResults:    false,
       allCampaigns:         true,    // default: All campaigns checked
       campaignIds:          [],      // selected individual campaign IDs
@@ -133,6 +134,12 @@
         '<label class="field-label" style="display:flex;align-items:center;gap:8px;font-weight:normal;">' +
           '<input type="checkbox" data-role="toggle-failed">' +
           'Include failed grades' +
+        '</label>' +
+      '</div>' +
+      '<div class="field" style="margin-bottom:14px;">' +
+        '<label class="field-label" style="display:flex;align-items:center;gap:8px;font-weight:normal;">' +
+          '<input type="checkbox" data-role="toggle-summary" checked>' +
+          'Include location summary report' +
         '</label>' +
       '</div>' +
       '<div class="muted text-small" style="margin-bottom:6px;">Toggling filters will update the counts.</div>' +
@@ -260,6 +267,10 @@
       state.includeFailed = e.target.checked;
       refresh();
     });
+    body.querySelector('[data-role="toggle-summary"]').addEventListener("change", function (e) {
+      state.includeSummary = e.target.checked;
+      // Summary is post-hoc (doesn't change row counts) — no preflight refresh needed.
+    });
 
     const dialogPromise = EA.confirmDialog({
       title:       "Export Calls — " + locationName,
@@ -312,6 +323,7 @@
     const params = new URLSearchParams({ project_id: String(state.projectId) });
     if (state.includeNoAns)  params.set("include_no_answer", "1");
     if (state.includeFailed) params.set("include_failed",    "1");
+    if (state.includeSummary) params.set("include_summary", "1");
     if (!state.allCampaigns) {
       if (state.campaignIds.length)   params.set("campaign_ids", state.campaignIds.join(","));
       if (state.includeUncategorized) params.set("include_uncategorized", "1");
@@ -350,6 +362,7 @@
       projectId:            null,
       includeNoAns:         true,
       includeFailed:        false,
+      includeSummary:       true,
       hasResults:           false,
       allCampaigns:         true,
       campaignIds:          [],
@@ -386,6 +399,12 @@
         '<label class="field-label" style="display:flex;align-items:center;gap:8px;font-weight:normal;">' +
           '<input type="checkbox" data-role="toggle-failed">' +
           'Include failed grades' +
+        '</label>' +
+      '</div>' +
+      '<div class="field" style="margin-bottom:14px;">' +
+        '<label class="field-label" style="display:flex;align-items:center;gap:8px;font-weight:normal;">' +
+          '<input type="checkbox" data-role="toggle-summary" checked>' +
+          'Include location summary report' +
         '</label>' +
       '</div>' +
       '<div class="muted text-small" style="margin-bottom:6px;">Toggling filters will update the counts.</div>' +
@@ -560,6 +579,10 @@
       state.includeFailed = e.target.checked;
       refresh();
     });
+    body.querySelector('[data-role="toggle-summary"]').addEventListener("change", function (e) {
+      state.includeSummary = e.target.checked;
+      // Summary is post-hoc (doesn't change row counts) — no preflight refresh needed.
+    });
 
     _multiInFlight = true;
     try {
@@ -607,6 +630,9 @@
       }
 
       const params = buildParams();
+      // include_summary doesn't affect counts so it's not in buildParams
+      // (which is shared with preflight). Add it just for the download URL.
+      if (state.includeSummary) params.set("include_summary", "1");
       const rows = state.perLocResults.map(function (r) {
         let initialState;
         if (r.error)                       initialState = "error";

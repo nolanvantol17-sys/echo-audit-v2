@@ -172,6 +172,20 @@ def _make_styles():
         fontName="Helvetica-Bold", fontSize=13, textColor=AMBER_TXT,
         leading=16, alignment=TA_CENTER,
     )
+    # Smaller bold sub-headers used inside the AI narrative section of the
+    # location report card (Overall Assessment / Strengths / Improvements).
+    out["subsection_header"] = ParagraphStyle(
+        "subsection_header", parent=base["Normal"],
+        fontName="Helvetica-Bold", fontSize=10.5, textColor=NAVY,
+        leading=13, spaceBefore=10, spaceAfter=4,
+    )
+    # Italic muted subline used directly under the AI section header to
+    # disclose attribution without scolding-style framing.
+    out["ai_caveat"] = ParagraphStyle(
+        "ai_caveat", parent=base["Normal"],
+        fontName="Helvetica-Oblique", fontSize=8.5, textColor=TEXT_MUTED,
+        leading=11, spaceBefore=0, spaceAfter=8,
+    )
     return out
 
 
@@ -623,5 +637,262 @@ def render_interaction_pdf(conn, interaction_id):
     buf    = io.BytesIO()
     doc    = _make_doc(buf, intr)
     story  = _build_story(intr, scores, styles)
+    doc.build(story, canvasmaker=_NumberedCanvas)
+    return buf.getvalue()
+
+
+# ── Location Report Card (bulk-export summary PDF) ────────────────
+
+def render_location_report_pdf(conn, location_id, calls_data, narrative,
+                               filters_meta):
+    """Render the per-location summary PDF that ships alongside per-call
+    PDFs in a bulk export ZIP.
+
+    calls_data:   list of per-call dicts (same shape as the per-call SELECT
+                  in bulk_export_routes — must include status_id, score,
+                  caller_user_id, caller_name, respondent_name).
+    narrative:    dict from location_report.generate_narrative(), or None
+                  if Claude was rate-limited / errored / returned malformed.
+                  Caller does NOT need to pre-check; this function renders
+                  an 'unavailable' fallback when None.
+    filters_meta: dict with keys: location_name, project_name,
+                  campaign_label, status_label, date_range_first,
+                  date_range_last.
+    """
+    from collections import Counter, defaultdict
+
+    styles = _make_styles()
+
+    # ── Aggregate stats (deterministic) ──
+    total = len(calls_data)
+    graded_rows = [c for c in calls_data if c.get("status_id") == STATUS_GRADED]
+    no_ans_rows = [c for c in calls_data if c.get("status_id") == STATUS_NO_ANSWER]
+    graded = len(graded_rows)
+    no_ans = len(no_ans_rows)
+    rate = (no_ans / (graded + no_ans)) if (graded + no_ans) else None
+    scores = [
+        float(r["interaction_overall_score"])
+        for r in graded_rows
+        if r.get("interaction_overall_score") is not None
+    ]
+    avg   = (sum(scores) / len(scores)) if scores else None
+    s_min = min(scores) if scores else None
+    s_max = max(scores) if scores else None
+
+    story = []
+
+    # ── Header ──
+    loc_name = filters_meta.get("location_name") or f"Location {location_id}"
+    proj_name = filters_meta.get("project_name") or "—"
+    camp_label = filters_meta.get("campaign_label") or "All campaigns"
+    status_label = filters_meta.get("status_label") or "Graded"
+    drange_a = filters_meta.get("date_range_first")
+    drange_b = filters_meta.get("date_range_last")
+
+    story.append(Paragraph(
+        f'<font name="Helvetica-Bold" size="18" color="#0f1f3d">'
+        f'{loc_name} — Performance Report</font>',
+        ParagraphStyle("rpt_title", fontSize=18, leading=22),
+    ))
+    story.append(Paragraph(
+        f'<font name="Helvetica" size="9" color="#64748b">'
+        f'Project: {proj_name} &middot; Campaigns: {camp_label} '
+        f'&middot; Statuses: {status_label}</font>',
+        ParagraphStyle("rpt_subtitle", fontSize=9, leading=11),
+    ))
+    if drange_a and drange_b:
+        story.append(Paragraph(
+            f'<font name="Helvetica" size="9" color="#64748b">'
+            f'Date range: {drange_a} → {drange_b}</font>',
+            ParagraphStyle("rpt_date", fontSize=9, leading=11),
+        ))
+    story.append(Spacer(1, 16))
+
+    # ── Big avg-score hero ──
+    bg, _txt = _score_palette(avg)
+    avg_display = f"{avg:.1f}" if avg is not None else "—"
+    label_text = "AVERAGE SCORE" + (f" · {graded} graded calls" if graded else "")
+    score_table = Table([
+        [Paragraph(avg_display, ParagraphStyle(
+            "rpt_score", fontName="Helvetica-Bold", fontSize=48,
+            textColor=NAVY, alignment=TA_CENTER, leading=54,
+        ))],
+        [Paragraph(label_text, ParagraphStyle(
+            "rpt_score_label", fontName="Helvetica", fontSize=9,
+            textColor=SLATE, alignment=TA_CENTER, leading=11,
+        ))],
+    ], colWidths=[6.5*inch])
+    score_table.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0), (-1,-1), bg),
+        ("TOPPADDING",    (0,0), (-1,-1), 18),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 18),
+    ]))
+    story.append(score_table)
+    story.append(Spacer(1, 14))
+
+    # ── Stats grid (4-col, mirrors the per-call meta strip pattern) ──
+    rate_str  = f"{(rate * 100):.1f}%" if rate is not None else "—"
+    range_str = (f"{s_min:.1f}–{s_max:.1f}"
+                 if s_min is not None and s_max is not None else "—")
+    no_ans_disp = (f"{no_ans} ({rate_str})" if no_ans else "0")
+    cells = [
+        ("Total calls", str(total)),
+        ("Graded",      str(graded)),
+        ("No-answer",   no_ans_disp),
+        ("Score range", range_str),
+    ]
+    label_row = [Paragraph(label.upper(), styles["meta_label"]) for label, _ in cells]
+    value_row = [Paragraph(value, styles["meta_value"]) for _, value in cells]
+    stats_grid = Table([label_row, value_row], colWidths=[1.6*inch] * 4)
+    stats_grid.setStyle(TableStyle([
+        ("LINEBELOW", (0,1), (-1,1), 0.5, BORDER),
+        ("LINEABOVE", (0,0), (-1,0), 0.5, BORDER),
+        ("BACKGROUND", (0,0), (-1,-1), SOFT_BG),
+        ("TOPPADDING", (0,0), (-1,-1), 6),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+        ("LEFTPADDING", (0,0), (-1,-1), 10),
+        ("RIGHTPADDING", (0,0), (-1,-1), 10),
+    ]))
+    story.append(stats_grid)
+    story.append(Spacer(1, 14))
+
+    # ── Score distribution (text histogram) ──
+    if scores:
+        story.append(Paragraph("Score Distribution", styles["section_header"]))
+        # Lower-inclusive boundaries: bucket = "lower–upper" where lower is
+        # included and upper is excluded. So 5.0 → "5–7", 7.0 → "7–9",
+        # 9.0 → "9–10". Highest bucket is fully inclusive on both ends.
+        def _bucket(s):
+            if s < 3: return "0–3"
+            if s < 5: return "3–5"
+            if s < 7: return "5–7"
+            if s < 9: return "7–9"
+            return "9–10"
+        dist = Counter(_bucket(s) for s in scores)
+        max_count = max(dist.values()) if dist else 1
+        bucket_order = ["0–3", "3–5", "5–7", "7–9", "9–10"]
+        rows = []
+        for b in bucket_order:
+            count = dist.get(b, 0)
+            bar_len = int((count / max_count) * 30) if max_count else 0
+            bar = "█" * bar_len
+            rows.append([
+                Paragraph(b, styles["body"]),
+                Paragraph(str(count), styles["body"]),
+                Paragraph(bar, styles["body"]),
+            ])
+        dist_table = Table(rows, colWidths=[0.7*inch, 0.5*inch, 5.3*inch])
+        dist_table.setStyle(TableStyle([
+            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ("LEFTPADDING", (0,0), (-1,-1), 6),
+            ("RIGHTPADDING", (0,0), (-1,-1), 6),
+        ]))
+        story.append(dist_table)
+        story.append(Spacer(1, 12))
+
+    # ── Top callers + Top respondents (only when there are graded calls) ──
+    def _top_table(title, agg_dict, max_n=3):
+        items = sorted(agg_dict.values(), key=lambda x: -x["count"])[:max_n]
+        if not items:
+            return []
+        out = [Paragraph(title, styles["section_header"])]
+        head = [
+            Paragraph("<b>Name</b>", styles["body"]),
+            Paragraph("<b>Calls</b>", styles["body"]),
+            Paragraph("<b>Avg score</b>", styles["body"]),
+        ]
+        body_rows = [head]
+        for it in items:
+            avg_s = (sum(it["scores"]) / len(it["scores"])) if it["scores"] else None
+            body_rows.append([
+                Paragraph(it["name"] or "—", styles["body"]),
+                Paragraph(str(it["count"]), styles["body"]),
+                Paragraph(f"{avg_s:.1f}" if avg_s is not None else "—", styles["body"]),
+            ])
+        t = Table(body_rows, colWidths=[3.5*inch, 1.0*inch, 2.0*inch])
+        t.setStyle(TableStyle([
+            ("LINEBELOW", (0,0), (-1,0), 0.5, BORDER),
+            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ("LEFTPADDING", (0,0), (-1,-1), 6),
+            ("RIGHTPADDING", (0,0), (-1,-1), 6),
+            ("BACKGROUND", (0,0), (-1,0), SOFT_BG),
+        ]))
+        out.append(t)
+        out.append(Spacer(1, 10))
+        return out
+
+    if graded_rows:
+        caller_agg = defaultdict(lambda: {"count": 0, "scores": [], "name": None})
+        for r in graded_rows:
+            cid = r.get("caller_user_id")
+            if cid is None:
+                continue
+            cd = caller_agg[cid]
+            cd["count"] += 1
+            cd["name"] = r.get("caller_name") or "—"
+            s = r.get("interaction_overall_score")
+            if s is not None:
+                cd["scores"].append(float(s))
+        story.extend(_top_table("Top Callers", caller_agg))
+
+        resp_agg = defaultdict(lambda: {"count": 0, "scores": [], "name": None})
+        for r in graded_rows:
+            name = r.get("respondent_name")
+            if not name:
+                continue
+            rd = resp_agg[name]
+            rd["count"] += 1
+            rd["name"] = name
+            s = r.get("interaction_overall_score")
+            if s is not None:
+                rd["scores"].append(float(s))
+        story.extend(_top_table("Top Respondents", resp_agg))
+
+    # ── Performance Summary (AI section) ──
+    story.append(Paragraph("Performance Summary", styles["section_header"]))
+    story.append(Paragraph(
+        "Generated by AI from per-call assessments. Stats above are computed "
+        "directly from the data.",
+        styles["ai_caveat"],
+    ))
+
+    if not graded_rows:
+        story.append(Paragraph(
+            "No graded calls in this export — narrative unavailable.",
+            styles["empty_note"],
+        ))
+    elif narrative is None:
+        story.append(Paragraph(
+            "Performance summary unavailable for this export.",
+            styles["empty_note"],
+        ))
+    else:
+        for sub_title, key in [
+            ("Overall Assessment",     "overall_assessment"),
+            ("Common Strengths",       "strengths"),
+            ("Areas for Improvement",  "improvements"),
+        ]:
+            text = narrative.get(key)
+            if not text:
+                continue
+            story.append(Paragraph(sub_title, styles["subsection_header"]))
+            for raw in text.split("\n"):
+                line = raw.strip()
+                if not line:
+                    continue
+                if line.startswith("•") or line.startswith("-") or line.startswith("*"):
+                    content = line.lstrip("•-* ").strip()
+                    story.append(Paragraph(f"&bull; {content}", styles["bullet"]))
+                else:
+                    story.append(Paragraph(line, styles["body"]))
+
+    # ── Location notes (existing helper) ──
+    notes = _fetch_location_notes(conn, location_id)
+    story.extend(_build_location_notes(notes, styles))
+
+    # ── Build the doc ──
+    buf = io.BytesIO()
+    intr_for_doc = {"location_name": loc_name, "interaction_id": "report"}
+    doc = _make_doc(buf, intr_for_doc)
     doc.build(story, canvasmaker=_NumberedCanvas)
     return buf.getvalue()

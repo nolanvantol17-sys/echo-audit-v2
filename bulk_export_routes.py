@@ -18,6 +18,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request, send_file
 from flask_login import current_user, login_required
 
+import location_report
 import pdf_export
 from audit_log import ACTION_EXPORTED, ENTITY_LOCATION, write_audit_log
 from auth import role_required
@@ -272,6 +273,7 @@ def export_location_bulk(location_id):
     statuses = _resolve_status_set(request.args)
     placeholders = ",".join(["?"] * len(statuses))
     campaign_ids, inc_unc, camp_where, camp_params = _resolve_campaign_filter(request.args)
+    include_summary = request.args.get("include_summary") == "1"
 
     succeeded_ids = []
     skipped       = []   # list of (iid, date_str, caller_name, reason)
@@ -302,9 +304,21 @@ def export_location_bulk(location_id):
         # so a single row's failure doesn't poison the whole result set).
         rows = conn.execute(
             q(f"""SELECT i.interaction_id, i.interaction_date, i.status_id,
-                         (caller.user_first_name || ' ' || caller.user_last_name) AS caller_name
+                         i.caller_user_id,
+                         i.interaction_overall_score,
+                         i.interaction_strengths,
+                         i.interaction_weaknesses,
+                         i.interaction_overall_assessment,
+                         (caller.user_first_name || ' ' || caller.user_last_name) AS caller_name,
+                         COALESCE(
+                             r.respondent_name,
+                             NULLIF(TRIM(u_resp.user_first_name || ' ' || u_resp.user_last_name), ''),
+                             i.interaction_responder_name
+                         ) AS respondent_name
                   FROM interactions i
                   LEFT JOIN users caller ON caller.user_id = i.caller_user_id
+                  LEFT JOIN users       u_resp ON u_resp.user_id    = i.respondent_user_id
+                  LEFT JOIN respondents r      ON r.respondent_id   = i.respondent_id
                   WHERE i.interaction_location_id = ?
                     AND i.project_id              = ?
                     AND i.interaction_deleted_at IS NULL
@@ -382,6 +396,85 @@ def export_location_bulk(location_id):
                 )
                 zf.writestr("_export_manifest.txt", manifest,
                             compress_type=zipfile.ZIP_DEFLATED)
+
+            # Location summary PDF (opt-in, default-on per the modal). All
+            # work wrapped in try/except — if anything blows up, the per-call
+            # PDFs are already in the ZIP. Narrative=None is NOT a failure
+            # (the renderer shows an "unavailable" message inline); only
+            # hard exceptions write the error file.
+            if include_summary:
+                try:
+                    rows_dict = [dict(r) for r in rows]
+                    scored = [
+                        r for r in rows_dict
+                        if r.get("status_id") == _GRADED_STATUS
+                        and r.get("interaction_overall_score") is not None
+                    ]
+                    dates = [r.get("interaction_date") for r in rows_dict
+                             if r.get("interaction_date")]
+                    avg_score = (
+                        sum(float(r["interaction_overall_score"]) for r in scored)
+                        / len(scored)
+                    ) if scored else None
+                    aggregate_stats = {
+                        "avg_score":         avg_score,
+                        "total_graded":      len(scored),
+                        "date_range_first":  min(dates).isoformat() if dates else None,
+                        "date_range_last":   max(dates).isoformat() if dates else None,
+                    }
+                    # Status label mirrors what _resolve_status_set produced.
+                    parts = ["graded"]
+                    if request.args.get("include_no_answer") == "1": parts.append("no-answer")
+                    if request.args.get("include_failed")    == "1": parts.append("failed")
+                    status_label = " + ".join(parts)
+                    # Campaign label: fetch names so the customer-facing PDF
+                    # subtitle isn't a list of integers. 4+ selections collapse
+                    # to "X selected" to avoid an unwieldy subtitle.
+                    if campaign_ids:
+                        cur = conn.execute(
+                            q(f"""SELECT campaign_id, campaign_name
+                                    FROM campaigns
+                                   WHERE campaign_id IN ({",".join(["?"] * len(campaign_ids))})
+                                     AND campaign_deleted_at IS NULL"""),
+                            campaign_ids,
+                        )
+                        names = {r["campaign_id"]: r["campaign_name"] for r in cur.fetchall()}
+                        camp_label_parts = [names.get(cid, f"#{cid}") for cid in campaign_ids]
+                        if inc_unc:
+                            camp_label_parts.append("Uncategorized")
+                        if len(camp_label_parts) >= 4:
+                            camp_label = f"{len(camp_label_parts)} selected"
+                        else:
+                            camp_label = ", ".join(camp_label_parts)
+                    elif inc_unc:
+                        camp_label = "Uncategorized"
+                    else:
+                        camp_label = "All campaigns"
+                    filters_meta = {
+                        "location_name":     loc["location_name"],
+                        "project_name":      proj["project_name"],
+                        "campaign_label":    camp_label,
+                        "status_label":      status_label,
+                        "date_range_first":  aggregate_stats["date_range_first"],
+                        "date_range_last":   aggregate_stats["date_range_last"],
+                    }
+                    narrative = location_report.generate_narrative(
+                        company_id, scored, aggregate_stats
+                    )
+                    pdf_bytes = pdf_export.render_location_report_pdf(
+                        conn, location_id, rows_dict, narrative, filters_meta
+                    )
+                    zf.writestr("_LOCATION_REPORT.pdf", pdf_bytes,
+                                compress_type=zipfile.ZIP_DEFLATED)
+                except Exception as e:
+                    logger.exception("Location report generation failed")
+                    msg = (
+                        "Location report unavailable for this export.\n"
+                        f"Reason: {type(e).__name__}: {str(e)[:200]}\n"
+                        "Calls were exported successfully — see other PDFs in this archive.\n"
+                    )
+                    zf.writestr("_LOCATION_REPORT_ERROR.txt", msg,
+                                compress_type=zipfile.ZIP_DEFLATED)
 
         zip_buf.seek(0)
         zip_size = len(zip_buf.getvalue())
