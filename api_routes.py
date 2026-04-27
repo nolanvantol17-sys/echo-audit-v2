@@ -380,6 +380,11 @@ def list_locations():
                 v = r.get(k)
                 if v is not None:
                     r[k] = int(v)
+            # Derived: no_answer_rate = no_ans / (graded + no_ans). Null when
+            # the denominator is zero (no terminal calls yet for this loc).
+            g = r.get("graded_count") or 0
+            n = r.get("no_answer_count") or 0
+            r["no_answer_rate"] = (n / (g + n)) if (g + n) else None
         return jsonify(rows)
     finally:
         conn.close()

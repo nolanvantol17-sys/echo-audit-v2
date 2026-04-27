@@ -262,6 +262,7 @@
       const total    = l.total_calls    || 0;
       const graded   = l.graded_count   || 0;
       const noAnswer = l.no_answer_count || 0;
+      const noAnsRate = l.no_answer_rate;
       const avgPill  = (l.avg_score != null)
         ? '<span class="score-pill ' + EA.scoreClass(l.avg_score) + '">' +
             EA.formatScore(l.avg_score) + '</span>'
@@ -269,6 +270,12 @@
       const lastCall = l.last_call_date ? EA.formatRelativeTime(l.last_call_date) : "—";
       const mutedStyle = ' style="color: var(--muted);"';
       const warnStyle  = ' style="color: var(--warning);"';
+      const noAnsCell = (noAnswer === 0)
+        ? ('<span' + mutedStyle + '>0</span>')
+        : ('<span' + warnStyle + '>' + noAnswer + '</span>' +
+           (noAnsRate != null
+             ? (' <span' + mutedStyle + '>(' + (noAnsRate * 100).toFixed(1) + '%)</span>')
+             : ''));
       return (
         '<tr data-id="' + l.location_id + '">' +
           '<td class="loc-table-checkbox-col">' +
@@ -284,11 +291,7 @@
           '<td style="text-align:right;">' +
             (graded === 0 ? '<span' + mutedStyle + '>0</span>' : graded) +
           '</td>' +
-          '<td style="text-align:right;">' +
-            (noAnswer === 0
-              ? '<span' + mutedStyle + '>0</span>'
-              : '<span' + warnStyle  + '>' + noAnswer + '</span>') +
-          '</td>' +
+          '<td style="text-align:right;">' + noAnsCell + '</td>' +
           '<td style="text-align:right;">' + avgPill + '</td>' +
           '<td>' + EA.esc(lastCall) + '</td>' +
           '<td style="text-align:right;">' +
