@@ -753,6 +753,9 @@ def bulk_upload_locations():
 # Any authenticated user can read the intel for a location in their company.
 # Returned by the grade form to populate the property intel card.
 
+# Mirrors intel.py — kept local to avoid a cross-module import for one int.
+_STATUS_NO_ANSWER = 44
+
 
 @api_bp.route("/locations/<int:location_id>/intel", methods=["GET"])
 @login_required
@@ -782,11 +785,54 @@ def get_location_intel(location_id):
             (location_id, company_id),
         )
         row = _row_to_dict(cur.fetchone())
+
+        # Recent no-answers — pure SQL list, surfaced alongside the AI brief.
+        # Helps callers spot bad-time-of-day patterns ("3 dead calls at 2pm").
+        # NULLS LAST is PG-only; SQLite dev env will sort NULLs first which is
+        # acceptable for local testing only.
+        cur = conn.execute(
+            q("""SELECT i.interaction_id,
+                        i.interaction_date,
+                        i.interaction_call_start_time,
+                        i.interaction_uploaded_at,
+                        u.user_first_name,
+                        u.user_last_name
+                   FROM interactions i
+                   LEFT JOIN users u ON u.user_id = i.caller_user_id
+                  WHERE i.interaction_location_id = ?
+                    AND i.status_id = ?
+                    AND i.interaction_deleted_at IS NULL
+                  ORDER BY COALESCE(i.interaction_call_start_time,
+                                    i.interaction_uploaded_at) DESC,
+                           i.interaction_id DESC
+                  LIMIT 5"""),
+            (location_id, _STATUS_NO_ANSWER),
+        )
+        no_answers = [_row_to_dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
 
+    recent = [
+        {
+            "interaction_id":   r["interaction_id"],
+            "date":             r.get("interaction_date"),
+            "call_start_time":  r.get("interaction_call_start_time"),
+            "uploaded_at":      r.get("interaction_uploaded_at"),
+            "caller_name": (
+                ((r.get("user_first_name") or "") + " " +
+                 (r.get("user_last_name")  or "")).strip()
+                or None
+            ),
+        }
+        for r in no_answers
+    ]
+
     if not row:
-        return jsonify({"computed": False, "location_id": location_id})
+        return jsonify({
+            "computed":          False,
+            "location_id":       location_id,
+            "recent_no_answers": recent,
+        })
 
     # Coerce numerics for predictable client-side handling.
     if row.get("li_avg_score") is not None:
@@ -796,6 +842,7 @@ def get_location_intel(location_id):
 
     row["computed"] = True
     row["location_id"] = location_id
+    row["recent_no_answers"] = recent
     return jsonify(row)
 
 

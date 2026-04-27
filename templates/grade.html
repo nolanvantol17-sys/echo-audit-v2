@@ -198,6 +198,39 @@
     font-size: 0.76rem;
     font-style: italic;
   }
+  .intel-noans {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .intel-noans-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .intel-noans-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .intel-noans-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 0.85rem;
+    line-height: 1.35;
+  }
+  .intel-noans-time {
+    font-weight: 600;
+    color: var(--text);
+  }
+  .intel-noans-meta {
+    color: var(--muted);
+    font-size: 0.78rem;
+  }
   .intel-skeleton {
     height: 14px;
     background: var(--surface-2);
@@ -1317,6 +1350,18 @@
   }
 
   function renderLocationIntel(card, intel) {
+    const noAns = (intel && intel.recent_no_answers) || [];
+
+    // Edge case: no cached intel row yet, but the location already has
+    // logged no-answers (intel daemon hasn't fired or has been skipped).
+    // Surface the no-answers list standalone — still useful pre-call info.
+    if (!intel.computed && noAns.length) {
+      card.classList.remove("compact");
+      card.classList.remove("empty");
+      card.innerHTML = renderRecentNoAnswers(noAns);
+      return;
+    }
+
     // Both "no intel computed yet" and "intel exists but zero calls" collapse
     // to the same single muted line — there's nothing useful to differentiate
     // for the user; both mean "no prior history to show."
@@ -1385,6 +1430,8 @@
         '</div>';
     }
 
+    const noAnsHtml = renderRecentNoAnswers(noAns);
+
     let staleHtml = '';
     if (intel.li_last_computed_at) {
       const computed = new Date(intel.li_last_computed_at);
@@ -1395,7 +1442,32 @@
       }
     }
 
-    card.innerHTML = statsHtml + briefHtml + staleHtml;
+    card.innerHTML = statsHtml + briefHtml + noAnsHtml + staleHtml;
+  }
+
+  function renderRecentNoAnswers(rows) {
+    if (!rows || !rows.length) return '';
+    return (
+      '<div class="intel-noans">' +
+        '<div class="intel-noans-label">Recent unanswered calls</div>' +
+        '<div class="intel-noans-list">' +
+          rows.map(renderNoAnsRow).join('') +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function renderNoAnsRow(r) {
+    const time = EA.formatCallTime(r.call_start_time, r.uploaded_at, null);
+    const date = r.date ? EA.formatDate(r.date) : '';
+    const caller = (r.caller_name || '').trim();
+    const meta = [date, caller].filter(Boolean).map(EA.esc).join(' · ');
+    return (
+      '<div class="intel-noans-row">' +
+        '<span class="intel-noans-time">' + EA.esc(time || '—') + '</span>' +
+        (meta ? '<span class="intel-noans-meta">' + meta + '</span>' : '') +
+      '</div>'
+    );
   }
 
   function bulletsHtml(text) {
