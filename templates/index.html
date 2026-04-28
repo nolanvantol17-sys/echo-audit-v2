@@ -224,7 +224,7 @@
   {# ── Row 1: stat cards ─────────────────────────────────── #}
   <div class="dash3-stats">
     <div class="stat-card">
-      <span class="stat-label">Total Calls</span>
+      <span class="stat-label">Graded Calls</span>
       <span class="stat-value" id="stat-total">
         <span class="skeleton" style="display:inline-block;width:54px;height:22px;"></span>
       </span>
@@ -301,8 +301,28 @@
     document.getElementById("stat-avg").textContent      =
       (s.avg_score === null || s.avg_score === undefined) ? "—" : EA.formatScore(s.avg_score);
     document.getElementById("stat-below").textContent    = num(s.below_threshold, 0);
-    document.getElementById("stat-noans").textContent    = num(s.no_answer_count, 0);
+    renderNoAnsTile(s);
     document.getElementById("stat-projects").textContent = num(s.active_projects, 0);
+  }
+
+  // Render count (rate%) in the Unanswered tile — mirrors the locations
+  // table cell treatment: muted "0" when zero, warning count + dimmed
+  // parenthetical when nonzero. Numbers only — no user data flows here,
+  // so direct innerHTML construction is XSS-safe.
+  function renderNoAnsTile(s) {
+    const el = document.getElementById("stat-noans");
+    if (!el) return;
+    const count = (s.no_answer_count === null || s.no_answer_count === undefined)
+                  ? 0 : s.no_answer_count;
+    const rate  = s.no_answer_rate;
+    if (count === 0) {
+      el.innerHTML = '<span style="color: var(--muted);">0</span>';
+    } else if (rate !== null && rate !== undefined) {
+      el.innerHTML = count + ' <span style="color: var(--muted);">(' +
+        (rate * 100).toFixed(1) + '%)</span>';
+    } else {
+      el.textContent = String(count);
+    }
   }
 
   function renderLeaderboard(rows) {

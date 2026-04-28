@@ -35,7 +35,22 @@
         ? "—" : EA.formatScore(s.avg_score);
     }
     set("stat-below", num(s.below_threshold, 0));
-    set("stat-noans", num(s.no_answer_count, 0));
+    // Unanswered tile: count (rate%) when nonzero with rate. Mirrors the
+    // locations table cell treatment. Direct innerHTML is XSS-safe — only
+    // numbers flow in.
+    const noAnsEl = document.getElementById("stat-noans");
+    if (noAnsEl) {
+      const count = num(s.no_answer_count, 0);
+      const rate  = s.no_answer_rate;
+      if (count === 0) {
+        noAnsEl.innerHTML = '<span style="color: var(--muted);">0</span>';
+      } else if (rate !== null && rate !== undefined) {
+        noAnsEl.innerHTML = count + ' <span style="color: var(--muted);">(' +
+          (rate * 100).toFixed(1) + '%)</span>';
+      } else {
+        noAnsEl.textContent = String(count);
+      }
+    }
     // Landing-only: 5th card is only in the DOM when
     // include_active_projects=True was passed to the partial.
     const projEl = document.getElementById("stat-projects");

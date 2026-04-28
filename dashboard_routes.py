@@ -290,12 +290,20 @@ def get_dashboard():
         )
         recent = _rows(cur)
 
+        # Derived: no_answer_rate = no_ans / (graded + no_ans). Null when
+        # the denominator is zero (no terminal calls this month). Mirrors
+        # the list_locations pattern so per-tile and per-row math agree.
+        graded_total = _scalar(scored_row, "total_calls", 0)
+        nar_denom    = (graded_total or 0) + (no_answer_count or 0)
+        no_answer_rate = (no_answer_count / nar_denom) if nar_denom else None
+
         return jsonify({
             "stat_cards": {
                 "total_calls":      _scalar(scored_row, "total_calls", 0),
                 "avg_score":        avg_score,
                 "below_threshold":  _scalar(scored_row, "below_threshold", 0),
                 "no_answer_count":  no_answer_count,
+                "no_answer_rate":   no_answer_rate,
                 "active_projects":  active_projects,
             },
             "leaderboard":        leaderboard,
