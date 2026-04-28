@@ -73,6 +73,11 @@ def compute_location_intel(location_id, company_id):
 
     Skips the Claude call (and leaves AI columns NULL) when there are no
     graded calls — only no-answers or no calls at all.
+
+    When there are zero live interactions, deletes any existing
+    location_intel row instead of upserting an empty one. This prevents
+    orphan cached AI summaries from outliving their underlying calls
+    (e.g., after hard-delete or migration purges).
     """
     conn = get_conn()
     try:
@@ -98,7 +103,16 @@ def compute_location_intel(location_id, company_id):
     finally:
         conn.close()
 
-    total_calls      = len(rows)
+    total_calls = len(rows)
+
+    if total_calls == 0:
+        _delete_intel(location_id, company_id)
+        logger.info(
+            "Cleared orphan location_intel for location_id=%s (no live interactions)",
+            location_id,
+        )
+        return
+
     no_answer_count  = sum(1 for r in rows if r["status_id"] == _STATUS_NO_ANSWER)
     scored = [
         r for r in rows
@@ -166,6 +180,22 @@ def _fetch_existing(location_id, company_id):
             (location_id, company_id),
         )
         return _row_to_dict(cur.fetchone())
+    finally:
+        conn.close()
+
+
+def _delete_intel(location_id, company_id):
+    """Delete the location_intel row for (location, company). Idempotent."""
+    conn = get_conn()
+    try:
+        conn.execute(
+            q("DELETE FROM location_intel WHERE location_id = ? AND company_id = ?"),
+            (location_id, company_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
