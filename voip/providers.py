@@ -15,6 +15,7 @@ of each provider class.
 import hashlib
 import hmac
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Optional
@@ -458,51 +459,98 @@ class EightByEightProvider(VoIPProvider):
 
 # ── Provider: ElevenLabs (AI calling) ────────────────────────
 #
-# ElevenLabs Conversational AI fires a post-call webhook when an
-# outbound call placed through their agent ends. Unlike traditional
-# VoIP providers, ElevenLabs returns BOTH a recording URL and a
-# transcript array, plus the dynamic_variables the AI caller passed
-# at call initiation. Echo Audit's calling system stamps each call
-# with attribution (echo_audit_location_id, echo_audit_project_id,
-# echo_audit_campaign_id, echo_audit_caller_user_id) via
-# dynamic_variables — those are extracted in C2 and used to populate
-# the interaction row instead of the legacy "active project" fallback.
+# ElevenLabs Conversational AI fires post-call webhooks when an
+# outbound call placed through their agent ends. Echo Audit's calling
+# system stamps each call with attribution
+# (echo_audit_location_id, echo_audit_project_id, echo_audit_campaign_id,
+# echo_audit_caller_user_id) via dynamic_variables — those are
+# extracted in C2 and used to populate the interaction row instead of
+# the legacy "active project" fallback.
 #
-# C1 SCOPE (current commit):
-#   - HMAC-SHA256 signature verification (header name TBD — checks
-#     both ElevenLabs-Signature and X-ElevenLabs-Signature defensively)
-#   - Minimal parse_webhook: extract conversation_id (for queue dedup)
-#     + best-effort audio URL + duration. Full payload preserved in
-#     raw_payload for the C2 discovery step to refine field names.
+# Two webhooks per call:
+#   - "post_call_transcription"  — small (~16 KB), structured: transcript,
+#                                  dynamic_variables, agent metadata. KEEP.
+#   - "post_call_audio"          — large (~2.5 MB) base64 audio inline.
+#                                  DROP at parse_webhook (return None ACKs
+#                                  200 without queueing). Audio is fetched
+#                                  via URL from the transcription event.
 #
-# C2 SCOPE (next):
-#   - Extract dynamic_variables → tenant-verified attribution IDs
-#   - Convert transcript turn array → "[mm:ss] Speaker X: text" lines
-#   - Skip AssemblyAI; pass ElevenLabs transcript directly to grader
-#
-# ASSUMPTIONS (verify after the discovery test call):
-#   - Signature is HMAC-SHA256 of raw body with shared secret, hex
-#     encoded, optionally prefixed "sha256="
-#   - conversation_id is at the top level
-#   - audio URL field name is one of: audio_url, recording_url, or
-#     nested under data/metadata/conversation
+# Signature scheme (Stripe-style; confirmed via 2026-04-29 discovery):
+#   Header:   Elevenlabs-Signature: t=<unix_ts>,v0=<sha256_hex>[,v0=...]
+#   Content:  "{timestamp}.{raw_body}"   (literal "." separator)
+#   HMAC:     SHA-256, hex output, lowercase
+#   Secret:   used as-is (UTF-8). The "wsec_" prefix is a vendor identifier,
+#             NOT a base64 envelope (different from Svix's whsec_ scheme).
+#   Replay:   reject if |now - t| > 300s.
+#   Rotation: header may carry multiple v0= entries; accept if ANY matches.
 
 
 class ElevenLabsProvider(VoIPProvider):
     name = "elevenlabs"
 
+    # Replay-protection window. 5 minutes matches Stripe's recommendation —
+    # tight enough to make captured-payload replay impractical, loose enough
+    # to tolerate normal clock drift between sender and receiver. Hardcoded;
+    # refactor to a constructor param if a reason to vary surfaces.
+    SIGNATURE_MAX_AGE_SECONDS = 300
+
     def verify_signature(self, payload: bytes, headers: dict, secret: str) -> bool:
         provided = self._header(headers, "ElevenLabs-Signature", "X-ElevenLabs-Signature")
         if not provided or not secret:
             return False
-        provided = provided.strip()
-        if provided.startswith("sha256="):
-            provided = provided[len("sha256="):]
-        expected = _hmac_sha256_hex(secret, payload)
-        return _constant_time_equal(expected, provided)
+
+        # Parse "t=<ts>,v0=<sig>[,v0=<sig>...]" — values may contain "=" so
+        # split each k=v on the FIRST "=" only. Multiple v0= entries appear
+        # during secret rotation; collect them all, accept if any matches.
+        timestamp = None
+        sigs = []
+        for part in provided.split(","):
+            kv = part.strip().split("=", 1)
+            if len(kv) != 2:
+                continue
+            key, value = kv[0].strip().lower(), kv[1].strip()
+            if key == "t" and timestamp is None:
+                try:
+                    timestamp = int(value)
+                except ValueError:
+                    return False
+            elif key == "v0":
+                sigs.append(value)
+
+        if timestamp is None or not sigs:
+            return False
+
+        # Replay guard: bidirectional |now - t| > MAX rejects. Bidirectional
+        # because clock skew can put "now" briefly behind the sender.
+        age = abs(int(time.time()) - timestamp)
+        if age > self.SIGNATURE_MAX_AGE_SECONDS:
+            logger.info(
+                "[voip_webhook signature_replay_window] provider=%s timestamp_age=%ds (max=%ds)",
+                self.name, age, self.SIGNATURE_MAX_AGE_SECONDS,
+            )
+            return False
+
+        # Stripe-style signed content: "{timestamp}.{raw_body}"
+        signed_content = f"{timestamp}.".encode("ascii") + payload
+        expected = hmac.new(
+            secret.encode("utf-8"), signed_content, hashlib.sha256,
+        ).hexdigest()
+
+        for sig in sigs:
+            if hmac.compare_digest(expected, sig):
+                return True
+        return False
 
     def parse_webhook(self, payload: dict, headers: dict) -> Optional[VoIPCallEvent]:
         if not payload:
+            return None
+
+        # Drop post_call_audio events (2.5MB+ base64 inline audio). The
+        # transcription event arrives separately with the same conversation_id
+        # and carries an audio URL we can fetch on demand. Returning None
+        # makes the route handler ACK 200 without queueing — ElevenLabs
+        # won't retry and we avoid the dedup collision on conversation_id.
+        if payload.get("type") == "post_call_audio":
             return None
 
         # conversation_id is the dedup key — required. Try common shapes;
@@ -515,7 +563,7 @@ class ElevenLabsProvider(VoIPProvider):
         if not conversation_id:
             return None
 
-        # Best-effort audio URL location. Refined in C2 once the real
+        # Best-effort audio URL location. Refined in C2b once the real
         # payload shape is known.
         audio_url = (
             payload.get("audio_url")
@@ -532,7 +580,7 @@ class ElevenLabsProvider(VoIPProvider):
         )
 
         # Caller / called numbers may live inside dynamic_variables or
-        # metadata; leaving NULL here for C1 — C2 wires attribution.
+        # metadata; leaving NULL here for C2a — C2b wires attribution.
         return VoIPCallEvent(
             provider="elevenlabs",
             call_id=str(conversation_id),
@@ -543,6 +591,7 @@ class ElevenLabsProvider(VoIPProvider):
                 _safe_get(payload, "metadata", "started_at")
                 or _safe_get(payload, "metadata", "timestamp")
                 or payload.get("started_at")
+                or payload.get("event_timestamp")
             ),
             duration_seconds=duration,
             raw_payload=payload,
