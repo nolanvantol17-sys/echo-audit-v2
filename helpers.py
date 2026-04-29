@@ -6,6 +6,7 @@ Kept as a standalone module to avoid circular imports between the
 main app file and the blueprints.
 """
 
+import re
 import secrets
 from datetime import datetime
 
@@ -73,12 +74,14 @@ def get_effective_company_id():
 
 
 RATE_LIMITS = {
-    ("assemblyai", "hour"): 10,
-    ("assemblyai", "day"):  50,
-    ("anthropic",  "hour"): 10,
-    ("anthropic",  "day"):  50,
-    ("twilio",     "hour"):  5,
-    ("twilio",     "day"):  20,
+    ("assemblyai",      "hour"):   10,
+    ("assemblyai",      "day"):    50,
+    ("anthropic",       "hour"):   10,
+    ("anthropic",       "day"):    50,
+    ("twilio",          "hour"):    5,
+    ("twilio",          "day"):    20,
+    ("external_lookup", "hour"):   60,
+    ("external_lookup", "day"): 1000,
 }
 
 
@@ -124,6 +127,21 @@ def check_rate_limit(company_id, service):
         return True, ""
     finally:
         conn.close()
+
+
+def phone_digits(s):
+    """Strip non-digits and return the trailing 10. Returns '' if <10 digits.
+
+    Normalizes phone numbers for cross-format comparison. Handles E.164
+    (+12144421314), US-formatted ((214) 442-1314), and plain digits
+    consistently — all map to '2144421314'. Pure function, no DB.
+    """
+    if not s:
+        return ""
+    digits = re.sub(r"\D", "", str(s))
+    if len(digits) < 10:
+        return ""
+    return digits[-10:]
 
 
 def load_active_hints(company_id):

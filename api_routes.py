@@ -11,11 +11,13 @@ get_effective_company_id() on every route except /api/companies
 
 import logging
 from datetime import date, timedelta
+from time import perf_counter
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 from flask_login import current_user, login_required
 
 import auth
+from api_key_auth import require_api_key
 from audit_log import (
     ACTION_CREATED, ACTION_DELETED, ACTION_UPDATED,
     ENTITY_CAMPAIGN, ENTITY_COMPANY, ENTITY_DEPARTMENT, ENTITY_LOCATION,
@@ -27,7 +29,10 @@ from dashboard_helpers import (
     _month_bounds, _report_url_for, _roll_up_locations, _trend_for_calls,
 )
 from db import get_conn, q, IS_POSTGRES
-from helpers import generate_temp_password, get_effective_company_id
+from helpers import (
+    phone_digits, check_rate_limit, generate_temp_password,
+    get_effective_company_id, increment_usage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2334,5 +2339,151 @@ def list_industries():
             ORDER BY industry_name
         """))
         return jsonify(_rows(cur))
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+# EXTERNAL API  (API-key-authenticated, machine-to-machine)
+# ═══════════════════════════════════════════════════════════════
+# These endpoints are NOT @login_required. They authenticate via
+# @require_api_key against the api_keys table, and the company is
+# read from g.api_key_company_id (set by the decorator).
+# Rate-limited under the "external_lookup" service. Audit rows are
+# written to api_call_log on success.
+# ═══════════════════════════════════════════════════════════════
+
+
+@api_bp.route("/external/locations/lookup", methods=["GET"])
+@require_api_key
+def external_locations_lookup():
+    """Look up locations by phone for an external integration.
+
+    Returns all locations in the API key's company whose phone matches
+    the trailing 10 digits of the input. Each match includes the active
+    projects + campaigns for the company. Multiple matches are possible
+    — production has duplicate phones across distinct locations.
+
+    Phone matching is digits-only, trailing-10. Inputs accepted in any
+    format (E.164: +12144421314, US-formatted: (214) 442-1314, plain
+    digits: 2144421314) — all map to '2144421314' before comparison so
+    +1 prefix mismatch never causes a miss.
+
+    Project filter: status_id = 1, not deleted, not past project_end_date.
+    Campaign filter: not deleted (campaigns have no time bounds).
+    """
+    started    = perf_counter()
+    company_id = g.api_key_company_id
+
+    raw_phone = (request.args.get("phone") or "").strip()
+    if not raw_phone:
+        return _err("phone parameter required", 400)
+
+    digits = phone_digits(raw_phone)
+    if not digits:
+        return _err("phone must contain at least 10 digits", 400)
+
+    ok, _msg = check_rate_limit(company_id, "external_lookup")
+    if not ok:
+        return _err("rate limit exceeded", 429)
+
+    conn = get_conn()
+    try:
+        # 1. Active projects for the company. The same set applies to every
+        #    matched location — projects are scoped to company, not location.
+        cur = conn.execute(q("""
+            SELECT project_id, project_name, project_all_locations
+              FROM projects
+             WHERE company_id = ?
+               AND status_id = 1
+               AND project_deleted_at IS NULL
+               AND (project_end_date IS NULL OR project_end_date >= CURRENT_DATE)
+             ORDER BY project_id
+        """), (company_id,))
+        projects = _rows(cur)
+        for p in projects:
+            # Postgres returns Python bool; SQLite returns 0/1. Normalize.
+            p["project_all_locations"] = bool(p.get("project_all_locations"))
+
+        # 2. Active campaigns for those projects (single query, group in Python).
+        campaigns_by_project = {p["project_id"]: [] for p in projects}
+        if projects:
+            project_ids  = tuple(p["project_id"] for p in projects)
+            placeholders = ", ".join("?" for _ in project_ids)
+            cur = conn.execute(q(f"""
+                SELECT campaign_id, campaign_name, project_id
+                  FROM campaigns
+                 WHERE project_id IN ({placeholders})
+                   AND campaign_deleted_at IS NULL
+                 ORDER BY campaign_id
+            """), project_ids)
+            for c in _rows(cur):
+                pid = c.pop("project_id")
+                campaigns_by_project.setdefault(pid, []).append(c)
+        for p in projects:
+            p["campaigns"] = campaigns_by_project.get(p["project_id"], [])
+
+        # 3. Matching locations. PG: regexp at the DB. SQLite: filter in Python.
+        if IS_POSTGRES:
+            cur = conn.execute("""
+                SELECT location_id, location_name, location_phone
+                  FROM locations
+                 WHERE company_id = %s
+                   AND location_deleted_at IS NULL
+                   AND regexp_replace(COALESCE(location_phone, ''),
+                                      '[^0-9]', '', 'g') LIKE %s
+                 ORDER BY location_name ASC
+            """, (company_id, "%" + digits))
+            location_rows = _rows(cur)
+        else:
+            cur = conn.execute(q("""
+                SELECT location_id, location_name, location_phone
+                  FROM locations
+                 WHERE company_id = ?
+                   AND location_deleted_at IS NULL
+                 ORDER BY location_name ASC
+            """), (company_id,))
+            location_rows = [
+                r for r in _rows(cur)
+                if phone_digits(r.get("location_phone") or "") == digits
+            ]
+
+        matches = [
+            {
+                "location_id":     loc["location_id"],
+                "location_name":   loc["location_name"],
+                "location_phone":  loc.get("location_phone"),
+                "company_id":      company_id,
+                "active_projects": projects,
+            }
+            for loc in location_rows
+        ]
+
+        # 4. Audit log + usage increment. Best-effort writes — never fail
+        #    the response on logging failures.
+        latency_ms = int((perf_counter() - started) * 1000)
+        try:
+            if IS_POSTGRES:
+                conn.execute("""
+                    INSERT INTO api_call_log
+                        (company_id, acl_service, acl_response_status, acl_latency_ms)
+                    VALUES (%s, %s, %s, %s)
+                """, (company_id, "external_lookup", "200", latency_ms))
+            else:
+                conn.execute("""
+                    INSERT INTO api_call_log
+                        (company_id, acl_service, acl_response_status, acl_latency_ms)
+                    VALUES (?, ?, ?, ?)
+                """, (company_id, "external_lookup", "200", latency_ms))
+            conn.commit()
+        except Exception:
+            logger.exception("Failed to write api_call_log row")
+
+        increment_usage(company_id, "external_lookup")
+
+        return jsonify({
+            "matches":     matches,
+            "match_count": len(matches),
+        })
     finally:
         conn.close()
