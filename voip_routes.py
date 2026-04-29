@@ -200,9 +200,23 @@ def voip_webhook(company_id):
     )
 
     if not provider.verify_signature(raw_body, headers, secret):
-        logger.warning("Webhook signature verification failed (company=%s provider=%s)",
-                       company_id, provider_key)
+        # Log full headers + body excerpt so we can debug provider integration
+        # mismatches (wrong header name, wrong signing scheme, secret typo).
+        # Grep tag: [voip_webhook signature_failed]
+        logger.warning(
+            "[voip_webhook signature_failed] company=%s provider=%s headers=%r body[:200]=%r",
+            company_id, provider_key, headers, raw_body[:200],
+        )
         return _err("Signature verification failed", 401)
+
+    # Mirror visibility on the success path at DEBUG level — off by default in
+    # prod, available when manually raised for inspection. Grep tag:
+    # [voip_webhook signature_ok]
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "[voip_webhook signature_ok] company=%s provider=%s headers=%r body[:200]=%r",
+            company_id, provider_key, headers, raw_body[:200],
+        )
 
     # ── Parse payload ──
     try:
