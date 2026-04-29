@@ -456,6 +456,99 @@ class EightByEightProvider(VoIPProvider):
         )
 
 
+# ── Provider: ElevenLabs (AI calling) ────────────────────────
+#
+# ElevenLabs Conversational AI fires a post-call webhook when an
+# outbound call placed through their agent ends. Unlike traditional
+# VoIP providers, ElevenLabs returns BOTH a recording URL and a
+# transcript array, plus the dynamic_variables the AI caller passed
+# at call initiation. Echo Audit's calling system stamps each call
+# with attribution (echo_audit_location_id, echo_audit_project_id,
+# echo_audit_campaign_id, echo_audit_caller_user_id) via
+# dynamic_variables — those are extracted in C2 and used to populate
+# the interaction row instead of the legacy "active project" fallback.
+#
+# C1 SCOPE (current commit):
+#   - HMAC-SHA256 signature verification (header name TBD — checks
+#     both ElevenLabs-Signature and X-ElevenLabs-Signature defensively)
+#   - Minimal parse_webhook: extract conversation_id (for queue dedup)
+#     + best-effort audio URL + duration. Full payload preserved in
+#     raw_payload for the C2 discovery step to refine field names.
+#
+# C2 SCOPE (next):
+#   - Extract dynamic_variables → tenant-verified attribution IDs
+#   - Convert transcript turn array → "[mm:ss] Speaker X: text" lines
+#   - Skip AssemblyAI; pass ElevenLabs transcript directly to grader
+#
+# ASSUMPTIONS (verify after the discovery test call):
+#   - Signature is HMAC-SHA256 of raw body with shared secret, hex
+#     encoded, optionally prefixed "sha256="
+#   - conversation_id is at the top level
+#   - audio URL field name is one of: audio_url, recording_url, or
+#     nested under data/metadata/conversation
+
+
+class ElevenLabsProvider(VoIPProvider):
+    name = "elevenlabs"
+
+    def verify_signature(self, payload: bytes, headers: dict, secret: str) -> bool:
+        provided = self._header(headers, "ElevenLabs-Signature", "X-ElevenLabs-Signature")
+        if not provided or not secret:
+            return False
+        provided = provided.strip()
+        if provided.startswith("sha256="):
+            provided = provided[len("sha256="):]
+        expected = _hmac_sha256_hex(secret, payload)
+        return _constant_time_equal(expected, provided)
+
+    def parse_webhook(self, payload: dict, headers: dict) -> Optional[VoIPCallEvent]:
+        if not payload:
+            return None
+
+        # conversation_id is the dedup key — required. Try common shapes;
+        # discovery test will tell us which is real.
+        conversation_id = (
+            payload.get("conversation_id")
+            or _safe_get(payload, "data", "conversation_id")
+            or payload.get("id")
+        )
+        if not conversation_id:
+            return None
+
+        # Best-effort audio URL location. Refined in C2 once the real
+        # payload shape is known.
+        audio_url = (
+            payload.get("audio_url")
+            or _safe_get(payload, "data", "audio_url")
+            or _safe_get(payload, "metadata", "audio_url")
+            or _safe_get(payload, "conversation", "audio_url")
+        )
+
+        duration = _parse_int(
+            payload.get("call_duration_secs")
+            or payload.get("duration_seconds")
+            or _safe_get(payload, "metadata", "call_duration_secs")
+            or _safe_get(payload, "metadata", "duration")
+        )
+
+        # Caller / called numbers may live inside dynamic_variables or
+        # metadata; leaving NULL here for C1 — C2 wires attribution.
+        return VoIPCallEvent(
+            provider="elevenlabs",
+            call_id=str(conversation_id),
+            recording_url=audio_url,
+            caller_number=None,
+            called_number=None,
+            call_date=_parse_date(
+                _safe_get(payload, "metadata", "started_at")
+                or _safe_get(payload, "metadata", "timestamp")
+                or payload.get("started_at")
+            ),
+            duration_seconds=duration,
+            raw_payload=payload,
+        )
+
+
 # ── Provider: generic webhook ─────────────────────────────────
 #
 # Echo Audit's own normalized payload shape, for any provider not listed
@@ -505,6 +598,7 @@ PROVIDERS = {
     "zoom_phone":      ZoomPhoneProvider(),
     "eight_by_eight":  EightByEightProvider(),
     "generic_webhook": GenericWebhookProvider(),
+    "elevenlabs":      ElevenLabsProvider(),
 }
 
 
@@ -556,6 +650,13 @@ PROVIDER_INFO = [
         "test_supported": False,
         "docs_url": None,
     },
+    {
+        "key":  "elevenlabs",
+        "name": "ElevenLabs",
+        "credentials_fields": ["webhook_secret"],
+        "test_supported": False,
+        "docs_url": "https://elevenlabs.io/docs/conversational-ai/customization/personalization/post-call-webhooks",
+    },
 ]
 
 
@@ -570,4 +671,5 @@ PROVIDER_WEBHOOK_SECRET_FIELD = {
     "zoom_phone":      "webhook_secret_token",
     "eight_by_eight":  "webhook_secret",
     "generic_webhook": "webhook_secret",
+    "elevenlabs":      "webhook_secret",
 }
