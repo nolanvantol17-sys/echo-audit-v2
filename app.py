@@ -37,6 +37,7 @@ from bulk_export_routes import bulk_export_bp
 from labels_routes import labels_bp
 from platform_admin_routes import platform_admin_bp
 from settings_routes import settings_bp
+from scheduled_calls_routes import scheduled_calls_bp
 # Re-exported from helpers so "from app import get_effective_company_id" works
 # for any callers that expect the helper to live on the main app module.
 # check_rate_limit and increment_usage live in helpers to avoid a circular
@@ -127,6 +128,10 @@ def create_app():
 
     # Phase 5: VoIP integration (webhook + config + queue)
     app.register_blueprint(voip_bp)
+
+    # Arc C: scheduled_calls (outbound AI shop scheduling — bridges to
+    # the external AI caller service, parallel to voip_bp's inbound bridge).
+    app.register_blueprint(scheduled_calls_bp)
 
     # Phase 6: settings, account, labels, export, super-admin platform
     app.register_blueprint(settings_bp)
