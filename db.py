@@ -524,6 +524,7 @@ _ACTION_TYPE_SEEDS = [
     (6, 'submitted'),
     (7, 'unposted'),
     (8, 'exported'),
+    (9, 'scheduled_ai_shop'),
 ]
 
 _TARGET_ENTITY_TYPE_SEEDS = [
@@ -539,6 +540,7 @@ _TARGET_ENTITY_TYPE_SEEDS = [
     (9, 'location'),
     (10, 'transcription_hint'),
     (11, 'campaign'),
+    (12, 'scheduled_call'),
 ]
 
 _ROLE_SEEDS = [
