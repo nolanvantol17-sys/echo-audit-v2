@@ -192,10 +192,17 @@ def voip_webhook(company_id):
         logger.exception("Failed to decrypt credentials for company %s", company_id)
         return _err("Signature verification failed", 401)
 
+    # Secret resolution order: operator-supplied credentials FIRST, then the
+    # legacy column. The voip_config_webhook_secret column was originally an
+    # auto-generated fallback for generic_webhook (where Echo Audit issues the
+    # secret), but the upsert flow populates it with secrets.token_urlsafe(32)
+    # for ALL providers — which silently overrode the upstream-supplied secret
+    # for Dialpad/Aircall/8x8/Zoom/ElevenLabs. Credentials are authoritative
+    # for any provider whose webhook secret comes from the upstream platform.
     secret_field = PROVIDER_WEBHOOK_SECRET_FIELD.get(provider_key)
     secret = (
-        config_row.get("voip_config_webhook_secret")
-        or (credentials.get(secret_field) if secret_field else None)
+        (credentials.get(secret_field) if secret_field else None)
+        or config_row.get("voip_config_webhook_secret")
         or ""
     )
 
