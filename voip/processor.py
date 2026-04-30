@@ -35,6 +35,7 @@ from typing import Optional
 import grader
 from db import IS_POSTGRES, get_conn, q
 from helpers import load_active_hints
+from voip.classifier import classify_call
 from voip.credentials import decrypt_credentials
 
 logger = logging.getLogger(__name__)
@@ -442,6 +443,52 @@ def _persist_grade(interaction_id, *, grade_result, criteria, total_score,
         conn.close()
 
 
+def _extract_termination_reason(queue_row):
+    """Pull data.metadata.termination_reason from voip_queue_raw_payload.
+
+    Defensive: returns None on missing field, malformed JSON, or wrong type.
+    ElevenLabs supplies this; legacy AAI providers always get None, which
+    the classifier handles fine.
+    """
+    raw = queue_row.get("voip_queue_raw_payload")
+    if not raw:
+        return None
+    try:
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        return ((raw.get("data") or {}).get("metadata") or {}).get("termination_reason")
+    except Exception:
+        return None
+
+
+def _persist_classified_no_answer(interaction_id, transcript,
+                                  audio_url=None, audio_bytes=None):
+    """Mark an interaction no_answer (status 44) with transcript stored.
+
+    Used when the classifier decides the call wasn't a real conversation
+    (voicemail, hold-message-only, failed_call). Preserves transcript and
+    optional audio so an operator can audit why it was filtered out. No
+    rubric scores written.
+    """
+    conn = get_conn()
+    try:
+        conn.execute(
+            q("""UPDATE interactions SET
+                    interaction_transcript = ?,
+                    interaction_audio_url  = ?,
+                    interaction_audio_data = ?,
+                    status_id              = ?
+                  WHERE interaction_id = ?"""),
+            (transcript, audio_url, audio_bytes, STATUS_NO_ANSWER, interaction_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def _save_audio_url(interaction_id):
     """Pick the audio_url marker consistent with Phase 3's storage scheme."""
     if IS_POSTGRES:
@@ -603,15 +650,30 @@ def _process(voip_queue_id: int) -> None:
         call_duration_seconds = queue_row.get("voip_queue_duration_seconds"),
     )
 
-    # ── Provided-transcript path: empty guard, then grade ────────
+    # ── Provided-transcript path: empty guard, classify, then grade ──
     if has_provided_transcript:
         if not transcript.strip():
-            # Empty/whitespace transcript → no_answer interaction. Common when
-            # the call connected to silence. Mirrors the legacy AAI flow's
-            # EmptyTranscriptError handling but without raising; preserves
-            # attribution on the interaction so it surfaces in per-location
-            # views as a no-answer event.
+            # Empty fast-path: skip the classifier Claude call entirely.
             _set_interaction_status(interaction_id, STATUS_NO_ANSWER)
+            _set_queue_status(
+                voip_queue_id, "graded",
+                error="", interaction_id=interaction_id,
+            )
+            return
+
+        # Classify before grading. Voicemails / hold-only / failed → no_answer
+        # with transcript stored for audit; only real_conversation grades.
+        termination_reason = _extract_termination_reason(queue_row)
+        classification = classify_call(
+            transcript,
+            queue_row.get("voip_queue_duration_seconds"),
+            termination_reason,
+        )
+        if classification != "real_conversation":
+            _persist_classified_no_answer(
+                interaction_id, transcript,
+                audio_url=None, audio_bytes=None,
+            )
             _set_queue_status(
                 voip_queue_id, "graded",
                 error="", interaction_id=interaction_id,
@@ -648,6 +710,28 @@ def _process(voip_queue_id: int) -> None:
         audio_url = _save_audio_url(interaction_id)
         # SQLite doesn't persist bytes on the interaction; keep on queue row.
         audio_bytes_for_interaction = audio_bytes if IS_POSTGRES else None
+
+        # Classifier runs on all providers, not just ElevenLabs — provider-
+        # agnostic gate. Any future provider that lands a transcript via this
+        # path inherits the same voicemail/hold/failed filtering for free.
+        # Empty transcript already short-circuited above via EmptyTranscriptError.
+        termination_reason = _extract_termination_reason(queue_row)
+        classification = classify_call(
+            transcript,
+            queue_row.get("voip_queue_duration_seconds"),
+            termination_reason,
+        )
+        if classification != "real_conversation":
+            _persist_classified_no_answer(
+                interaction_id, transcript,
+                audio_url=audio_url,
+                audio_bytes=audio_bytes_for_interaction,
+            )
+            _set_queue_status(
+                voip_queue_id, "graded",
+                error="", interaction_id=interaction_id,
+            )
+            return
 
         _grade_and_finalize(
             voip_queue_id, interaction_id,
