@@ -800,6 +800,18 @@
           </div>
         </div>
 
+        <div id="panel-ai-shop" hidden>
+          <p>
+            Place an outbound AI call to this location. The call will be placed
+            automatically and graded when complete.
+          </p>
+          <div class="panel-action-row">
+            <button type="button" class="btn btn-primary" id="btn-ai-shop-trigger">
+              Schedule AI Shop
+            </button>
+          </div>
+        </div>
+
         {# Secondary audio source links — built dynamically by renderSourceLinks().
            Shows "Or: <other source> · <other source>". Active source is omitted. #}
         <div id="source-links" class="source-links" hidden></div>
@@ -1676,6 +1688,8 @@
     const voBtn  = document.getElementById("btn-voip-submit");
     if (upBtn) upBtn.addEventListener("click", function () { $("#grade-form").requestSubmit(); });
     if (voBtn) voBtn.addEventListener("click", function () { $("#grade-form").requestSubmit(); });
+    const aiShopBtn = document.getElementById("btn-ai-shop-trigger");
+    if (aiShopBtn) aiShopBtn.addEventListener("click", scheduleAIShopFlow);
 
     // Submit
     $("#grade-form").addEventListener("submit", onSubmit);
@@ -1700,6 +1714,7 @@
     $("#panel-upload").hidden = which !== "upload";
     $("#panel-record").hidden = which !== "record";
     $("#panel-voip")  .hidden = which !== "voip";
+    $("#panel-ai-shop").hidden = which !== "ai-shop";
 
     // Panels are mutually exclusive — switching clears the OTHER sources.
     if (which !== "record") { cleanupLiveRecording(/*reset*/ true); }
@@ -1729,6 +1744,7 @@
     }
     if (state.voipConfigured && active !== "voip") {
       links.push('<a href="#" data-tab="voip">pull from VoIP queue</a>');
+      links.push('<a href="#" data-tab="ai-shop">schedule AI shop</a>');
     }
     if (!links.length) {
       wrap.hidden = true;
@@ -2019,6 +2035,13 @@
     }
     if (activeTab === "voip" && !state.selectedQueueId) {
       $("#form-hint").textContent = "Pick a queued call.";
+      return;
+    }
+    if (activeTab === "ai-shop") {
+      // AI shop has its own trigger flow (#btn-ai-shop-trigger →
+      // scheduleAIShopFlow). The form submit path doesn't apply — no audio
+      // to upload, status surfaces via modal + polling. Defensive: return
+      // here in case Enter-in-field accidentally submits the form.
       return;
     }
 
@@ -2493,6 +2516,285 @@
       });
     }
     wireRespondentEdit(interactionId);
+  }
+
+  // ─── Arc C: Schedule AI Shop ──────────────────────────────────────
+  // Out-of-band flow — bypasses the form submit path entirely. Validates
+  // the existing form selectors (caller / location / project / phone-on-
+  // file required), confirms with EA.confirmDialog, then POSTs to
+  // /api/grade/ai-shop and polls /api/grade/ai-shop/<sc_id>/status until
+  // terminal. Phone is sourced from state.allLocations cache (loaded by
+  // loadLocations) and formatted with the existing formatPhone() helper.
+  const AI_SHOP_OVERLAY_MSGS = {
+    initiated:        "Call scheduled. Waiting for the AI caller to confirm…",
+    webhook_received: "Call placed and completed. Processing…",
+    processing:       "Grading the call…",
+  };
+  const AI_SHOP_POLL_FAST_MS = 3000;    // first 60s
+  const AI_SHOP_POLL_SLOW_MS = 5000;    // after 60s
+  const AI_SHOP_POLL_CAP_MS  = 600000;  // 10-minute hard cap
+
+  function _aiShopSleep(ms) {
+    return new Promise(function (r) { setTimeout(r, ms); });
+  }
+
+  function _aiShopConfirmBody(callerName, locationName, phoneDisplay) {
+    const wrap = document.createElement("div");
+    const lead = document.createElement("p");
+    lead.textContent = callerName + " will place a real outbound AI call to "
+                     + locationName + ".";
+    wrap.appendChild(lead);
+    if (phoneDisplay) {
+      const phoneP = document.createElement("p");
+      const strong = document.createElement("strong");
+      strong.textContent = "Phone: ";
+      phoneP.appendChild(strong);
+      phoneP.appendChild(document.createTextNode(phoneDisplay));
+      wrap.appendChild(phoneP);
+    }
+    const note = document.createElement("p");
+    note.textContent = "The conversation will be graded automatically when complete.";
+    wrap.appendChild(note);
+    return wrap;
+  }
+
+  async function scheduleAIShopFlow() {
+    const callerSelect   = $("#gf-caller");
+    const locationSelect = $("#gf-location");
+    const projectSelect  = $("#gf-project");
+
+    const callerId   = callerSelect.value;
+    const locationId = locationSelect.value;
+    const projectId  = projectSelect.value;
+    const campaignId = state.campaignCombo ? state.campaignCombo.getValue() : null;
+
+    // Mirror onSubmit's #form-hint validation pattern.
+    if (!locationId) {
+      $("#form-hint").textContent = "Pick a location first.";
+      return;
+    }
+    if (!projectId) {
+      $("#form-hint").textContent = "Pick a project first.";
+      return;
+    }
+    if (!callerId) {
+      $("#form-hint").textContent = "Pick a caller first.";
+      return;
+    }
+
+    // Phone lookup from the cached locations list (loaded by loadLocations).
+    const locObj = (state.allLocations || []).find(function (l) {
+      return String(l.location_id) === String(locationId);
+    });
+    const rawPhone = locObj && locObj.location_phone
+                       ? String(locObj.location_phone).trim() : "";
+    if (!rawPhone) {
+      $("#form-hint").textContent =
+        "This location has no phone number on file. "
+        + "Add one in Settings before scheduling an AI shop.";
+      return;
+    }
+    $("#form-hint").textContent = "";
+
+    // Display names from the existing <option> labels — no extra fetch.
+    const locationOpt = locationSelect.options[locationSelect.selectedIndex];
+    const callerOpt   = callerSelect.options[callerSelect.selectedIndex];
+    const locationName = locationOpt ? locationOpt.textContent.trim() : "this location";
+    const callerName   = callerOpt   ? callerOpt.textContent.trim()   : "The selected caller";
+    const phoneDisplay = formatPhone(rawPhone);
+
+    const ok = await EA.confirmDialog({
+      title:       "Call " + locationName + "?",
+      body:        _aiShopConfirmBody(callerName, locationName, phoneDisplay),
+      okLabel:     "Place Call",
+      cancelLabel: "Cancel",
+      variant:     "primary",
+    });
+    if (!ok) return;
+
+    const overlay = EA.showOverlay("Placing call…");
+
+    let initiateResp;
+    try {
+      const r = await fetch("/api/grade/ai-shop", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({
+          location_id:    Number(locationId),
+          project_id:     Number(projectId),
+          campaign_id:    (campaignId !== null && campaignId !== undefined)
+                          ? Number(campaignId) : null,
+          caller_user_id: Number(callerId),
+        }),
+      });
+      initiateResp = await r.json().catch(function () { return {}; });
+      if (!r.ok) {
+        overlay.close();
+        const errMsg = (initiateResp && initiateResp.error) || ("HTTP " + r.status);
+        const body = document.createElement("div");
+        body.appendChild(document.createTextNode(errMsg));
+        await EA.confirmDialog({
+          title: "Couldn't place the call",
+          body:  body,
+          okLabel: "Close", cancelLabel: "Close",
+        });
+        return;
+      }
+    } catch (err) {
+      overlay.close();
+      const body = document.createElement("div");
+      body.appendChild(document.createTextNode(String(err)));
+      await EA.confirmDialog({
+        title: "Couldn't reach Echo Audit",
+        body:  body,
+        okLabel: "Close", cancelLabel: "Close",
+      });
+      return;
+    }
+
+    const scId = initiateResp && initiateResp.sc_id;
+    if (!scId) {
+      overlay.close();
+      EA.toast("Unexpected response from server (no sc_id).", "error");
+      return;
+    }
+
+    await _aiShopPoll(scId, overlay);
+  }
+
+  async function _aiShopPoll(scId, overlay) {
+    const startedAt = Date.now();
+    while (true) {
+      const elapsedMs = Date.now() - startedAt;
+      if (elapsedMs > AI_SHOP_POLL_CAP_MS) {
+        overlay.close();
+        const body = document.createElement("div");
+        body.appendChild(document.createTextNode(
+          "The call is still running after 10 minutes. Check Past Grades when it completes."
+        ));
+        await EA.confirmDialog({
+          title: "Still in progress",
+          body:  body,
+          okLabel: "Close", cancelLabel: "Close",
+        });
+        return;
+      }
+
+      let data;
+      try {
+        const r = await fetch("/api/grade/ai-shop/" + scId + "/status");
+        if (!r.ok) {
+          await _aiShopSleep(AI_SHOP_POLL_SLOW_MS);
+          continue;
+        }
+        data = await r.json();
+      } catch (_err) {
+        await _aiShopSleep(AI_SHOP_POLL_SLOW_MS);
+        continue;
+      }
+
+      const msg = AI_SHOP_OVERLAY_MSGS[data.display_status] || "Working…";
+      overlay.set(msg);
+
+      if (data.is_terminal) {
+        overlay.close();
+        await _aiShopShowTerminal(data);
+        return;
+      }
+
+      const nextDelay = elapsedMs < 60000
+                        ? AI_SHOP_POLL_FAST_MS
+                        : AI_SHOP_POLL_SLOW_MS;
+      await _aiShopSleep(nextDelay);
+    }
+  }
+
+  async function _aiShopShowTerminal(data) {
+    const body = document.createElement("div");
+
+    if (data.display_status === "graded") {
+      const lead = document.createElement("p");
+      lead.textContent = "Call complete!";
+      body.appendChild(lead);
+      if (data.interaction_overall_score !== null
+          && data.interaction_overall_score !== undefined) {
+        const score = document.createElement("p");
+        const strong = document.createElement("strong");
+        strong.textContent = "Score: ";
+        score.appendChild(strong);
+        score.appendChild(document.createTextNode(EA.formatScore(data.interaction_overall_score)));
+        body.appendChild(score);
+      }
+      const ok = await EA.confirmDialog({
+        title: "AI shop graded",
+        body:  body,
+        okLabel: "View Interaction",
+        cancelLabel: "Close",
+        variant: "primary",
+      });
+      if (ok && data.interaction_id) {
+        window.location.href = "/app/history/" + data.interaction_id;
+      }
+      return;
+    }
+
+    if (data.display_status === "no_answer") {
+      const p = document.createElement("p");
+      p.textContent = "Call did not connect to a real conversation "
+                    + "(voicemail, hold message, or unanswered).";
+      body.appendChild(p);
+      const ok = await EA.confirmDialog({
+        title: "No answer",
+        body:  body,
+        okLabel: "View Interaction",
+        cancelLabel: "Close",
+        variant: "primary",
+      });
+      if (ok && data.interaction_id) {
+        window.location.href = "/app/history/" + data.interaction_id;
+      }
+      return;
+    }
+
+    if (data.display_status === "failed") {
+      const lead = document.createElement("p");
+      lead.textContent = "Failed to place the call.";
+      body.appendChild(lead);
+      if (data.status_message) {
+        const detail = document.createElement("p");
+        detail.textContent = data.status_message;
+        body.appendChild(detail);
+      }
+      await EA.confirmDialog({
+        title: "AI shop failed",
+        body:  body,
+        okLabel: "Close", cancelLabel: "Close",
+      });
+      return;
+    }
+
+    if (data.display_status === "timeout") {
+      const p = document.createElement("p");
+      p.textContent = "Call still in progress after 10 minutes. "
+                    + "Check Past Grades when complete.";
+      body.appendChild(p);
+      await EA.confirmDialog({
+        title: "Still in progress",
+        body:  body,
+        okLabel: "Close", cancelLabel: "Close",
+      });
+      return;
+    }
+
+    // Defensive — unknown terminal label. Show what we got.
+    const p = document.createElement("p");
+    p.textContent = "Unexpected status: " + (data.display_status || "(none)");
+    body.appendChild(p);
+    await EA.confirmDialog({
+      title: "Done",
+      body:  body,
+      okLabel: "Close", cancelLabel: "Close",
+    });
   }
 
   // ── Project + location preservation across grades ────────
