@@ -32,7 +32,7 @@ from audit_log import (
 )
 from auth import role_required
 from db import IS_POSTGRES, get_conn, q
-from helpers import get_effective_company_id
+from helpers import get_effective_company_id, verify_attribution_tenancy
 from voip.credentials import (
     credentials_fingerprint, decrypt_credentials, encrypt_credentials,
 )
@@ -256,6 +256,25 @@ def voip_webhook(company_id):
             # Already queued — silently accept so the provider stops retrying.
             return jsonify({"ok": True, "duplicate": True}), 200
 
+        # ── Tenancy verification (only for attribution-supplying providers) ──
+        # If the upstream stamped echo_audit_*_id values via dynamic_variables,
+        # confirm each resolves to THIS webhook URL's company. Mismatch =
+        # misconfigured caller (or worse). Stamp the error onto the event so
+        # the row lands as 'failed' + visible in the admin queue.
+        if (event.attribution_project_id is not None
+                and not event.attribution_error):
+            err = verify_attribution_tenancy(
+                conn, company_id,
+                project_id=event.attribution_project_id,
+                location_id=event.attribution_location_id,
+                caller_user_id=event.attribution_caller_user_id,
+                campaign_id=event.attribution_campaign_id,
+            )
+            if err:
+                event.attribution_error = err
+
+        queue_status = "failed" if event.attribution_error else "pending"
+
         raw_payload_json = json.dumps(event.raw_payload)
         if IS_POSTGRES:
             cur = conn.execute(
@@ -264,12 +283,20 @@ def voip_webhook(company_id):
                        voip_queue_recording_url, voip_queue_caller_number,
                        voip_queue_called_number, voip_queue_call_date,
                        voip_queue_duration_seconds, voip_queue_raw_payload,
-                       voip_queue_status
-                   ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, 'pending')
+                       voip_queue_status, voip_queue_error,
+                       voip_queue_project_id, voip_queue_location_id,
+                       voip_queue_campaign_id, voip_queue_caller_user_id,
+                       voip_queue_provided_transcript
+                   ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb,
+                             %s, %s, %s, %s, %s, %s, %s)
                    RETURNING voip_queue_id""",
                 (company_id, event.provider, event.call_id,
                  event.recording_url, event.caller_number, event.called_number,
-                 event.call_date, event.duration_seconds, raw_payload_json),
+                 event.call_date, event.duration_seconds, raw_payload_json,
+                 queue_status, event.attribution_error,
+                 event.attribution_project_id, event.attribution_location_id,
+                 event.attribution_campaign_id, event.attribution_caller_user_id,
+                 event.provided_transcript),
             )
             queue_id = cur.fetchone()["voip_queue_id"]
         else:
@@ -279,11 +306,18 @@ def voip_webhook(company_id):
                        voip_queue_recording_url, voip_queue_caller_number,
                        voip_queue_called_number, voip_queue_call_date,
                        voip_queue_duration_seconds, voip_queue_raw_payload,
-                       voip_queue_status
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                       voip_queue_status, voip_queue_error,
+                       voip_queue_project_id, voip_queue_location_id,
+                       voip_queue_campaign_id, voip_queue_caller_user_id,
+                       voip_queue_provided_transcript
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (company_id, event.provider, event.call_id,
                  event.recording_url, event.caller_number, event.called_number,
-                 event.call_date, event.duration_seconds, raw_payload_json),
+                 event.call_date, event.duration_seconds, raw_payload_json,
+                 queue_status, event.attribution_error,
+                 event.attribution_project_id, event.attribution_location_id,
+                 event.attribution_campaign_id, event.attribution_caller_user_id,
+                 event.provided_transcript),
             )
             queue_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.commit()
@@ -296,7 +330,9 @@ def voip_webhook(company_id):
         conn.close()
 
     # ── Auto-grade kick-off ──
-    if config_row.get("voip_config_auto_grade"):
+    # Skip dispatch if attribution failed — the row is already marked
+    # 'failed' for operator visibility; processing it would just add noise.
+    if config_row.get("voip_config_auto_grade") and not event.attribution_error:
         try:
             process_voip_call_async(queue_id)
         except Exception:

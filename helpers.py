@@ -9,6 +9,7 @@ main app file and the blueprints.
 import re
 import secrets
 from datetime import datetime
+from typing import Optional
 
 from flask import session
 from flask_login import current_user
@@ -127,6 +128,84 @@ def check_rate_limit(company_id, service):
         return True, ""
     finally:
         conn.close()
+
+
+def verify_attribution_tenancy(
+    conn,
+    company_id: int,
+    project_id: int,
+    location_id: int,
+    caller_user_id: int,
+    campaign_id: Optional[int] = None,
+) -> Optional[str]:
+    """Verify all attribution IDs resolve to the given company.
+
+    Used by external-attribution providers (ElevenLabs today; any future
+    provider that supplies project/location/caller IDs via webhook) to
+    ensure the caller can't address another tenant's data even if their
+    config is buggy or compromised.
+
+    Returns None on success, a "tenant_mismatch: ..." error string on any
+    failure. Each ID is checked independently against its canonical
+    company source. The function never raises — bad input returns an
+    error string the caller writes to voip_queue_error.
+    """
+    # project_id → projects.company_id
+    cur = conn.execute(
+        q("""SELECT company_id FROM projects
+              WHERE project_id = ? AND project_deleted_at IS NULL"""),
+        (project_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return f"tenant_mismatch: project_id {project_id} not found or deleted"
+    if dict(row)["company_id"] != company_id:
+        return (f"tenant_mismatch: project_id {project_id} belongs to "
+                f"company {dict(row)['company_id']}, expected {company_id}")
+
+    # location_id → locations.company_id
+    cur = conn.execute(
+        q("""SELECT company_id FROM locations
+              WHERE location_id = ? AND location_deleted_at IS NULL"""),
+        (location_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return f"tenant_mismatch: location_id {location_id} not found or deleted"
+    if dict(row)["company_id"] != company_id:
+        return (f"tenant_mismatch: location_id {location_id} belongs to "
+                f"company {dict(row)['company_id']}, expected {company_id}")
+
+    # caller_user_id → users.department_id → departments.company_id
+    cur = conn.execute(
+        q("""SELECT d.company_id FROM users u
+               JOIN departments d ON d.department_id = u.department_id
+              WHERE u.user_id = ? AND u.user_deleted_at IS NULL"""),
+        (caller_user_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return (f"tenant_mismatch: caller_user_id {caller_user_id} not found "
+                "or has no department")
+    if dict(row)["company_id"] != company_id:
+        return (f"tenant_mismatch: caller_user_id {caller_user_id} belongs to "
+                f"company {dict(row)['company_id']}, expected {company_id}")
+
+    # Optional campaign_id → must belong to the (already-verified) project
+    if campaign_id is not None:
+        cur = conn.execute(
+            q("""SELECT project_id FROM campaigns
+                  WHERE campaign_id = ? AND campaign_deleted_at IS NULL"""),
+            (campaign_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return f"tenant_mismatch: campaign_id {campaign_id} not found or deleted"
+        if dict(row)["project_id"] != project_id:
+            return (f"tenant_mismatch: campaign_id {campaign_id} belongs to "
+                    f"project {dict(row)['project_id']}, expected {project_id}")
+
+    return None
 
 
 def phone_digits(s):

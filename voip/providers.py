@@ -17,7 +17,7 @@ import hmac
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,11 @@ class VoIPCallEvent:
     Only what Echo Audit needs downstream: the queue row + the processor.
     Raw provider payload is preserved in `raw_payload` for debugging and
     auditing.
+
+    Attribution + transcript fields below are populated only by providers
+    whose webhooks carry that info inline (ElevenLabs today). Other
+    providers leave them None and the processor falls back to its
+    legacy `_active_project()` resolution + AAI transcription.
     """
     provider:         str
     call_id:          str
@@ -42,6 +47,27 @@ class VoIPCallEvent:
     call_date:        date
     duration_seconds: Optional[int]
     raw_payload:      dict = field(default_factory=dict)
+
+    # ── Attribution from upstream dynamic_variables (ElevenLabs only) ──
+    # All four IDs are tenant-verified by the route layer against the
+    # webhook URL's company_id before the queue row is inserted. On
+    # mismatch, attribution_error is set and the row is queued with
+    # status='failed' so it surfaces in the admin queue view.
+    attribution_project_id:     Optional[int] = None
+    attribution_location_id:    Optional[int] = None
+    attribution_campaign_id:    Optional[int] = None
+    attribution_caller_user_id: Optional[int] = None
+
+    # Pre-transcribed text from providers that supply it (ElevenLabs).
+    # When set, voip/processor.py skips grader.transcribe() and feeds
+    # this directly to grader.grade_with_claude.
+    provided_transcript: Optional[str] = None
+
+    # Set by parse_webhook on shape errors (missing required IDs) OR by
+    # the route layer on tenancy-verification failures. Non-None means
+    # the queue row will be inserted with status='failed' and auto_grade
+    # dispatch is skipped.
+    attribution_error: Optional[str] = None
 
 
 # ── Helpers ────────────────────────────────────────────────────
@@ -547,55 +573,127 @@ class ElevenLabsProvider(VoIPProvider):
 
         # Drop post_call_audio events (2.5MB+ base64 inline audio). The
         # transcription event arrives separately with the same conversation_id
-        # and carries an audio URL we can fetch on demand. Returning None
-        # makes the route handler ACK 200 without queueing — ElevenLabs
-        # won't retry and we avoid the dedup collision on conversation_id.
+        # and carries everything we need (transcript, dynamic_variables,
+        # metadata). Returning None makes the route handler ACK 200 without
+        # queueing — ElevenLabs won't retry, and we sidestep the
+        # UNIQUE(call_id) dedup collision the audio event would cause.
         if payload.get("type") == "post_call_audio":
             return None
 
-        # conversation_id is the dedup key — required. Try common shapes;
-        # discovery test will tell us which is real.
+        data = payload.get("data") or {}
+
+        # Required: conversation_id (dedup key). Top-level fallbacks kept for
+        # forward-compat in case ElevenLabs ever flattens the shape.
         conversation_id = (
-            payload.get("conversation_id")
-            or _safe_get(payload, "data", "conversation_id")
+            data.get("conversation_id")
+            or payload.get("conversation_id")
             or payload.get("id")
         )
         if not conversation_id:
             return None
 
-        # Best-effort audio URL location. Refined in C2b once the real
-        # payload shape is known.
-        audio_url = (
-            payload.get("audio_url")
-            or _safe_get(payload, "data", "audio_url")
-            or _safe_get(payload, "metadata", "audio_url")
-            or _safe_get(payload, "conversation", "audio_url")
+        # ── Attribution from dynamic_variables ──────────────────────
+        # The AI caller stamps these at call initiation. Three of the four
+        # are required (project, location, caller_user); campaign is optional.
+        # Tenancy verification happens in the route layer (it has the conn).
+        dyn = _safe_get(
+            data, "conversation_initiation_client_data", "dynamic_variables",
+        ) or {}
+
+        project_id     = _parse_int(dyn.get("echo_audit_project_id"))
+        location_id    = _parse_int(dyn.get("echo_audit_location_id"))
+        caller_user_id = _parse_int(dyn.get("echo_audit_caller_user_id"))
+        campaign_id    = _parse_int(dyn.get("echo_audit_campaign_id"))
+
+        attribution_error = None
+        missing = [
+            label for label, val in (
+                ("echo_audit_project_id",     project_id),
+                ("echo_audit_location_id",    location_id),
+                ("echo_audit_caller_user_id", caller_user_id),
+            ) if val is None
+        ]
+        if missing:
+            attribution_error = (
+                f"missing_attribution: {', '.join(missing)} "
+                "absent or non-integer in dynamic_variables"
+            )
+
+        # ── Transcript turns → "[m:ss] Speaker X: text" ────────────
+        # Convention: agent → "Speaker A", user → "Speaker B". Matches the
+        # AAI-style format grader.grade_with_claude was built for. Skip
+        # turns with missing role/message rather than crashing on bad data.
+        provided_transcript = None
+        turns = data.get("transcript") or []
+        if isinstance(turns, list) and turns:
+            lines = []
+            for t in turns:
+                if not isinstance(t, dict):
+                    continue
+                role = (t.get("role") or "").lower()
+                message = t.get("message")
+                if not message:
+                    continue
+                if role == "agent":
+                    speaker = "Speaker A"
+                elif role == "user":
+                    speaker = "Speaker B"
+                else:
+                    continue
+                secs = _parse_int(t.get("time_in_call_secs"), default=0) or 0
+                mm, ss = secs // 60, secs % 60
+                lines.append(f"[{mm}:{ss:02d}] {speaker}: {message}")
+            if lines:
+                provided_transcript = "\n".join(lines)
+
+        # ── Other metadata ──────────────────────────────────────────
+        metadata   = data.get("metadata") or {}
+        phone_call = metadata.get("phone_call") or {}
+
+        duration      = _parse_int(metadata.get("call_duration_secs"))
+        caller_number = phone_call.get("agent_number")
+        called_number = phone_call.get("external_number")
+
+        # Prefer start_time_unix_secs (most accurate); fall back to the
+        # webhook-formation event_timestamp; then today via _parse_date default.
+        call_date = self._call_date_from_unix(
+            metadata.get("start_time_unix_secs")
+            or payload.get("event_timestamp")
         )
 
-        duration = _parse_int(
-            payload.get("call_duration_secs")
-            or payload.get("duration_seconds")
-            or _safe_get(payload, "metadata", "call_duration_secs")
-            or _safe_get(payload, "metadata", "duration")
-        )
-
-        # Caller / called numbers may live inside dynamic_variables or
-        # metadata; leaving NULL here for C2a — C2b wires attribution.
+        # recording_url left None: ElevenLabs doesn't include a download URL
+        # in this event. Audio lives in the (filtered) post_call_audio event
+        # or via their REST API. We grade against transcript only.
         return VoIPCallEvent(
             provider="elevenlabs",
             call_id=str(conversation_id),
-            recording_url=audio_url,
-            caller_number=None,
-            called_number=None,
-            call_date=_parse_date(
-                _safe_get(payload, "metadata", "started_at")
-                or _safe_get(payload, "metadata", "timestamp")
-                or payload.get("started_at")
-                or payload.get("event_timestamp")
-            ),
+            recording_url=None,
+            caller_number=caller_number,
+            called_number=called_number,
+            call_date=call_date,
             duration_seconds=duration,
             raw_payload=payload,
+            attribution_project_id=project_id,
+            attribution_location_id=location_id,
+            attribution_campaign_id=campaign_id,
+            attribution_caller_user_id=caller_user_id,
+            provided_transcript=provided_transcript,
+            attribution_error=attribution_error,
         )
+
+    @staticmethod
+    def _call_date_from_unix(unix_secs) -> date:
+        """Convert a unix timestamp (int or numeric string) to a UTC date.
+
+        _parse_date can't interpret a bare unix integer, so handle it here.
+        Falls back to today on any error or missing input.
+        """
+        if not unix_secs:
+            return date.today()
+        try:
+            return datetime.fromtimestamp(int(unix_secs), tz=timezone.utc).date()
+        except (TypeError, ValueError, OSError, OverflowError):
+            return date.today()
 
 
 # ── Provider: generic webhook ─────────────────────────────────
