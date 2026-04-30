@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 STATUS_TRANSCRIBING = 40
 STATUS_GRADING      = 42
 STATUS_GRADED       = 43
+STATUS_NO_ANSWER    = 44
 STATUS_SUBMITTED    = 45
 
 
@@ -123,6 +124,33 @@ def _active_project(company_id):
                  ORDER BY p.project_created_at DESC, p.project_id DESC
                  LIMIT 1"""),
             (company_id,),
+        )
+        return _row_to_dict(cur.fetchone())
+    finally:
+        conn.close()
+
+
+def _project_by_id(project_id, company_id):
+    """Fetch a specific project + rg_grade_target, scoped to company.
+
+    Used by the attribution path (ElevenLabs supplies an explicit project_id
+    via dynamic_variables). Re-verifies tenancy at process time as cheap
+    insurance against the project being deleted/archived between queue
+    insert (when the route layer first verified) and process pickup.
+    Returns None if the project no longer belongs to the given company,
+    is deleted, or its rubric group is deleted.
+    """
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            q("""SELECT p.*, rg.rg_grade_target
+                   FROM projects p
+                   JOIN rubric_groups rg ON rg.rubric_group_id = p.rubric_group_id
+                  WHERE p.project_id = ?
+                    AND p.company_id = ?
+                    AND p.project_deleted_at IS NULL
+                    AND rg.rg_deleted_at IS NULL"""),
+            (project_id, company_id),
         )
         return _row_to_dict(cur.fetchone())
     finally:
@@ -278,26 +306,43 @@ def _mark_failed(queue_id, error_message):
         logger.exception("Could not mark queue %s as failed", queue_id)
 
 
-def _create_interaction(project_id, call_date):
+def _create_interaction(project_id, call_date, *,
+                        location_id=None, campaign_id=None,
+                        caller_user_id=None, call_duration_seconds=None):
+    """Create a new interaction row with status=transcribing.
+
+    Optional kw-only attribution comes from the queue row when the upstream
+    supplied it (ElevenLabs dynamic_variables). Defaults of None preserve
+    backward compatibility with legacy VoIP providers that go through
+    _active_project and don't carry attribution.
+    """
     conn = get_conn()
     try:
         if IS_POSTGRES:
             cur = conn.execute(
                 """INSERT INTO interactions
                        (project_id, caller_user_id, respondent_user_id,
+                        interaction_location_id, campaign_id,
+                        interaction_call_duration_seconds,
                         interaction_date, interaction_submitted_at, status_id)
-                   VALUES (%s, NULL, NULL, %s, NOW(), %s)
+                   VALUES (%s, %s, NULL, %s, %s, %s, %s, NOW(), %s)
                    RETURNING interaction_id""",
-                (project_id, call_date or date.today(), STATUS_TRANSCRIBING),
+                (project_id, caller_user_id,
+                 location_id, campaign_id, call_duration_seconds,
+                 call_date or date.today(), STATUS_TRANSCRIBING),
             )
             interaction_id = cur.fetchone()["interaction_id"]
         else:
             conn.execute(
                 """INSERT INTO interactions
                        (project_id, caller_user_id, respondent_user_id,
+                        interaction_location_id, campaign_id,
+                        interaction_call_duration_seconds,
                         interaction_date, interaction_submitted_at, status_id)
-                   VALUES (?, NULL, NULL, ?, CURRENT_TIMESTAMP, ?)""",
-                (project_id, call_date or date.today(), STATUS_TRANSCRIBING),
+                   VALUES (?, ?, NULL, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)""",
+                (project_id, caller_user_id,
+                 location_id, campaign_id, call_duration_seconds,
+                 call_date or date.today(), STATUS_TRANSCRIBING),
             )
             interaction_id = conn.execute(
                 "SELECT last_insert_rowid()"
@@ -404,6 +449,56 @@ def _save_audio_url(interaction_id):
     return f"voip://interaction_{interaction_id}"
 
 
+def _grade_and_finalize(voip_queue_id, interaction_id, *,
+                        transcript, criteria, project,
+                        audio_url=None, audio_bytes=None):
+    """Run Claude grading + persist results + mark queue graded.
+
+    Shared by both transcript paths (legacy AAI and provided-transcript).
+    On any failure rolls the interaction back to status 45 (pending) and
+    marks the queue row failed. Never raises.
+    """
+    _set_interaction_status(interaction_id, STATUS_GRADING)
+    try:
+        grade_result = grader.grade_with_claude(
+            transcript=transcript,
+            rubric_criteria=criteria,
+            rubric_script=None,
+            rubric_context=None,
+            grade_target=project.get("rg_grade_target") or "respondent",
+        )
+    except Exception as e:
+        _set_interaction_status(interaction_id, STATUS_SUBMITTED)
+        _mark_failed(voip_queue_id, f"Grading failed: {e}")
+        return
+
+    scores = grade_result.get("scores") or {}
+    total_score = grader.calculate_total(scores, criteria)
+    flags = grader.build_flags(scores, criteria)
+
+    try:
+        _persist_grade(
+            interaction_id,
+            grade_result=grade_result,
+            criteria=criteria,
+            total_score=total_score,
+            flags=flags,
+            transcript=transcript,
+            audio_url=audio_url,
+            audio_bytes=audio_bytes,
+            final_status_id=STATUS_GRADED,
+        )
+    except Exception as e:
+        _set_interaction_status(interaction_id, STATUS_SUBMITTED)
+        _mark_failed(voip_queue_id, f"Persisting grade failed: {e}")
+        return
+
+    _set_queue_status(
+        voip_queue_id, "graded",
+        error="", interaction_id=interaction_id,
+    )
+
+
 def _process(voip_queue_id: int) -> None:
     queue_row, config_row = _load_queue_and_config(voip_queue_id)
     if not queue_row:
@@ -425,12 +520,31 @@ def _process(voip_queue_id: int) -> None:
 
     company_id = queue_row["company_id"]
 
-    # Resolve active project + rubric
-    project = _active_project(company_id)
-    if not project:
-        _mark_failed(voip_queue_id,
-                     "No active project with a rubric group found for this company.")
-        return
+    # ── Detect attribution / provided-transcript path ──────────────
+    # When the upstream supplied a transcript inline (ElevenLabs today via
+    # webhook dynamic_variables), skip audio download + AAI transcription
+    # and use the provided text + attribution columns directly.
+    has_provided_transcript = bool(queue_row.get("voip_queue_provided_transcript"))
+    explicit_project_id     = queue_row.get("voip_queue_project_id")
+
+    # ── Project resolution ────────────────────────────────────────
+    if explicit_project_id:
+        # Tenancy double-check at process time (cheap insurance against
+        # the project being deleted/archived between queue and processor).
+        project = _project_by_id(explicit_project_id, company_id)
+        if not project:
+            _mark_failed(
+                voip_queue_id,
+                f"Attribution project_id {explicit_project_id} no longer "
+                "valid (deleted/archived/wrong tenant)",
+            )
+            return
+    else:
+        project = _active_project(company_id)
+        if not project:
+            _mark_failed(voip_queue_id,
+                         "No active project with a rubric group found for this company.")
+            return
 
     items = _load_rubric_items(project["rubric_group_id"])
     if not items:
@@ -439,52 +553,86 @@ def _process(voip_queue_id: int) -> None:
         return
     criteria = _items_to_criteria(items)
 
-    # Credentials — decrypt only if we need them.
-    try:
-        credentials = decrypt_credentials(config_row["voip_config_credentials"])
-    except Exception as e:
-        _mark_failed(voip_queue_id, f"Credentials unavailable: {e}")
-        return
+    # ── Audio + transcript acquisition ────────────────────────────
+    audio_bytes = None
+    transcript  = None
 
-    # Download recording if a URL is set AND we don't already have bytes.
-    audio_bytes = queue_row.get("voip_queue_recording_data")
-    recording_url = queue_row.get("voip_queue_recording_url")
-    try:
-        if not audio_bytes and recording_url:
-            audio_bytes = _download_recording(
-                recording_url, queue_row["voip_queue_provider"], credentials,
+    if has_provided_transcript:
+        # Use upstream-supplied text verbatim. No credentials, no download,
+        # no tempfile, no AAI. ElevenLabs flow (option A: never store audio).
+        transcript = queue_row["voip_queue_provided_transcript"]
+    else:
+        # Legacy AAI flow: decrypt credentials → download → tempfile → transcribe.
+        try:
+            credentials = decrypt_credentials(config_row["voip_config_credentials"])
+        except Exception as e:
+            _mark_failed(voip_queue_id, f"Credentials unavailable: {e}")
+            return
+
+        audio_bytes   = queue_row.get("voip_queue_recording_data")
+        recording_url = queue_row.get("voip_queue_recording_url")
+        try:
+            if not audio_bytes and recording_url:
+                audio_bytes = _download_recording(
+                    recording_url, queue_row["voip_queue_provider"], credentials,
+                )
+        except Exception as e:
+            _mark_failed(voip_queue_id, str(e))
+            return
+
+        if not audio_bytes:
+            _mark_failed(voip_queue_id, "No audio available to transcribe.")
+            return
+
+        # Normalize memoryview → bytes (psycopg2 returns memoryview for BYTEA)
+        if isinstance(audio_bytes, memoryview):
+            audio_bytes = bytes(audio_bytes)
+
+        # Persist downloaded bytes onto the queue row so reruns don't re-download.
+        try:
+            _set_queue_status(voip_queue_id, "processing", recording_data=audio_bytes)
+        except Exception:
+            logger.exception("Could not persist downloaded bytes; continuing anyway")
+
+    # ── Create interaction row (with attribution + duration if present) ──
+    interaction_id = _create_interaction(
+        project["project_id"], queue_row["voip_queue_call_date"],
+        location_id           = queue_row.get("voip_queue_location_id"),
+        campaign_id           = queue_row.get("voip_queue_campaign_id"),
+        caller_user_id        = queue_row.get("voip_queue_caller_user_id"),
+        call_duration_seconds = queue_row.get("voip_queue_duration_seconds"),
+    )
+
+    # ── Provided-transcript path: empty guard, then grade ────────
+    if has_provided_transcript:
+        if not transcript.strip():
+            # Empty/whitespace transcript → no_answer interaction. Common when
+            # the call connected to silence. Mirrors the legacy AAI flow's
+            # EmptyTranscriptError handling but without raising; preserves
+            # attribution on the interaction so it surfaces in per-location
+            # views as a no-answer event.
+            _set_interaction_status(interaction_id, STATUS_NO_ANSWER)
+            _set_queue_status(
+                voip_queue_id, "graded",
+                error="", interaction_id=interaction_id,
             )
-    except Exception as e:
-        _mark_failed(voip_queue_id, str(e))
+            return
+
+        # Option A locked in: no audio for ElevenLabs flow. audio_url + bytes None.
+        _grade_and_finalize(
+            voip_queue_id, interaction_id,
+            transcript=transcript, criteria=criteria, project=project,
+            audio_url=None, audio_bytes=None,
+        )
         return
 
-    if not audio_bytes:
-        _mark_failed(voip_queue_id, "No audio available to transcribe.")
-        return
-
-    # Normalize memoryview → bytes (psycopg2 returns memoryview for BYTEA)
-    if isinstance(audio_bytes, memoryview):
-        audio_bytes = bytes(audio_bytes)
-
-    # Persist the downloaded bytes back onto the queue row so reruns don't re-download.
-    try:
-        _set_queue_status(voip_queue_id, "processing", recording_data=audio_bytes)
-    except Exception:
-        logger.exception("Could not persist downloaded bytes; continuing anyway")
-
-    # Write to a temp file for AssemblyAI
+    # ── Legacy AAI path: tempfile → transcribe → grade → persist ──
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".bin")
-    interaction_id = None
     try:
         tmp.write(audio_bytes)
         tmp.close()
 
-        # Create interaction row up front so status transitions are observable.
-        interaction_id = _create_interaction(
-            project["project_id"], queue_row["voip_queue_call_date"],
-        )
-
-        # Transcribe (with per-tenant custom vocabulary)
+        # Per-tenant custom vocabulary — only loaded for the AAI path
         hints = load_active_hints(company_id)
         try:
             transcript = grader.transcribe(tmp.name, keyterms_prompt=hints)
@@ -497,53 +645,15 @@ def _process(voip_queue_id: int) -> None:
             _mark_failed(voip_queue_id, f"Transcription failed: {e}")
             return
 
-        # Grade
-        _set_interaction_status(interaction_id, STATUS_GRADING)
-        try:
-            grade_result = grader.grade_with_claude(
-                transcript=transcript,
-                rubric_criteria=criteria,
-                rubric_script=None,
-                rubric_context=None,
-                grade_target=project.get("rg_grade_target") or "respondent",
-            )
-        except Exception as e:
-            _set_interaction_status(interaction_id, STATUS_SUBMITTED)
-            _mark_failed(voip_queue_id, f"Grading failed: {e}")
-            return
-
-        scores = grade_result.get("scores") or {}
-        total_score = grader.calculate_total(scores, criteria)
-        flags = grader.build_flags(scores, criteria)
-
         audio_url = _save_audio_url(interaction_id)
-        # On SQLite we don't persist the bytes on the interaction; keep them
-        # on the queue row (already done above).
+        # SQLite doesn't persist bytes on the interaction; keep on queue row.
         audio_bytes_for_interaction = audio_bytes if IS_POSTGRES else None
 
-        try:
-            _persist_grade(
-                interaction_id,
-                grade_result=grade_result,
-                criteria=criteria,
-                total_score=total_score,
-                flags=flags,
-                transcript=transcript,
-                audio_url=audio_url,
-                audio_bytes=audio_bytes_for_interaction,
-                final_status_id=STATUS_GRADED,
-            )
-        except Exception as e:
-            _set_interaction_status(interaction_id, STATUS_SUBMITTED)
-            _mark_failed(voip_queue_id, f"Persisting grade failed: {e}")
-            return
-
-        # Success path
-        _set_queue_status(
-            voip_queue_id, "graded",
-            error="", interaction_id=interaction_id,
+        _grade_and_finalize(
+            voip_queue_id, interaction_id,
+            transcript=transcript, criteria=criteria, project=project,
+            audio_url=audio_url, audio_bytes=audio_bytes_for_interaction,
         )
-
     finally:
         try:
             Path(tmp.name).unlink(missing_ok=True)
