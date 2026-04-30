@@ -13,6 +13,7 @@ JOIN through locations as the canonical guard.
 
 import json
 import logging
+from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
@@ -198,3 +199,126 @@ def schedule_ai_shop():
         conversation_id=(ai_response or {}).get("conversation_id"),
         status="initiated",
     ), 200
+
+
+def _iso(dt):
+    """ISO-format a datetime tolerantly. SQLite returns TEXT; PG returns
+    datetime objects. Returns None for None inputs."""
+    if dt is None:
+        return None
+    if isinstance(dt, str):
+        return dt
+    try:
+        return dt.isoformat()
+    except Exception:
+        return str(dt)
+
+
+@scheduled_calls_bp.route("/api/grade/ai-shop/<int:sc_id>/status", methods=["GET"])
+@login_required
+def schedule_ai_shop_status(sc_id):
+    """Poll a scheduled AI shop's status.
+
+    404 on missing row OR cross-tenant access (no info leak about the
+    existence of other tenants' scheduled_calls). No role gate — read-only,
+    anyone in the company who knows the sc_id can poll.
+
+    Returns derived display_status:
+      - 'graded' / 'no_answer' / 'failed' / 'timeout' (terminal — UI stops polling)
+      - 'webhook_received' / 'processing' (intermediate, derived from join)
+      - 'initiated' (default — waiting for the AI caller / ElevenLabs webhook)
+    """
+    company_id = get_effective_company_id()
+    if not company_id:
+        return jsonify(error="No company context"), 403
+
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            q("""
+                SELECT
+                    sc.sc_id, sc.sc_status, sc.sc_conversation_id,
+                    sc.sc_requested_at, sc.sc_completed_at, sc.sc_status_message,
+                    sc.sc_phone_number,
+                    l.location_name,
+                    vcq.voip_queue_id, vcq.voip_queue_status,
+                    vcq.voip_queue_interaction_id,
+                    i.status_id AS interaction_status_id,
+                    i.interaction_overall_score
+                  FROM scheduled_calls sc
+                  JOIN locations l ON l.location_id = sc.sc_location_id
+                  LEFT JOIN voip_call_queue vcq
+                         ON vcq.voip_queue_call_id = sc.sc_conversation_id
+                  LEFT JOIN interactions i
+                         ON i.interaction_id = vcq.voip_queue_interaction_id
+                 WHERE sc.sc_id = ? AND l.company_id = ?
+            """),
+            (sc_id, company_id),
+        )
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        return jsonify(error="Not found"), 404
+
+    r = dict(row)
+    stored_status  = r["sc_status"]
+    vcq_id         = r.get("voip_queue_id")
+    vcq_status     = r.get("voip_queue_status")
+    interaction_id = r.get("voip_queue_interaction_id")
+    requested_at   = r.get("sc_requested_at")
+    completed_at   = r.get("sc_completed_at")
+
+    # elapsed_seconds for timeout derivation. Tolerate naive (SQLite TEXT
+    # — cast fails gracefully) + aware (Postgres TIMESTAMPTZ) datetimes.
+    elapsed_seconds = None
+    if requested_at is not None:
+        try:
+            ra = requested_at
+            if hasattr(ra, "tzinfo") and ra.tzinfo is None:
+                ra = ra.replace(tzinfo=timezone.utc)
+            elapsed_seconds = int((datetime.now(timezone.utc) - ra).total_seconds())
+        except Exception:
+            elapsed_seconds = None
+
+    # Display status derivation — locked logic.
+    if stored_status == "failed":
+        display = "failed"
+    elif stored_status == "graded":
+        display = "graded"
+    elif stored_status == "no_answer":
+        display = "no_answer"
+    elif stored_status == "initiated":
+        if vcq_id is None and elapsed_seconds is not None and elapsed_seconds > 600:
+            display = "timeout"
+        elif vcq_status == "processing":
+            display = "processing"
+        elif vcq_id is not None:
+            display = "webhook_received"
+        else:
+            display = "initiated"
+    else:
+        # Defensive — shouldn't hit given chk_sc_status, but don't crash.
+        display = stored_status
+
+    is_terminal = display in ("graded", "no_answer", "failed", "timeout")
+
+    return jsonify(
+        sc_id=r["sc_id"],
+        display_status=display,
+        stored_status=stored_status,
+        conversation_id=r.get("sc_conversation_id"),
+        location_name=r.get("location_name"),
+        phone_number=r.get("sc_phone_number"),
+        requested_at=_iso(requested_at),
+        completed_at=_iso(completed_at),
+        elapsed_seconds=elapsed_seconds,
+        interaction_id=interaction_id,
+        interaction_overall_score=(
+            float(r["interaction_overall_score"])
+            if r.get("interaction_overall_score") is not None else None
+        ),
+        status_message=r.get("sc_status_message"),
+        is_terminal=is_terminal,
+    )

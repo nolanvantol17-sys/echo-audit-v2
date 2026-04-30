@@ -305,6 +305,60 @@ def _mark_failed(queue_id, error_message):
         _set_queue_status(queue_id, "failed", error=error_message)
     except Exception:
         logger.exception("Could not mark queue %s as failed", queue_id)
+    _link_to_scheduled_call(queue_id, "failed")
+
+
+def _link_to_scheduled_call(voip_queue_id, terminal_status):
+    """Bump the matching scheduled_calls row to a terminal status, looking up
+    the conversation_id from voip_call_queue in a single atomic UPDATE.
+
+    Best-effort — never raises out. Silent no-op when:
+      - voip_queue_id is None/0
+      - queue row's voip_queue_call_id is NULL (legacy provider w/o
+        conversation_id)
+      - no scheduled_calls row matches (call wasn't scheduled by Echo
+        Audit — e.g. inbound webhook from a cold call)
+      - matching scheduled_calls row is already terminal (sc_status !=
+        'initiated' — idempotent against double-fires or stale state)
+    """
+    if not voip_queue_id:
+        return
+    conn = get_conn()
+    try:
+        if IS_POSTGRES:
+            conn.execute(
+                """UPDATE scheduled_calls
+                      SET sc_status = %s, sc_completed_at = NOW()
+                    WHERE sc_status = 'initiated'
+                      AND sc_conversation_id = (
+                          SELECT voip_queue_call_id FROM voip_call_queue
+                           WHERE voip_queue_id = %s
+                      )""",
+                (terminal_status, voip_queue_id),
+            )
+        else:
+            conn.execute(
+                """UPDATE scheduled_calls
+                      SET sc_status = ?, sc_completed_at = CURRENT_TIMESTAMP
+                    WHERE sc_status = 'initiated'
+                      AND sc_conversation_id = (
+                          SELECT voip_queue_call_id FROM voip_call_queue
+                           WHERE voip_queue_id = ?
+                      )""",
+                (terminal_status, voip_queue_id),
+            )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.warning(
+            "[ai_shop] _link_to_scheduled_call failed (queue_id=%s status=%s)",
+            voip_queue_id, terminal_status, exc_info=True,
+        )
+    finally:
+        conn.close()
 
 
 def _create_interaction(project_id, call_date, *,
@@ -544,6 +598,7 @@ def _grade_and_finalize(voip_queue_id, interaction_id, *,
         voip_queue_id, "graded",
         error="", interaction_id=interaction_id,
     )
+    _link_to_scheduled_call(voip_queue_id, "graded")
 
 
 def _process(voip_queue_id: int) -> None:
@@ -659,6 +714,7 @@ def _process(voip_queue_id: int) -> None:
                 voip_queue_id, "graded",
                 error="", interaction_id=interaction_id,
             )
+            _link_to_scheduled_call(voip_queue_id, "no_answer")
             return
 
         # Classify before grading. Voicemails / hold-only / failed → no_answer
@@ -678,6 +734,7 @@ def _process(voip_queue_id: int) -> None:
                 voip_queue_id, "graded",
                 error="", interaction_id=interaction_id,
             )
+            _link_to_scheduled_call(voip_queue_id, "no_answer")
             return
 
         # Option A locked in: no audio for ElevenLabs flow. audio_url + bytes None.
@@ -731,6 +788,7 @@ def _process(voip_queue_id: int) -> None:
                 voip_queue_id, "graded",
                 error="", interaction_id=interaction_id,
             )
+            _link_to_scheduled_call(voip_queue_id, "no_answer")
             return
 
         _grade_and_finalize(
