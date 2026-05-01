@@ -41,6 +41,9 @@
   let loadSeq     = 0;
   let panelOpen   = false;
 
+  const TERMINAL_STATUSES = new Set(["graded", "no_answer", "failed", "timeout"]);
+  function isTerminal(s) { return TERMINAL_STATUSES.has(s); }
+
   // ── Render ─────────────────────────────────────────────────
 
   function render() {
@@ -49,10 +52,12 @@
       panelEl.hidden = true;
       panelOpen = false;
       pillBtn.setAttribute("aria-expanded", "false");
+      removeClearAllButton();
       return;
     }
     root.hidden = false;
     pillCount.textContent = String(jobs.length);
+    syncClearAllButton();
     panelList.innerHTML = jobs.map(renderRow).join("");
     panelList.querySelectorAll(".ajd-row").forEach(function (row) {
       row.addEventListener("click", function () {
@@ -60,6 +65,12 @@
         if (iid && iid !== "null") {
           window.location.href = "/app/history/" + encodeURIComponent(iid);
         }
+      });
+    });
+    panelList.querySelectorAll(".ajd-row-dismiss").forEach(function (btn) {
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        dismissOne(btn.dataset.source, parseInt(btn.dataset.rowId, 10));
       });
     });
   }
@@ -72,6 +83,7 @@
     const meta     = job.meta || {};
     const project  = meta.project_name || "";
     const clickable = (status === "graded" && iid != null);
+    const dismissable = isTerminal(status);
 
     let pillHtml;
     if (status === "graded" && score != null) {
@@ -82,6 +94,12 @@
                    EA.esc(statusLabel(status)) + '</span>';
     }
 
+    const dismissHtml = dismissable
+      ? '<button type="button" class="ajd-row-dismiss" aria-label="Dismiss" ' +
+          'data-source="' + EA.esc(job.source) + '" ' +
+          'data-row-id="' + EA.esc(String(job.id)) + '">×</button>'
+      : '';
+
     return (
       '<div class="ajd-row' + (clickable ? ' clickable' : '') +
         '" data-interaction-id="' + (iid != null ? EA.esc(String(iid)) : "null") + '">' +
@@ -90,6 +108,7 @@
           '<div class="ajd-row-title">' + EA.esc(title) + '</div>' +
           (project ? '<div class="ajd-row-meta">' + EA.esc(project) + '</div>' : '') +
         '</div>' +
+        dismissHtml +
       '</div>'
     );
   }
@@ -135,6 +154,75 @@
       setPollRate(POLL_ACTIVE_MS);
       pollOnce();   // catch up immediately on focus return
     }
+  }
+
+  // ── Dismiss + clear-all ────────────────────────────────────
+
+  function dismissOne(source, rowId) {
+    if (!source || !Number.isFinite(rowId)) return;
+    const idx = jobs.findIndex(function (j) {
+      return j.source === source && j.id === rowId;
+    });
+    if (idx === -1) return;
+    const removed = jobs.splice(idx, 1)[0];
+    render();
+    EA.fetchJSON("/api/active-jobs/dismiss", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: source, id: rowId }),
+    }).catch(function (err) {
+      console.warn("[dock] dismiss failed; restoring row", err);
+      jobs.splice(idx, 0, removed);
+      render();
+    });
+  }
+
+  function dismissAll() {
+    const removed = [];
+    const kept = [];
+    jobs.forEach(function (j, i) {
+      if (isTerminal(j.display_status)) removed.push({ idx: i, job: j });
+      else kept.push(j);
+    });
+    if (removed.length === 0) return;
+    jobs = kept;
+    render();
+    EA.fetchJSON("/api/active-jobs/dismiss-all", {
+      method: "POST",
+    }).catch(function (err) {
+      console.warn("[dock] dismiss-all failed; restoring rows", err);
+      removed.forEach(function (r) {
+        jobs.splice(r.idx, 0, r.job);
+      });
+      render();
+    });
+  }
+
+  function syncClearAllButton() {
+    const hasTerminal = jobs.some(function (j) { return isTerminal(j.display_status); });
+    let btn = document.getElementById("ajd-clear-all");
+    if (hasTerminal) {
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.type = "button";
+        btn.id = "ajd-clear-all";
+        btn.className = "ajd-clear-all";
+        btn.textContent = "Clear all";
+        btn.setAttribute("aria-label", "Dismiss all completed rows");
+        btn.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          dismissAll();
+        });
+        panelClose.parentNode.insertBefore(btn, panelClose);
+      }
+    } else {
+      removeClearAllButton();
+    }
+  }
+
+  function removeClearAllButton() {
+    const btn = document.getElementById("ajd-clear-all");
+    if (btn) btn.remove();
   }
 
   // ── Pill / panel toggle ────────────────────────────────────

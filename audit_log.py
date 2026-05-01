@@ -9,10 +9,12 @@ blueprint.
 Action type IDs and target entity type IDs match the seed in db.py:
 
     ACTIONS:   1=created, 2=updated, 3=deleted, 4=graded, 5=regraded,
-               6=submitted, 7=unposted, 8=exported, 9=scheduled_ai_shop
+               6=submitted, 7=unposted, 8=exported, 9=scheduled_ai_shop,
+               10=dismissed
     TARGETS:   1=user, 2=interaction, 3=project, 4=phone_routing, 5=company,
                6=rubric_group, 7=rubric_item, 8=department, 9=location,
-               10=transcription_hint, 11=campaign, 12=scheduled_call
+               10=transcription_hint, 11=campaign, 12=scheduled_call,
+               13=grade_job
 """
 
 import json
@@ -32,6 +34,7 @@ ACTION_SUBMITTED  = 6
 ACTION_UNPOSTED   = 7
 ACTION_EXPORTED   = 8
 ACTION_SCHEDULED_AI_SHOP = 9
+ACTION_DISMISSED  = 10
 
 # Target entity type IDs
 ENTITY_USER         = 1
@@ -46,6 +49,7 @@ ENTITY_LOCATION     = 9
 ENTITY_TRANSCRIPTION_HINT = 10
 ENTITY_CAMPAIGN     = 11
 ENTITY_SCHEDULED_CALL = 12
+ENTITY_GRADE_JOB    = 13
 
 
 def write_audit_log(actor_user_id, action_type_id, target_entity_type_id=None,

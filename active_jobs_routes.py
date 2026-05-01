@@ -18,10 +18,12 @@ WHERE clause. The UNION never crosses tenant boundaries. Auth via
 import logging
 from datetime import datetime, timedelta, timezone
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
 
-from db import get_conn, q
+from audit_log import (ACTION_DISMISSED, ENTITY_GRADE_JOB,
+                       ENTITY_SCHEDULED_CALL, write_audit_log)
+from db import IS_POSTGRES, get_conn, q
 from helpers import get_effective_company_id
 
 logger = logging.getLogger(__name__)
@@ -190,6 +192,7 @@ def get_active_jobs_for_user(company_id, user_id):
         LEFT JOIN interactions    i   ON i.interaction_id        = vcq.voip_queue_interaction_id
         WHERE l.company_id = ?
           AND sc.sc_requested_by_user_id = ?
+          AND sc.sc_dismissed_at IS NULL
           AND (
             sc.sc_status = 'initiated'
             OR COALESCE(sc.sc_completed_at, sc.sc_requested_at) > ?
@@ -258,3 +261,158 @@ def list_active_jobs():
     if company_id is None:
         return _err("No company context", 400)
     return jsonify(get_active_jobs_for_user(company_id, current_user.user_id))
+
+
+# ── POST /api/active-jobs/dismiss ────────────────────────────────
+
+
+_TERMINAL_DISPLAY_STATUSES = {"graded", "no_answer", "failed", "timeout"}
+
+
+@active_jobs_bp.route("/active-jobs/dismiss", methods=["POST"])
+@login_required
+def dismiss_active_job():
+    """Soft-hide a single dock row. Body: {source, id}.
+
+    source must be 'grade_job' or 'scheduled_call'. Tenant + author-or-admin
+    gated. Rejects non-terminal rows with 409. Idempotent: returns ok if the
+    row was already dismissed.
+    """
+    company_id = get_effective_company_id()
+    if company_id is None:
+        return _err("No company context", 400)
+
+    body = request.get_json(silent=True) or {}
+    source = body.get("source")
+    raw_id = body.get("id")
+    if source not in ("grade_job", "scheduled_call"):
+        return _err("Invalid source", 400)
+    try:
+        rid = int(raw_id)
+    except (TypeError, ValueError):
+        return _err("Invalid id", 400)
+
+    user_id  = current_user.user_id
+    is_admin = current_user.role in ("admin", "super_admin")
+    now_expr = "NOW()" if IS_POSTGRES else "CURRENT_TIMESTAMP"
+
+    conn = get_conn()
+    try:
+        if source == "grade_job":
+            cur = conn.execute(
+                q("""SELECT grade_job_id, submitted_by_user_id, company_id,
+                            gj_dismissed_at, gj_status
+                       FROM grade_jobs WHERE grade_job_id = ?"""),
+                (rid,),
+            )
+            row = _row_to_dict(cur.fetchone())
+            if not row or row["company_id"] != company_id:
+                return _err("Not found", 404)
+            if not (row["submitted_by_user_id"] == user_id or is_admin):
+                return _err("Forbidden", 403)
+            if row["gj_dismissed_at"] is None:
+                if row["gj_status"] not in ("graded", "failed"):
+                    return _err("Row is not in a terminal status", 409)
+                conn.execute(
+                    q(f"UPDATE grade_jobs SET gj_dismissed_at = {now_expr} "
+                      f"WHERE grade_job_id = ?"),
+                    (rid,),
+                )
+                conn.commit()
+            entity_type = ENTITY_GRADE_JOB
+        else:  # scheduled_call
+            cur = conn.execute(
+                q("""SELECT sc.sc_id, sc.sc_requested_by_user_id, l.company_id,
+                            sc.sc_dismissed_at, sc.sc_status, sc.sc_requested_at
+                       FROM scheduled_calls sc
+                       JOIN locations l ON l.location_id = sc.sc_location_id
+                      WHERE sc.sc_id = ?"""),
+                (rid,),
+            )
+            row = _row_to_dict(cur.fetchone())
+            if not row or row["company_id"] != company_id:
+                return _err("Not found", 404)
+            if not (row["sc_requested_by_user_id"] == user_id or is_admin):
+                return _err("Forbidden", 403)
+            if row["sc_dismissed_at"] is None:
+                display = _display_status_scheduled_call(
+                    row["sc_status"], row["sc_requested_at"]
+                )
+                if display not in _TERMINAL_DISPLAY_STATUSES:
+                    return _err("Row is not in a terminal status", 409)
+                conn.execute(
+                    q(f"UPDATE scheduled_calls SET sc_dismissed_at = {now_expr} "
+                      f"WHERE sc_id = ?"),
+                    (rid,),
+                )
+                conn.commit()
+            entity_type = ENTITY_SCHEDULED_CALL
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    write_audit_log(user_id, ACTION_DISMISSED, entity_type, rid)
+    return jsonify({"ok": True})
+
+
+# ── POST /api/active-jobs/dismiss-all ────────────────────────────
+
+
+@active_jobs_bp.route("/active-jobs/dismiss-all", methods=["POST"])
+@login_required
+def dismiss_all_active_jobs():
+    """Soft-hide every terminal-display dock row currently visible to the user.
+
+    Single-shot bulk dismiss for the panel-header 'Clear all' button. Same
+    tenant + user scoping as GET /api/active-jobs.
+    """
+    company_id = get_effective_company_id()
+    if company_id is None:
+        return _err("No company context", 400)
+
+    user_id = current_user.user_id
+    rows    = get_active_jobs_for_user(company_id, user_id)
+    gj_ids  = [r["id"] for r in rows
+                if r["source"] == "grade_job"
+                and r["display_status"] in _TERMINAL_DISPLAY_STATUSES]
+    sc_ids  = [r["id"] for r in rows
+                if r["source"] == "scheduled_call"
+                and r["display_status"] in _TERMINAL_DISPLAY_STATUSES]
+
+    if not gj_ids and not sc_ids:
+        return jsonify({"ok": True, "dismissed_count": 0})
+
+    now_expr = "NOW()" if IS_POSTGRES else "CURRENT_TIMESTAMP"
+    conn = get_conn()
+    try:
+        if gj_ids:
+            ph = ",".join(["?"] * len(gj_ids))
+            conn.execute(
+                q(f"UPDATE grade_jobs SET gj_dismissed_at = {now_expr} "
+                  f"WHERE grade_job_id IN ({ph}) AND gj_dismissed_at IS NULL"),
+                tuple(gj_ids),
+            )
+        if sc_ids:
+            ph = ",".join(["?"] * len(sc_ids))
+            conn.execute(
+                q(f"UPDATE scheduled_calls SET sc_dismissed_at = {now_expr} "
+                  f"WHERE sc_id IN ({ph}) AND sc_dismissed_at IS NULL"),
+                tuple(sc_ids),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    write_audit_log(
+        user_id, ACTION_DISMISSED, None, None,
+        metadata={"bulk": True,
+                  "grade_job_ids":      gj_ids,
+                  "scheduled_call_ids": sc_ids},
+    )
+    return jsonify({"ok": True,
+                    "dismissed_count": len(gj_ids) + len(sc_ids)})

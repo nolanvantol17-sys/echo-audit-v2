@@ -1082,6 +1082,7 @@ CREATE TABLE scheduled_calls (
     sc_ai_caller_response   JSONB,
     sc_requested_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     sc_completed_at         TIMESTAMPTZ,
+    sc_dismissed_at         TIMESTAMPTZ,
 
     CONSTRAINT chk_sc_status CHECK (
         sc_status IN ('initiated', 'graded', 'no_answer', 'failed')

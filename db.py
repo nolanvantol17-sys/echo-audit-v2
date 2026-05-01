@@ -480,6 +480,11 @@ _ADDITIVE_MIGRATIONS = [
                    FOR EACH ROW EXECUTE FUNCTION set_gj_updated_at();
            END IF;
        END $$""",
+
+    # P2.5: dismissible dock rows. grade_jobs already has gj_dismissed_at via
+    # the Phase 9 CREATE TABLE above; this adds the symmetric column to
+    # scheduled_calls so AI shop terminal rows can be cleared from the dock.
+    "ALTER TABLE scheduled_calls ADD COLUMN IF NOT EXISTS sc_dismissed_at TIMESTAMPTZ",
 ]
 
 
@@ -525,6 +530,7 @@ _ACTION_TYPE_SEEDS = [
     (7, 'unposted'),
     (8, 'exported'),
     (9, 'scheduled_ai_shop'),
+    (10, 'dismissed'),
 ]
 
 _TARGET_ENTITY_TYPE_SEEDS = [
@@ -541,6 +547,7 @@ _TARGET_ENTITY_TYPE_SEEDS = [
     (10, 'transcription_hint'),
     (11, 'campaign'),
     (12, 'scheduled_call'),
+    (13, 'grade_job'),
 ]
 
 _ROLE_SEEDS = [

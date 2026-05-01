@@ -1678,7 +1678,7 @@ tr.row-flagged td { background: rgba(239,68,68,0.06); }
 /* Row — mirrors .gj-row from grade.html for visual continuity. */
 .ajd-row {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto 1fr auto;
   gap: 10px;
   align-items: center;
   padding: 8px 10px;
@@ -1706,6 +1706,39 @@ tr.row-flagged td { background: rgba(239,68,68,0.06); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* P2.5: hover-revealed × button on terminal rows. Always present in DOM
+   for layout stability (third grid column); opacity-toggled on row hover
+   so it doesn't crowd the row at rest. */
+.ajd-row-dismiss {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.ajd-row:hover .ajd-row-dismiss { opacity: 1; }
+.ajd-row-dismiss:hover { color: var(--text); background: var(--surface-3); }
+.ajd-row-dismiss:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* P2.5: bulk dismiss link in panel header. Sits left of the close button,
+   visible only when ≥1 terminal row is currently rendered. */
+.ajd-clear-all {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.78rem;
+  padding: 2px 8px;
+  margin-right: 4px;
+}
+.ajd-clear-all:hover { color: var(--text); text-decoration: underline; }
 
 /* Status pill — mirrors .gj-pill semantics. Same color tokens, same shape. */
 .ajd-pill-status {
