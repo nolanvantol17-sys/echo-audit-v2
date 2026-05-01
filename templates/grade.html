@@ -579,8 +579,11 @@
   .gj-pill.queued       { background: var(--accent-soft); color: #93c5fd; }
   .gj-pill.transcribing { background: var(--accent-soft); color: #93c5fd; }
   .gj-pill.grading      { background: var(--warning-bg);  color: var(--warning); }
+  .gj-pill.in_progress  { background: var(--warning-bg);  color: var(--warning); }
   .gj-pill.graded       { background: var(--success-bg);  color: var(--success); }
+  .gj-pill.no_answer    { background: var(--surface-3);   color: var(--muted); }
   .gj-pill.failed       { background: var(--danger-bg);   color: var(--danger); cursor: help; }
+  .gj-pill.timeout      { background: var(--danger-bg);   color: var(--danger); cursor: help; }
 
   /* Detail view (replaces queue list when a graded row is clicked). */
   .gj-detail-header {
@@ -2123,22 +2126,27 @@
         });
 
         // Optimistically prepend a stub queue row so the user sees instant
-        // feedback. The next poll (bumped to 5s below) will replace it with
+        // feedback. Shape matches /api/active-jobs since #gj-pane consumes
+        // that endpoint. The next poll (bumped to 5s below) replaces it with
         // the canonical row from the server.
+        const _now = new Date().toISOString();
         const stub = {
-          grade_job_id:               result.grade_job_id,
-          gj_status:                  "queued",
-          gj_phase_started_at:        null,
-          gj_error:                   null,
-          gj_created_at:              new Date().toISOString(),
-          interaction_id:             result.interaction_id,
-          status_id:                  45,
-          interaction_overall_score:  null,
-          interaction_responder_name: null,
-          interaction_location_id:    parseInt(locationId, 10) || null,
-          location_name:              state.locationNameDisplay || null,
-          project_id:                 parseInt(projectId, 10) || null,
-          project_name:               null,
+          source:                    "grade_job",
+          id:                        result.grade_job_id,
+          display_status:            "queued",
+          display_title:             "Submission at " + (state.locationNameDisplay || "unknown location"),
+          interaction_id:            result.interaction_id,
+          interaction_overall_score: null,
+          created_at:                _now,
+          updated_at:                _now,
+          meta: {
+            project_name:    null,
+            location_name:   state.locationNameDisplay || null,
+            error:           null,
+            conversation_id: null,
+            phone_number:    null,
+            raw_status:      "queued",
+          },
         };
         if (typeof queueState !== "undefined") {
           queueState.jobs.unshift(stub);
@@ -3192,12 +3200,28 @@
   const QUEUE_POLL_ACTIVE_MS = 5000;
   const QUEUE_POLL_IDLE_MS   = 30000;
 
+  // Source-aware terminal-state set (mirrors active_jobs_dock TERMINAL_STATUSES).
+  // The pane consumes /api/active-jobs which returns rows from BOTH sources
+  // (grade_jobs + scheduled_calls) tagged with `source`. display_status enum:
+  //   queued | in_progress | graded | no_answer | failed | timeout
+  const ACTIVE_DISPLAY_STATUSES = new Set(["queued", "in_progress"]);
+  function statusLabel(s) {
+    if (s === "queued")      return "QUEUED";
+    if (s === "in_progress") return "RUNNING";
+    if (s === "graded")      return "GRADED";
+    if (s === "no_answer")   return "NO ANSWER";
+    if (s === "failed")      return "FAILED";
+    if (s === "timeout")     return "TIMEOUT";
+    return String(s).toUpperCase();
+  }
+  function rowKey(job) { return job.source + ":" + job.id; }
+
   const queueState = {
-    jobs:          [],     // most recent first; shape from GET /api/grade-jobs
+    jobs:          [],     // most recent first; shape from GET /api/active-jobs
     pollMs:        QUEUE_POLL_IDLE_MS,
     pollTimer:     null,
     loadSeq:       0,      // race guard for overlapping polls
-    detailJobId:   null,   // grade_job_id currently mounted in detail view (null = queue mode)
+    detailRowKey:  null,   // "<source>:<id>" of the row currently mounted in detail
     detailLoadSeq: 0,      // race guard for detail mount
   };
 
@@ -3207,7 +3231,7 @@
     const seq = ++queueState.loadSeq;
     let jobs;
     try {
-      jobs = await EA.fetchJSON("/api/grade-jobs");
+      jobs = await EA.fetchJSON("/api/active-jobs");
     } catch (err) {
       // Silent on poll failures — try again next tick.
       return;
@@ -3218,9 +3242,7 @@
 
     // Adjust polling rate based on whether anything is in-flight.
     const hasActive = queueState.jobs.some(function (j) {
-      return j.gj_status === "queued" ||
-             j.gj_status === "transcribing" ||
-             j.gj_status === "grading";
+      return ACTIVE_DISPLAY_STATUSES.has(j.display_status);
     });
     setQueuePollRate(hasActive ? QUEUE_POLL_ACTIVE_MS : QUEUE_POLL_IDLE_MS);
   }
@@ -3257,15 +3279,15 @@
       row.addEventListener("click", function (e) {
         // Ignore clicks on row action buttons.
         if (e.target.closest(".gj-row-action")) return;
-        const jobId = Number(row.dataset.jobId);
-        const job   = queueState.jobs.find(function (j) { return j.grade_job_id === jobId; });
+        const key = row.dataset.rowKey;
+        const job = queueState.jobs.find(function (j) { return rowKey(j) === key; });
         if (!job) return;
         onRowClick(job);
       });
     });
     list.querySelectorAll(".gj-row-action[data-action='dismiss']").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        onDismissJob(Number(btn.dataset.jobId));
+        onDismissJob(btn.dataset.source, Number(btn.dataset.rowId));
       });
     });
     list.querySelectorAll(".gj-row-action[data-action='retry']").forEach(function (btn) {
@@ -3275,8 +3297,8 @@
     });
     list.querySelectorAll(".gj-row-action[data-action='view-error']").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        const jobId = Number(btn.dataset.jobId);
-        const job = queueState.jobs.find(function (j) { return j.grade_job_id === jobId; });
+        const key = btn.dataset.rowKey;
+        const job = queueState.jobs.find(function (j) { return rowKey(j) === key; });
         if (job) showJobError(job);
       });
     });
@@ -3285,50 +3307,56 @@
   function countJobs(jobs) {
     let graded = 0, inflight = 0, failed = 0;
     jobs.forEach(function (j) {
-      if (j.gj_status === "graded") graded++;
-      else if (j.gj_status === "failed") failed++;
+      if (j.display_status === "graded") graded++;
+      else if (j.display_status === "failed"
+               || j.display_status === "timeout"
+               || j.display_status === "no_answer") failed++;
       else inflight++;
     });
     return { graded: graded, inflight: inflight, failed: failed };
   }
 
   function renderQueueRow(job) {
-    const status   = job.gj_status || "queued";
-    const property = job.location_name || job.project_name || "—";
-    const subline  = (job.location_name && job.project_name)
-      ? job.project_name : "";
-    const created  = job.gj_created_at
-      ? EA.formatRelativeTime(job.gj_created_at) : "";
+    const status   = job.display_status || "queued";
+    const meta     = job.meta || {};
+    const property = meta.location_name || meta.project_name || "—";
+    const subline  = (meta.location_name && meta.project_name)
+      ? meta.project_name : "";
+    const created  = job.created_at
+      ? EA.formatRelativeTime(job.created_at) : "";
+    const rkey     = rowKey(job);
 
     let pillHtml;
     if (status === "graded" && job.interaction_overall_score != null) {
       pillHtml = '<span class="gj-pill graded">' + EA.formatScore(job.interaction_overall_score) + '</span>';
-    } else if (status === "failed") {
-      pillHtml = '<button type="button" class="gj-pill failed gj-row-action" ' +
-                   'data-action="view-error" data-job-id="' + job.grade_job_id +
-                   '" title="View error">FAILED</button>';
+    } else if (status === "failed" || status === "timeout") {
+      pillHtml = '<button type="button" class="gj-pill ' + EA.esc(status) + ' gj-row-action" ' +
+                   'data-action="view-error" data-row-key="' + EA.esc(rkey) +
+                   '" title="View error">' + EA.esc(statusLabel(status)) + '</button>';
     } else {
-      pillHtml = '<span class="gj-pill ' + status + '">' + EA.esc(status) + '</span>';
+      pillHtml = '<span class="gj-pill ' + EA.esc(status) + '">' + EA.esc(statusLabel(status)) + '</span>';
     }
 
+    // Retry: grade_jobs only — scheduled_calls have no retry concept.
     let actions = '';
-    if (status === "failed") {
+    if (status === "failed" && job.source === "grade_job") {
       actions += '<button type="button" class="gj-row-action" ' +
-                   'data-action="retry" data-job-id="' + job.grade_job_id +
+                   'data-action="retry" data-job-id="' + EA.esc(String(job.id)) +
                    '" title="Retry">↻</button>';
     }
     actions += '<button type="button" class="gj-row-action" ' +
-                 'data-action="dismiss" data-job-id="' + job.grade_job_id +
+                 'data-action="dismiss" data-source="' + EA.esc(job.source) +
+                 '" data-row-id="' + EA.esc(String(job.id)) +
                  '" title="Dismiss">×</button>';
 
-    const meta = [subline, created].filter(Boolean).join(" · ");
+    const meta_text = [subline, created].filter(Boolean).join(" · ");
 
     return (
-      '<div class="gj-row" data-job-id="' + job.grade_job_id + '">' +
+      '<div class="gj-row" data-row-key="' + EA.esc(rkey) + '">' +
         pillHtml +
         '<div class="gj-row-summary">' +
           '<div class="gj-row-property">' + EA.esc(property) + '</div>' +
-          (meta ? '<div class="gj-row-meta">' + EA.esc(meta) + '</div>' : '') +
+          (meta_text ? '<div class="gj-row-meta">' + EA.esc(meta_text) + '</div>' : '') +
         '</div>' +
         '<div class="gj-row-actions">' + actions + '</div>' +
       '</div>'
@@ -3337,15 +3365,15 @@
 
   function onRowClick(job) {
     // Only graded rows have something to show. In-flight rows: no-op (poll
-    // will flip them in a few seconds). Failed rows: error surfaces via the
-    // FAILED pill button, not the row click.
-    if (job.gj_status === "graded" && job.interaction_id) {
+    // will flip them in a few seconds). Failed/no_answer rows: error or
+    // status surfaces via the pill button, not the row click.
+    if (job.display_status === "graded" && job.interaction_id) {
       enterDetailMode(job);
     }
   }
 
   function enterDetailMode(job) {
-    queueState.detailJobId = job.grade_job_id;
+    queueState.detailRowKey = rowKey(job);
     document.querySelector(".grade-split").classList.add("detail-mode");
     gjEl("#gj-queue-view").hidden = true;
     gjEl("#gj-detail-view").hidden = false;
@@ -3355,7 +3383,7 @@
   }
 
   function exitDetailMode() {
-    queueState.detailJobId = null;
+    queueState.detailRowKey = null;
     document.querySelector(".grade-split").classList.remove("detail-mode");
     gjEl("#gj-detail-view").hidden = true;
     gjEl("#gj-queue-view").hidden = false;
@@ -3382,13 +3410,18 @@
     }
   }
 
-  async function onDismissJob(jobId) {
+  async function onDismissJob(source, rowId) {
+    if (!source || !Number.isFinite(rowId)) return;
     // Optimistic — immediately remove the row, then confirm with the server.
-    queueState.jobs = queueState.jobs.filter(function (j) { return j.grade_job_id !== jobId; });
+    queueState.jobs = queueState.jobs.filter(function (j) {
+      return !(j.source === source && j.id === rowId);
+    });
     renderGradeJobsQueue();
     try {
-      await EA.fetchJSON("/api/grade-jobs/" + encodeURIComponent(jobId) + "/dismiss",
-                         { method: "POST", body: {} });
+      await EA.fetchJSON("/api/active-jobs/dismiss", {
+        method: "POST",
+        body:   { source: source, id: rowId },
+      });
     } catch (err) {
       EA.toast(err.message || "Could not dismiss job", "error");
       // Re-fetch to recover the row we optimistically removed.
@@ -3396,6 +3429,8 @@
     }
   }
 
+  // Retry endpoint is grade_jobs-only; the row affordance hides on
+  // scheduled_call rows so this only fires for grade_job rows.
   async function onRetryJob(jobId) {
     try {
       await EA.fetchJSON("/api/grade-jobs/" + encodeURIComponent(jobId) + "/retry",
@@ -3412,12 +3447,12 @@
   function showJobError(job) {
     EA.confirmDialog({
       title: "Grading failed",
-      body:  job.gj_error || "(no details captured)",
+      body:  (job.meta && job.meta.error) || "(no details captured)",
       okLabel:     "Retry",
       cancelLabel: "Dismiss",
       variant:     "primary",
     }).then(function (ok) {
-      if (ok) onRetryJob(job.grade_job_id);
+      if (ok && job.source === "grade_job") onRetryJob(job.id);
     });
   }
 
