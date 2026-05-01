@@ -144,7 +144,8 @@
     <button type="button" class="btn btn-ghost btn-sm" id="btn-clear-filters">Clear filters</button>
     <div class="filters-actions-right">
       {% if user_role in ('admin','super_admin') %}
-      <button type="button" class="btn btn-ghost btn-sm" id="btn-export">Export to Excel</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-export"
+              disabled title="Select rows to enable export">Export Selected to Excel</button>
       {% endif %}
     </div>
   </div>
@@ -201,8 +202,9 @@
   // cleared via the sticky bar's Clear button or after a successful delete.
   // Caps: export 10, delete 25 (enforced in updateActionBar).
   const selectedIds = new Set();
-  const EXPORT_CAP = 10;
-  const DELETE_CAP = 25;
+  const EXPORT_CAP     = 50;   // selection-driven xlsx (header button) — server-side AI summaries
+  const ZIP_EXPORT_CAP = 10;   // sticky-bar per-row ZIP download (browser concurrency limit)
+  const DELETE_CAP     = 25;
   let _multiDeleteInFlight = false;
 
   const $ = function (s) { return document.querySelector(s); };
@@ -211,6 +213,7 @@
   async function init() {
     wireFilters();
     wireActionBar();
+    refreshExportButtons();   // header button starts disabled (0 selected)
 
     // Hard-deletes initiated from the side panel fire this event after the
     // server confirms the row is gone. Drop the row from local state so the
@@ -464,11 +467,150 @@
   }
 
   // ── Export ──────────────────────────────────────────
-  function exportCurrent() {
-    const qs = buildParams();
-    // A straight navigation so the browser triggers the download dialog.
-    const url = "/api/export/interactions" + (qs.toString() ? "?" + qs : "");
-    window.location.href = url;
+  // Selection-driven Excel export. POST to /api/export/interactions, consume
+  // the NDJSON stream, decode the final base64 blob client-side, trigger a
+  // download. Per-row Haiku call summaries make this 30s-4min depending on
+  // selection size — a progress modal keeps the user oriented.
+  let _exportInFlight = false;
+
+  async function exportCurrent() {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) {
+      EA.toast("Select at least one row to export.", "error");
+      return;
+    }
+    if (ids.length > EXPORT_CAP) {
+      EA.toast("Maximum " + EXPORT_CAP + " interactions per export.", "error");
+      return;
+    }
+    await runExportStream(ids);
+  }
+
+  async function runExportStream(ids) {
+    if (_exportInFlight) return;
+    _exportInFlight = true;
+    refreshExportButtons();
+
+    const modal = openExportProgressModal(ids.length);
+    let downloaded = false;
+    try {
+      const resp = await fetch("/api/export/interactions", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/x-ndjson" },
+        body:    JSON.stringify({ interaction_ids: ids }),
+      });
+      if (!resp.ok) {
+        const txt = await resp.text();
+        let msg = "Export failed.";
+        try { msg = (JSON.parse(txt).error) || msg; } catch (_) {}
+        throw new Error(msg);
+      }
+      const reader  = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let evt;
+          try { evt = JSON.parse(line); } catch (_) { continue; }
+          if (evt.type === "progress") {
+            modal.update(evt.current, evt.total, evt.label);
+          } else if (evt.type === "done") {
+            triggerXlsxDownload(evt.filename, evt.xlsx_base64);
+            downloaded = true;
+          } else if (evt.type === "error") {
+            throw new Error(evt.message || "Export failed.");
+          }
+        }
+      }
+      if (!downloaded) throw new Error("Export ended without a file.");
+      modal.success();
+    } catch (err) {
+      modal.error((err && err.message) || "Export failed.");
+    } finally {
+      _exportInFlight = false;
+      refreshExportButtons();
+    }
+  }
+
+  function triggerXlsxDownload(filename, b64) {
+    const bytes = Uint8Array.from(atob(b64), function (c) { return c.charCodeAt(0); });
+    const blob  = new Blob([bytes], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const a   = document.createElement("a");
+    a.href = url; a.download = filename || "echoaudit_export.xlsx";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+  }
+
+  function openExportProgressModal(total) {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.style.zIndex = "260";
+    overlay.innerHTML =
+      '<div class="modal-card" style="max-width:480px;">' +
+        '<div class="modal-header">Generating Excel export</div>' +
+        '<div class="modal-body">' +
+          '<p id="exp-label" class="text-small muted" style="margin:0 0 12px;">' +
+            'Preparing 0 of ' + total + '…' +
+          '</p>' +
+          '<div style="height:8px;background:var(--surface-3);border-radius:4px;overflow:hidden;">' +
+            '<div id="exp-bar" style="height:100%;width:0%;background:var(--accent);transition:width .25s;"></div>' +
+          '</div>' +
+          '<p id="exp-note" class="text-small muted" style="margin:12px 0 0;">' +
+            'AI summaries are generated one at a time — this can take a few minutes for large selections.' +
+          '</p>' +
+        '</div>' +
+        '<div class="modal-footer">' +
+          '<button type="button" class="btn btn-ghost" id="exp-close" disabled>Close</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    const closeBtn = overlay.querySelector("#exp-close");
+    closeBtn.addEventListener("click", function () {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    });
+    return {
+      update: function (cur, totalN, label) {
+        overlay.querySelector("#exp-label").textContent =
+          label || ("Generating " + cur + " of " + totalN + "…");
+        overlay.querySelector("#exp-bar").style.width =
+          ((cur / Math.max(totalN, 1)) * 100).toFixed(1) + "%";
+      },
+      success: function () {
+        overlay.querySelector("#exp-label").textContent = "Done — file downloaded.";
+        overlay.querySelector("#exp-bar").style.width = "100%";
+        overlay.querySelector("#exp-note").textContent = "";
+        closeBtn.disabled = false;
+        closeBtn.textContent = "Close";
+      },
+      error: function (msg) {
+        const labelEl = overlay.querySelector("#exp-label");
+        labelEl.textContent = "Export failed: " + msg;
+        labelEl.style.color = "var(--danger)";
+        closeBtn.disabled = false;
+      },
+    };
+  }
+
+  function refreshExportButtons() {
+    const btn = document.getElementById("btn-export");
+    if (!btn) return;
+    const count = selectedIds.size;
+    btn.disabled = (_exportInFlight || count === 0 || count > EXPORT_CAP);
+    btn.title = (count === 0)
+      ? "Select rows to enable export"
+      : (count > EXPORT_CAP ? "Maximum " + EXPORT_CAP + " per export" : "");
   }
 
   // ── Multi-select action bar ─────────────────────────
@@ -492,10 +634,11 @@
     const count = selectedIds.size;
     countEl.textContent = count;
     bar.hidden = (count === 0);
-    warnExp.hidden  = (count <= EXPORT_CAP);
+    warnExp.hidden  = (count <= ZIP_EXPORT_CAP);
     warnDel.hidden  = (count <= DELETE_CAP);
-    exportBtn.disabled = (count === 0 || count > EXPORT_CAP);
+    exportBtn.disabled = (count === 0 || count > ZIP_EXPORT_CAP);
     deleteBtn.disabled = (count === 0 || count > DELETE_CAP || _multiDeleteInFlight);
+    refreshExportButtons();   // keep header button state aligned with selection
   }
 
   function clearSelection() {
@@ -523,8 +666,8 @@
   function onExportSelected() {
     const items = _resolveSelectedRows();
     if (!items.length) { EA.toast("Nothing selected.", "error"); return; }
-    if (items.length > EXPORT_CAP) {
-      EA.toast("Maximum " + EXPORT_CAP + " interactions per export.", "error");
+    if (items.length > ZIP_EXPORT_CAP) {
+      EA.toast("Maximum " + ZIP_EXPORT_CAP + " interactions per ZIP export.", "error");
       return;
     }
     const rows = items.map(function (it) {

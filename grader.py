@@ -307,6 +307,72 @@ Respond with a valid JSON object in exactly this format — no extra text before
     return _call_claude_json(prompt, max_tokens=4000, timeout=120.0)
 
 
+# ── Export-time call summary (Haiku) ───────────────────────────
+
+
+def summarize_call_for_export(transcript: str,
+                              scores_per_criterion: dict,
+                              location_name: str = None,
+                              respondent_name: str = None) -> str:
+    """Generate a fresh, comprehensive call summary for spreadsheet export.
+
+    Run sequentially during export — uses Haiku for cost.
+    Returns a single string (3-6 sentences, no markdown). On failure returns
+    "(summary unavailable)" so the export still succeeds.
+    """
+    if not transcript or not transcript.strip():
+        return "(no transcript)"
+
+    score_lines = []
+    for name, value in (scores_per_criterion or {}).items():
+        if value is None:
+            continue
+        score_lines.append(f"- {name}: {value}")
+    score_block = "\n".join(score_lines) if score_lines else "(no rubric scores)"
+
+    header_bits = []
+    if location_name:   header_bits.append(f"Location: {location_name}")
+    if respondent_name: header_bits.append(f"Respondent: {respondent_name}")
+    header_block = "\n".join(header_bits)
+
+    prompt = f"""You are summarizing a customer service call for a spreadsheet export.
+
+This summary is the ONLY narrative writeup for this call — no per-criterion
+explanations are being included alongside it. Write a comprehensive summary
+covering what went well, what went poorly, the key call moments, and any
+notable observations about the agent's performance.
+
+Constraints:
+- 3-6 sentences total.
+- No markdown, no bullet points, no headings — flowing prose only.
+- Readable inside a single spreadsheet cell.
+- Reference specific call moments where relevant.
+
+{header_block}
+
+RUBRIC SCORES (already graded — use as context, do not restate verbatim):
+{score_block}
+
+TRANSCRIPT:
+{transcript}
+
+Respond with the summary text only — no preamble, no quotes."""
+
+    try:
+        response = _claude.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=600,
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}],
+            timeout=60.0,
+        )
+        text = (response.content[0].text or "").strip()
+        return text or "(summary unavailable)"
+    except Exception:
+        logger.exception("summarize_call_for_export failed")
+        return "(summary unavailable)"
+
+
 # ── Flags + totals ─────────────────────────────────────────────
 
 

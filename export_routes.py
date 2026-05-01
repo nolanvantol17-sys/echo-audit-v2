@@ -12,12 +12,13 @@ are NEVER included in export output (see `_SANITIZED_USER_COLUMNS` and the
 VoIP backup block that drops `voip_config_credentials`).
 """
 
+import base64
 import io
 import json
 import logging
 from datetime import date, datetime
 
-from flask import Blueprint, Response, jsonify, request, send_file
+from flask import Blueprint, Response, jsonify, request, send_file, stream_with_context
 from flask_login import current_user, login_required
 
 from audit_log import ACTION_EXPORTED, ACTION_UPDATED, ENTITY_COMPANY, write_audit_log
@@ -75,10 +76,23 @@ def _json_default(value):
 # ═══════════════════════════════════════════════════════════════
 
 
-@export_bp.route("/interactions", methods=["GET"])
+@export_bp.route("/interactions", methods=["POST"])
 @login_required
 @role_required("admin", "super_admin")
 def export_interactions():
+    """NDJSON-streaming Excel export for a user-selected set of interactions.
+
+    Body: {"interaction_ids": [int, ...]}  (1-50, all in current company).
+
+    Response: application/x-ndjson, one JSON object per line:
+        {"type":"progress","current":N,"total":M,"label":"..."}
+        {"type":"done","filename":"...","xlsx_base64":"..."}
+        {"type":"error","message":"..."}
+
+    AI Call Summary is freshly generated per row by Haiku — no caching.
+    Streaming output keeps the gunicorn worker alive past the 120s timeout
+    without a Procfile change (timeout is no-progress, not total-request).
+    """
     try:
         from openpyxl import Workbook
     except ImportError:
@@ -87,134 +101,198 @@ def export_interactions():
     company_id, err = _require_company()
     if err: return err
 
-    args = request.args
-    filters = ["p.company_id = ?", "i.interaction_deleted_at IS NULL"]
-    params = [company_id]
-    if args.get("from_date"):
-        filters.append("i.interaction_date >= ?")
-        params.append(args["from_date"])
-    if args.get("to_date"):
-        filters.append("i.interaction_date <= ?")
-        params.append(args["to_date"])
-    if args.get("project_id"):
-        filters.append("i.project_id = ?")
-        params.append(args["project_id"])
-    if args.get("respondent_user_id"):
-        filters.append("i.respondent_user_id = ?")
-        params.append(args["respondent_user_id"])
-    if args.get("caller_user_id"):
-        filters.append("i.caller_user_id = ?")
-        params.append(args["caller_user_id"])
-    where_clause = " AND ".join(filters)
+    body = request.get_json(silent=True) or {}
+    raw_ids = body.get("interaction_ids") or []
+    try:
+        interaction_ids = [int(x) for x in raw_ids]
+    except (TypeError, ValueError):
+        return _err("interaction_ids must be a list of integers", 400)
+    if not interaction_ids:
+        return _err("Select at least one interaction to export.", 400)
+    if len(interaction_ids) > 50:
+        return _err("Maximum 50 interactions per export.", 400)
 
+    # Pre-validate company scope before opening the stream so auth-style
+    # errors come back as proper HTTP errors instead of mid-stream JSON.
+    placeholders = ",".join(["?"] * len(interaction_ids))
     conn = get_conn()
     try:
-        # Interaction rows with joined display fields. Interaction_transcript
-        # included but never serialized as audio data.
         cur = conn.execute(
-            q(f"""SELECT
-                    i.interaction_id, i.interaction_date,
-                    i.interaction_overall_score,
-                    i.interaction_strengths, i.interaction_weaknesses,
-                    i.interaction_flags, i.interaction_transcript,
-                    p.project_name,
-                    phr.phone_routing_name,
-                    loc.location_name,
-                    (caller.user_first_name || ' ' || caller.user_last_name)         AS caller_name,
-                    (respondent.user_first_name || ' ' || respondent.user_last_name) AS respondent_name
-                FROM interactions i
-                JOIN projects   p   ON p.project_id  = i.project_id
-                LEFT JOIN phone_routing phr ON phr.phone_routing_id = p.phone_routing_id
-                LEFT JOIN locations loc ON loc.location_id = i.interaction_location_id
-                LEFT JOIN users caller     ON caller.user_id     = i.caller_user_id
-                LEFT JOIN users respondent ON respondent.user_id = i.respondent_user_id
-                WHERE {where_clause}
-                ORDER BY i.interaction_date DESC, i.interaction_id DESC"""),
-            params,
+            q(f"""SELECT i.interaction_id
+                    FROM interactions i
+                    JOIN projects p ON p.project_id = i.project_id
+                   WHERE p.company_id = ?
+                     AND i.interaction_deleted_at IS NULL
+                     AND i.interaction_id IN ({placeholders})"""),
+            [company_id] + interaction_ids,
         )
-        interactions = _rows(cur)
-
-        interaction_ids = [i["interaction_id"] for i in interactions]
-        # Per-interaction rubric scores (keyed by snapshot name) + the union of
-        # all snapshot names so we can build dynamic rubric columns.
-        scores_by_iid = {iid: {} for iid in interaction_ids}
-        rubric_columns: list[str] = []
-        seen_column_set = set()
-
-        if interaction_ids:
-            placeholders = ",".join(["?"] * len(interaction_ids))
-            cur = conn.execute(
-                q(f"""SELECT interaction_id, irs_snapshot_name, irs_score_value
-                      FROM interaction_rubric_scores
-                      WHERE interaction_id IN ({placeholders})
-                      ORDER BY interaction_rubric_score_id ASC"""),
-                interaction_ids,
-            )
-            for score_row in cur.fetchall():
-                d = _row_to_dict(score_row)
-                scores_by_iid.setdefault(d["interaction_id"], {})[d["irs_snapshot_name"]] = \
-                    d["irs_score_value"]
-                if d["irs_snapshot_name"] not in seen_column_set:
-                    seen_column_set.add(d["irs_snapshot_name"])
-                    rubric_columns.append(d["irs_snapshot_name"])
+        valid_ids = {r["interaction_id"] for r in cur.fetchall()}
     finally:
         conn.close()
+    missing = [iid for iid in interaction_ids if iid not in valid_ids]
+    if missing:
+        return _err(
+            f"{len(missing)} interaction(s) not found or not in your company.", 404,
+        )
 
-    # Build workbook
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Interactions"
+    actor_user_id = current_user.user_id
 
-    header = [
-        "Date", "Project", "Phone Routing", "Location",
-        "Caller", "Respondent", "Total Score",
-    ] + rubric_columns + ["Strengths", "Weaknesses", "Flags", "Transcript"]
-    ws.append(header)
+    def _generate():
+        from grader import summarize_call_for_export
 
-    for interaction in interactions:
-        iid = interaction["interaction_id"]
-        row_scores = scores_by_iid.get(iid, {})
-        row = [
-            interaction["interaction_date"].isoformat()
-                if hasattr(interaction["interaction_date"], "isoformat")
-                else interaction["interaction_date"],
-            interaction.get("project_name"),
-            interaction.get("phone_routing_name"),
-            interaction.get("location_name"),
-            interaction.get("caller_name"),
-            interaction.get("respondent_name"),
-            float(interaction["interaction_overall_score"])
-                if interaction.get("interaction_overall_score") is not None else None,
-        ]
-        for col_name in rubric_columns:
-            v = row_scores.get(col_name)
-            row.append(float(v) if v is not None else None)
-        row += [
-            interaction.get("interaction_strengths") or "",
-            interaction.get("interaction_weaknesses") or "",
-            interaction.get("interaction_flags") or "",
-            interaction.get("interaction_transcript") or "",
-        ]
-        ws.append(row)
+        try:
+            conn = get_conn()
+            try:
+                # Universal call_when via COALESCE chain spanning all 3 sources:
+                #   AI Shop  → scheduled_calls.sc_requested_at
+                #   Live VoIP → voip_call_queue.voip_queue_created_at
+                #   Live Record (browser) → interaction_call_start_time
+                #   Upload   → interaction_uploaded_at
+                #   Fallback → interaction_submitted_at
+                cur = conn.execute(
+                    q(f"""SELECT
+                            i.interaction_id,
+                            i.interaction_overall_score,
+                            i.interaction_transcript,
+                            i.interaction_responder_name,
+                            loc.location_name,
+                            COALESCE(
+                                r.respondent_name,
+                                NULLIF(TRIM(respondent.user_first_name || ' '
+                                            || respondent.user_last_name), ''),
+                                i.interaction_responder_name
+                            )                                       AS respondent_display,
+                            COALESCE(
+                                sc.sc_requested_at,
+                                vcq.voip_queue_created_at,
+                                i.interaction_call_start_time,
+                                i.interaction_uploaded_at,
+                                i.interaction_submitted_at
+                            )                                       AS call_when
+                          FROM interactions i
+                          JOIN projects p              ON p.project_id     = i.project_id
+                          LEFT JOIN locations  loc     ON loc.location_id  = i.interaction_location_id
+                          LEFT JOIN users respondent   ON respondent.user_id = i.respondent_user_id
+                          LEFT JOIN respondents r      ON r.respondent_id  = i.respondent_id
+                          LEFT JOIN voip_call_queue vcq ON vcq.voip_queue_interaction_id = i.interaction_id
+                          LEFT JOIN scheduled_calls sc  ON sc.sc_conversation_id        = vcq.voip_queue_call_id
+                         WHERE p.company_id = ?
+                           AND i.interaction_deleted_at IS NULL
+                           AND i.interaction_id IN ({placeholders})
+                         ORDER BY call_when DESC NULLS LAST, i.interaction_id DESC"""),
+                    [company_id] + interaction_ids,
+                )
+                rows = _rows(cur)
 
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
+                # Per-interaction rubric scores keyed by snapshot name + union
+                # of names for dynamic columns (matches existing pattern).
+                scores_by_iid = {r["interaction_id"]: {} for r in rows}
+                rubric_columns: list[str] = []
+                seen = set()
+                cur = conn.execute(
+                    q(f"""SELECT interaction_id, irs_snapshot_name, irs_score_value
+                            FROM interaction_rubric_scores
+                           WHERE interaction_id IN ({placeholders})
+                           ORDER BY interaction_rubric_score_id ASC"""),
+                    interaction_ids,
+                )
+                for sr in cur.fetchall():
+                    d = _row_to_dict(sr)
+                    scores_by_iid.setdefault(d["interaction_id"], {})[d["irs_snapshot_name"]] = \
+                        d["irs_score_value"]
+                    if d["irs_snapshot_name"] not in seen:
+                        seen.add(d["irs_snapshot_name"])
+                        rubric_columns.append(d["irs_snapshot_name"])
+            finally:
+                conn.close()
 
-    # Audit
-    write_audit_log(
-        current_user.user_id, ACTION_EXPORTED, ENTITY_COMPANY, company_id,
-        metadata={"action": "export_interactions",
-                  "row_count": len(interactions),
-                  "filters": {k: v for k, v in args.items()}},
-    )
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Past Grades"
+            header = ["Location", "Date called", "Time called", "Respondent",
+                      "Total Score"] + rubric_columns + ["Call Summary"]
+            ws.append(header)
 
-    filename = f"echoaudit_export_{date.today().isoformat()}.xlsx"
-    return send_file(
-        buf,
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        as_attachment=True,
-        download_name=filename,
+            total = len(rows)
+            for idx, r in enumerate(rows, start=1):
+                yield json.dumps({
+                    "type":    "progress",
+                    "current": idx,
+                    "total":   total,
+                    "label":   f"Generating summary {idx}/{total} — {r.get('location_name') or 'Unknown'}",
+                }) + "\n"
+
+                cw = r.get("call_when")
+                if hasattr(cw, "strftime"):
+                    date_str = cw.date().isoformat() if hasattr(cw, "date") else cw.isoformat()[:10]
+                    time_str = cw.strftime("%H:%M")
+                elif isinstance(cw, str):
+                    date_str = cw[:10]
+                    time_str = cw[11:16] if len(cw) >= 16 else ""
+                else:
+                    date_str = ""
+                    time_str = ""
+
+                row_scores = scores_by_iid.get(r["interaction_id"], {})
+                summary = summarize_call_for_export(
+                    transcript=r.get("interaction_transcript") or "",
+                    scores_per_criterion=row_scores,
+                    location_name=r.get("location_name"),
+                    respondent_name=r.get("respondent_display"),
+                )
+
+                total_score = r.get("interaction_overall_score")
+                row = [
+                    r.get("location_name") or "",
+                    date_str,
+                    time_str,
+                    r.get("respondent_display") or "",
+                    float(total_score) if total_score is not None else "",
+                ]
+                for col in rubric_columns:
+                    v = row_scores.get(col)
+                    if v is None:
+                        row.append(None)
+                    else:
+                        try:
+                            row.append(float(v))
+                        except (TypeError, ValueError):
+                            # Yes/No/Pending stays as string.
+                            row.append(str(v))
+                row.append(summary)
+                ws.append(row)
+
+            buf = io.BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+            xlsx_b64 = base64.b64encode(buf.read()).decode("ascii")
+
+            try:
+                write_audit_log(
+                    actor_user_id, ACTION_EXPORTED, ENTITY_COMPANY, company_id,
+                    metadata={"action":         "export_interactions_v2",
+                              "row_count":      total,
+                              "interaction_ids": interaction_ids},
+                )
+            except Exception:
+                logger.exception("export_interactions audit write failed")
+
+            yield json.dumps({
+                "type":        "done",
+                "filename":    f"echoaudit_export_{date.today().isoformat()}.xlsx",
+                "xlsx_base64": xlsx_b64,
+            }) + "\n"
+        except Exception as exc:
+            logger.exception("export_interactions stream failed")
+            yield json.dumps({"type": "error", "message": str(exc)}) + "\n"
+
+    return Response(
+        stream_with_context(_generate()),
+        mimetype="application/x-ndjson",
+        headers={
+            "Cache-Control":     "no-cache, no-transform",
+            "X-Accel-Buffering": "no",  # disable proxy buffering on Railway edge
+        },
     )
 
 
