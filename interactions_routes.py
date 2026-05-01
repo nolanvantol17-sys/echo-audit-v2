@@ -697,6 +697,23 @@ def _grade_and_persist(*, interaction_id, company_id, project_id,
     respondent_id = None
     respondent_name_final = grade_result.get("responder_name")
     try:
+        # Snapshot the pre-regrade overall + original BEFORE _persist_grade_result
+        # overwrites overall_score. Without this, first-time regrades whose
+        # interaction_original_score is NULL would capture the NEW score as the
+        # "original" anchor, defeating the point of the column. Mirrors the
+        # snapshot-then-write pattern in regrade_with_context.
+        existing_overall_for_anchor = None
+        existing_original_for_anchor = None
+        if not is_initial_grade:
+            cur = conn.execute(
+                q("""SELECT interaction_overall_score, interaction_original_score
+                       FROM interactions WHERE interaction_id = ?"""),
+                (interaction_id,),
+            )
+            existing = _row_to_dict(cur.fetchone()) or {}
+            existing_overall_for_anchor  = existing.get("interaction_overall_score")
+            existing_original_for_anchor = existing.get("interaction_original_score")
+
         # Transcript + audio already saved — pass audio_url=None to trigger
         # the "update score fields only" branch inside _persist_grade_result.
         _persist_grade_result(
@@ -711,16 +728,10 @@ def _grade_and_persist(*, interaction_id, company_id, project_id,
         )
         # For re-grades (not the first grade): bump counter + preserve original.
         if not is_initial_grade:
-            cur = conn.execute(
-                q("""SELECT interaction_overall_score, interaction_original_score
-                       FROM interactions WHERE interaction_id = ?"""),
-                (interaction_id,),
-            )
-            existing = _row_to_dict(cur.fetchone()) or {}
             original = (
-                existing.get("interaction_original_score")
-                if existing.get("interaction_original_score") is not None
-                else existing.get("interaction_overall_score")
+                existing_original_for_anchor
+                if existing_original_for_anchor is not None
+                else existing_overall_for_anchor
             )
             conn.execute(
                 q("""UPDATE interactions SET
