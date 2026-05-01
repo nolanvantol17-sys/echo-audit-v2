@@ -26,7 +26,7 @@ from audit_log import (
 )
 from auth import role_required
 from dashboard_helpers import (
-    _month_bounds, _report_url_for, _roll_up_locations, _trend_for_calls,
+    _report_url_for, _roll_up_locations, _trend_for_calls,
 )
 from db import get_conn, q, IS_POSTGRES
 from helpers import (
@@ -44,6 +44,33 @@ api_bp = Blueprint("api", __name__, url_prefix="/api")
 
 def _err(msg, code):
     return jsonify({"error": msg}), code
+
+
+# ── Multi-id query param helpers ────────────────────────────────
+# Duplicated from dashboard_routes.py (10 LOC each, low-risk drift).
+# Factor out to dashboard_helpers.py if a third consumer arrives.
+
+
+def _parse_id_list(raw):
+    """Parse a comma-separated id list query param into a list of ints.
+    Returns [] if no value or all values are non-numeric."""
+    if not raw:
+        return []
+    out = []
+    for piece in str(raw).split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        try:
+            out.append(int(piece))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _in_clause(n):
+    """Return '(?,?,...)' of length n. Caller must guarantee n >= 1."""
+    return "(" + ",".join(["?"] * n) + ")"
 
 
 def _ok():
@@ -1741,6 +1768,56 @@ def get_project_summary(project_id):
     company_id, err = _require_company()
     if err: return err
 
+    # ── Filter params (all optional). Match /api/dashboard/chart vocabulary
+    # so URL state is portable between the two surfaces. When NO filters are
+    # present, default to all-time / all-everything — NOT _month_bounds().
+    # This is a deliberate departure from the /api/dashboard endpoint, which
+    # stays month-scoped per its calendar-month framing.
+    date_from = request.args.get("date_from")
+    date_to   = request.args.get("date_to")
+
+    location_ids      = _parse_id_list(request.args.get("location_ids"))
+    caller_ids        = _parse_id_list(request.args.get("caller_ids"))
+    campaign_ids      = _parse_id_list(request.args.get("campaign_ids"))
+    phone_routing_ids = _parse_id_list(request.args.get("phone_routing_ids"))
+
+    # Singular legacy aliases — bookmarked URLs, etc.
+    legacy_loc = request.args.get("location_id")
+    if legacy_loc and not location_ids:
+        location_ids = _parse_id_list(legacy_loc)
+    legacy_caller = request.args.get("caller_user_id")
+    if legacy_caller and not caller_ids:
+        caller_ids = _parse_id_list(legacy_caller)
+    legacy_camp = request.args.get("campaign_id")
+    if legacy_camp and not campaign_ids:
+        campaign_ids = _parse_id_list(legacy_camp)
+    legacy_phr = request.args.get("phone_routing_id")
+    if legacy_phr and not phone_routing_ids:
+        phone_routing_ids = _parse_id_list(legacy_phr)
+
+    # Build a shared WHERE-clause fragment that all 4 primary queries
+    # (aggregate, unanswered, recent grades, top callers) AND the locations-
+    # roll-up enrichment subquery splice in. Rolling-30-day trend stays
+    # independent — see ENRICHMENT 2/3 comment below for why.
+    extra_filters = []
+    extra_params = []
+    if date_from:
+        extra_filters.append("i.interaction_date >= ?")
+        extra_params.append(date_from)
+    if date_to:
+        extra_filters.append("i.interaction_date <= ?")
+        extra_params.append(date_to)
+    if location_ids:
+        extra_filters.append(f"i.interaction_location_id IN {_in_clause(len(location_ids))}")
+        extra_params.extend(location_ids)
+    if caller_ids:
+        extra_filters.append(f"i.caller_user_id IN {_in_clause(len(caller_ids))}")
+        extra_params.extend(caller_ids)
+    if campaign_ids:
+        extra_filters.append(f"i.campaign_id IN {_in_clause(len(campaign_ids))}")
+        extra_params.extend(campaign_ids)
+    extra_where = (" AND " + " AND ".join(extra_filters)) if extra_filters else ""
+
     conn = get_conn()
     try:
         if not _get_project(conn, project_id, company_id):
@@ -1774,14 +1851,27 @@ def get_project_summary(project_id):
             project["location_name"]  = "All Locations"
             project["location_phone"] = None
 
-        # Monthly stat cards — mirrors /api/dashboard shape so the hub's stat
-        # strip lines up with the landing's (Total Calls / Avg Score / Below
-        # 5.0 / Unanswered). Scoped to this project. Month-scoped is the
-        # canonical framing; Below 5.0 + Unanswered are only meaningful
-        # against a bounded window.
-        month_start, month_end = _month_bounds()
+        # Phone-routing filter is single-project-trivial: this endpoint
+        # serves ONE project. If the filter set excludes this project's
+        # phone_routing_id, short-circuit to an empty payload — every
+        # downstream query would return 0 rows anyway.
+        if phone_routing_ids:
+            proj_phr = project.get("phone_routing_id")
+            if proj_phr is None or proj_phr not in phone_routing_ids:
+                return jsonify({
+                    **project,
+                    "stat_cards": {
+                        "total_calls": 0, "avg_score": None,
+                        "below_threshold": 0, "no_answer_count": 0,
+                    },
+                    "recent_calls": [], "top_agents": [],
+                })
 
-        cur = conn.execute(q("""
+        # ── Stat tile aggregate (graded count, avg, below 5).
+        # All-time by default; user-set filters narrow the scope. Below 5
+        # and Unanswered remain meaningful in any window (small ranges may
+        # show 0/0 — that's the user's filter telling the truth).
+        cur = conn.execute(q(f"""
             SELECT
                 COUNT(*) AS total_calls,
                 AVG(i.interaction_overall_score) AS avg_score,
@@ -1791,21 +1881,19 @@ def get_project_summary(project_id):
             WHERE i.project_id = ?
               AND i.interaction_deleted_at IS NULL
               AND i.status_id <> ?
-              AND i.interaction_date >= ?
-              AND i.interaction_date <  ?
-        """), (project_id, STATUS_NO_ANSWER, month_start, month_end))
+              {extra_where}
+        """), (project_id, STATUS_NO_ANSWER, *extra_params))
         scored_row = _row_to_dict(cur.fetchone()) or {}
         stat_avg_raw = scored_row.get("avg_score")
         stat_avg = round(float(stat_avg_raw), 1) if stat_avg_raw is not None else None
 
-        cur = conn.execute(q("""
+        cur = conn.execute(q(f"""
             SELECT COUNT(*) AS cnt FROM interactions i
             WHERE i.project_id = ?
               AND i.interaction_deleted_at IS NULL
               AND i.status_id = ?
-              AND i.interaction_date >= ?
-              AND i.interaction_date <  ?
-        """), (project_id, STATUS_NO_ANSWER, month_start, month_end))
+              {extra_where}
+        """), (project_id, STATUS_NO_ANSWER, *extra_params))
         noans_row = _row_to_dict(cur.fetchone()) or {}
         no_answer_count = noans_row.get("cnt") or 0
 
@@ -1816,10 +1904,12 @@ def get_project_summary(project_id):
             "no_answer_count": no_answer_count,
         }
 
-        # Recent calls — last 5 for this project. Per-call location comes
-        # from the interaction's stamped location_id (source of truth), so
-        # all-locations projects show the actual property per row.
-        cur = conn.execute(q("""
+        # Recent calls — last 5 in scope. ORDER BY DESC LIMIT 5 still, but
+        # filter-aware so the list reflects whatever the user is asking to
+        # see. Per-call location comes from i.interaction_location_id (the
+        # source of truth), so all-locations projects show the actual
+        # property per row.
+        cur = conn.execute(q(f"""
             SELECT
                 i.interaction_id, i.interaction_date, i.interaction_overall_score,
                 i.interaction_call_start_time, i.interaction_uploaded_at,
@@ -1836,21 +1926,21 @@ def get_project_summary(project_id):
             LEFT JOIN users       u   ON u.user_id         = i.respondent_user_id
             LEFT JOIN respondents r   ON r.respondent_id   = i.respondent_id
             WHERE i.project_id = ? AND i.interaction_deleted_at IS NULL
+              {extra_where}
             ORDER BY i.interaction_id DESC
             LIMIT 5
-        """), (project_id,))
+        """), (project_id, *extra_params))
         recent_calls = _rows(cur)
 
         # Top callers for this project, keyed on respondent_id so same-named
-        # respondents at different locations remain distinct cards. Month-
-        # scoped ranking matches the global /app dashboard. Each row is
-        # enriched with a project-scoped locations roll-up + last_call
-        # timestamp, a rolling 30-day trend, and a Performance Reports
-        # deep-link by respondent_id (PR is 1:1 with respondent).
-        # NULL / empty / 'Name Not Detected' names are excluded.
-        rolling_start = date.today() - timedelta(days=30)
+        # respondents at different locations remain distinct cards. Filter-
+        # aware (inherits the page's date/location/caller/campaign filters).
+        # Each row is enriched with three sidecars — see comments at each
+        # subquery for that sidecar's scope decision and rationale. NULL /
+        # empty / 'Name Not Detected' names are excluded.
+        rolling_start = date.today() - timedelta(days=30)  # for cur3 trend ↓
 
-        cur = conn.execute(q("""
+        cur = conn.execute(q(f"""
             SELECT r.respondent_id,
                    TRIM(r.respondent_name) AS respondent_name,
                    r.location_id,
@@ -1862,15 +1952,14 @@ def get_project_summary(project_id):
               AND i.interaction_deleted_at IS NULL
               AND i.status_id <> ?
               AND i.interaction_overall_score IS NOT NULL
-              AND i.interaction_date >= ?
-              AND i.interaction_date <  ?
               AND r.respondent_name IS NOT NULL
               AND TRIM(r.respondent_name) <> ''
               AND TRIM(r.respondent_name) <> 'Name Not Detected'
+              {extra_where}
             GROUP BY r.respondent_id, r.respondent_name, r.location_id
             ORDER BY avg_score DESC
             LIMIT 3
-        """), (project_id, STATUS_NO_ANSWER, month_start, month_end))
+        """), (project_id, STATUS_NO_ANSWER, *extra_params))
 
         top_agents = []
         for row in _rows(cur):
@@ -1878,8 +1967,14 @@ def get_project_summary(project_id):
             name = row["respondent_name"]
             a = row.get("avg_score")
 
-            # Per-respondent month-scoped detail (project-scoped) → locations + last_call.
-            cur2 = conn.execute(q("""
+            # ── ENRICHMENT 1/3 — locations roll-up + last_call timestamp.
+            # SCOPE: filter-aware. Inherits the same date/location/caller/
+            # campaign filters as the parent top_callers query, so the
+            # locations bubbles + last_call shown on each card describe the
+            # SAME slice of data the user is looking at on the page. (A user
+            # filtering to Q1 expects Q1 locations, not the current calendar
+            # month's.)
+            cur2 = conn.execute(q(f"""
                 SELECT
                     l.location_name,
                     i.interaction_date,
@@ -1892,10 +1987,9 @@ def get_project_summary(project_id):
                   AND i.interaction_deleted_at IS NULL
                   AND i.status_id <> ?
                   AND i.interaction_overall_score IS NOT NULL
-                  AND i.interaction_date >= ?
-                  AND i.interaction_date <  ?
                   AND i.respondent_id = ?
-            """), (project_id, STATUS_NO_ANSWER, month_start, month_end, respondent_id))
+                  {extra_where}
+            """), (project_id, STATUS_NO_ANSWER, respondent_id, *extra_params))
             month_calls = _rows(cur2)
             locations = _roll_up_locations(month_calls)
 
@@ -1911,7 +2005,17 @@ def get_project_summary(project_id):
                              if hasattr(last_call, "isoformat")
                              else (str(last_call) if last_call else None))
 
-            # Per-respondent rolling-30-day trend, project-scoped.
+            # ── ENRICHMENT 2/3 — rolling-30-day trend sparkline.
+            # SCOPE: INTENTIONALLY UNFILTERED beyond project + respondent.
+            # The trend's purpose is "recent momentum signal" — is this
+            # caller heading up or down RIGHT NOW? — independent of whatever
+            # slice of data the page is currently showing. If the trend
+            # inherited the user's date filter, "user filters to Q1" would
+            # turn the trend sparkline into a Q1 line chart, which has no
+            # momentum meaning. Keep rolling-30-day fixed so the sparkline
+            # is always interpretable the same way (right edge = today,
+            # left edge = 30 days ago) regardless of page filter state.
+            # If you change this, change `rolling_start` accordingly above.
             cur3 = conn.execute(q("""
                 SELECT
                     i.interaction_date,
@@ -1926,7 +2030,10 @@ def get_project_summary(project_id):
             """), (project_id, STATUS_NO_ANSWER, rolling_start, respondent_id))
             trend = _trend_for_calls(_rows(cur3))
 
-            # PR is 1:1 with respondent; lookup returns 0 or 1 row.
+            # ── ENRICHMENT 3/3 — Performance Report deep-link.
+            # SCOPE: no scope. PR is 1:1 with respondent regardless of any
+            # date/location/campaign window — there's nothing meaningful to
+            # filter here. Returns 0 or 1 row.
             cur4 = conn.execute(q("""
                 SELECT pr.performance_report_id
                 FROM performance_reports pr

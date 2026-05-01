@@ -330,6 +330,11 @@ def get_filters():
     one non-deleted interaction in the company (or in the given project, if
     project_id is provided). Phone routings include their location_id so the
     UI can narrow the phone_routing list when locations are selected.
+
+    Campaigns are returned ONLY when project_id is provided — campaigns are
+    project-scoped (campaigns.project_id FK) and a company-wide campaign list
+    isn't a meaningful filter (caller would need to know which project a
+    campaign belongs to). Empty list when project_id is omitted.
     """
     company_id, err = _require_company()
     if err: return err
@@ -388,10 +393,27 @@ def get_filters():
         )
         phone_routings = _rows(cur)
 
+        # campaigns: project-scoped only. Distinct live campaigns reachable
+        # via interactions in scope. Returns [] when project_id not provided.
+        campaigns = []
+        if project_id:
+            cur = conn.execute(
+                q(f"""SELECT DISTINCT c.campaign_id, c.campaign_name
+                      FROM interactions i
+                      JOIN projects   p ON p.project_id   = i.project_id
+                      JOIN campaigns  c ON c.campaign_id  = i.campaign_id
+                      WHERE {where}
+                        AND c.campaign_deleted_at IS NULL
+                      ORDER BY c.campaign_name ASC"""),
+                base_params,
+            )
+            campaigns = _rows(cur)
+
         return jsonify({
             "locations":      locations,
             "callers":        callers,
             "phone_routings": phone_routings,
+            "campaigns":      campaigns,
         })
     finally:
         conn.close()
@@ -434,10 +456,14 @@ def get_chart():
     location_ids = _parse_id_list(request.args.get("location_ids"))
     caller_ids   = _parse_id_list(request.args.get("caller_ids"))
     phone_routing_ids = _parse_id_list(request.args.get("phone_routing_ids"))
+    campaign_ids = _parse_id_list(request.args.get("campaign_ids"))
 
     legacy_loc = request.args.get("location_id")
     if legacy_loc and not location_ids:
         location_ids = _parse_id_list(legacy_loc)
+    legacy_camp = request.args.get("campaign_id")
+    if legacy_camp and not campaign_ids:
+        campaign_ids = _parse_id_list(legacy_camp)
 
     filters = [
         "p.company_id = ?",
@@ -472,6 +498,10 @@ def get_chart():
     if phone_routing_ids:
         filters.append(f"p.phone_routing_id IN {_in_clause(len(phone_routing_ids))}")
         params.extend(phone_routing_ids)
+    # Campaign filter — direct on i.campaign_id (no JOIN required).
+    if campaign_ids:
+        filters.append(f"i.campaign_id IN {_in_clause(len(campaign_ids))}")
+        params.extend(campaign_ids)
 
     # Joins are now strictly for grouping/display, never for filtering.
     # view_by=phone_routing needs phr.phone_routing_name; view_by=location
