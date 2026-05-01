@@ -19,7 +19,7 @@ from flask import Blueprint, jsonify, request
 from flask_login import current_user, login_required
 
 import auth
-from ai_caller_client import AICallerError, initiate_call
+from voip.elevenlabs_caller import ElevenLabsCallError, initiate_call
 from audit_log import (
     ACTION_SCHEDULED_AI_SHOP, ENTITY_SCHEDULED_CALL, write_audit_log,
 )
@@ -123,12 +123,12 @@ def schedule_ai_shop():
     try:
         ai_response = initiate_call(
             phone_e164,
-            sc_id=sc_id, location_id=location_id, project_id=project_id,
+            location_id=location_id, project_id=project_id,
             campaign_id=campaign_id, caller_user_id=caller_user_id,
         )
-    except AICallerError as exc:
+    except ElevenLabsCallError as exc:
         ai_error = str(exc)
-        logger.warning("[ai_shop] sc_id=%s ai_caller failed: %s", sc_id, exc)
+        logger.warning("[ai_shop] sc_id=%s elevenlabs failed: %s", sc_id, exc)
 
     # ── Persist outcome on the scheduled_calls row ───────────────
     conn = get_conn()
@@ -226,7 +226,7 @@ def schedule_ai_shop_status(sc_id):
     Returns derived display_status:
       - 'graded' / 'no_answer' / 'failed' / 'timeout' (terminal — UI stops polling)
       - 'webhook_received' / 'processing' (intermediate, derived from join)
-      - 'initiated' (default — waiting for the AI caller / ElevenLabs webhook)
+      - 'initiated' (default — waiting for ElevenLabs to confirm the call placed)
     """
     company_id = get_effective_company_id()
     if not company_id:
