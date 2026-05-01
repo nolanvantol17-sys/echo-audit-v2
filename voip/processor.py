@@ -35,6 +35,7 @@ from typing import Optional
 import grader
 from db import IS_POSTGRES, get_conn, q
 from helpers import load_active_hints
+from voip.audio_fetcher import fetch_and_store_audio_async
 from voip.classifier import classify_call
 from voip.credentials import decrypt_credentials
 
@@ -552,7 +553,8 @@ def _save_audio_url(interaction_id):
 
 def _grade_and_finalize(voip_queue_id, interaction_id, *,
                         transcript, criteria, project,
-                        audio_url=None, audio_bytes=None):
+                        audio_url=None, audio_bytes=None,
+                        provider=None, conversation_id=None):
     """Run Claude grading + persist results + mark queue graded.
 
     Shared by both transcript paths (legacy AAI and provided-transcript).
@@ -599,6 +601,11 @@ def _grade_and_finalize(voip_queue_id, interaction_id, *,
         error="", interaction_id=interaction_id,
     )
     _link_to_scheduled_call(voip_queue_id, "graded")
+    # Fire-and-forget ElevenLabs audio post-fetch. Provider-gated: AAI flow
+    # already has its own audio path, and other VoIP providers don't expose
+    # a conversation→audio endpoint compatible with this fetcher.
+    if provider == "elevenlabs" and conversation_id:
+        fetch_and_store_audio_async(interaction_id, conversation_id)
 
 
 def _process(voip_queue_id: int) -> None:
@@ -735,13 +742,26 @@ def _process(voip_queue_id: int) -> None:
                 error="", interaction_id=interaction_id,
             )
             _link_to_scheduled_call(voip_queue_id, "no_answer")
+            # Voicemail/hold audio is genuinely useful for the manager —
+            # fire the same async fetch as the success-grade path. Provider-
+            # gated; AAI/no-conv-id flows skip naturally.
+            if (queue_row.get("voip_queue_provider") == "elevenlabs"
+                    and queue_row.get("voip_queue_call_id")):
+                fetch_and_store_audio_async(
+                    interaction_id, queue_row["voip_queue_call_id"]
+                )
             return
 
-        # Option A locked in: no audio for ElevenLabs flow. audio_url + bytes None.
+        # Audio is fetched async post-grade by audio_fetcher (Arc D —
+        # reverses C2b.2's never-store decision). audio_url/bytes stay None
+        # at grade time; the daemon thread fills them in from ElevenLabs'
+        # /audio API once the queue row is graded.
         _grade_and_finalize(
             voip_queue_id, interaction_id,
             transcript=transcript, criteria=criteria, project=project,
             audio_url=None, audio_bytes=None,
+            provider=queue_row.get("voip_queue_provider"),
+            conversation_id=queue_row.get("voip_queue_call_id"),
         )
         return
 
@@ -795,6 +815,8 @@ def _process(voip_queue_id: int) -> None:
             voip_queue_id, interaction_id,
             transcript=transcript, criteria=criteria, project=project,
             audio_url=audio_url, audio_bytes=audio_bytes_for_interaction,
+            provider=queue_row.get("voip_queue_provider"),
+            conversation_id=queue_row.get("voip_queue_call_id"),
         )
     finally:
         try:
