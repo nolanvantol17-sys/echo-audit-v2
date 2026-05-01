@@ -262,9 +262,16 @@
     if (!container) return;
     document.getElementById("dash-chart-wrap").hidden = false;
     const opts = {
-      container:     container,
-      projectId:     PROJECT_ID,
-      defaultViewBy: "date",
+      container:         container,
+      projectId:         PROJECT_ID,
+      defaultViewBy:     "date",
+      // Project hub specifically defaults to all-time so the chart matches
+      // the (also all-time-by-default) /api/projects/<id>/summary response.
+      // /app/index and /app/projects keep the widget's global "30D" default
+      // since their stat tiles remain month-scoped via /api/dashboard.
+      defaultDatePreset: "all",
+      showFilters:       ["campaigns"],
+      onChange:          onWidgetFilterChange,
     };
     // Single-location projects: hide locations filter + by-location mode.
     if (!summary.project_all_locations) {
@@ -272,6 +279,41 @@
       opts.hideViewByModes = ["location"];
     }
     widgetHandle = EA.DashboardWidget.init(opts);
+  }
+
+  // ── Widget → host bridge ─────────────────────────────────
+  // Fires after each user-initiated chart reload. Refetches
+  // /api/projects/<id>/summary with matching params and re-renders the
+  // stat tiles + leaderboard + recent grades. Project metadata (title,
+  // breadcrumb, meta block) doesn't change with filters — re-rendering
+  // would be idempotent and harmless, so we just re-render the data
+  // surfaces and skip the metadata. Initial page load uses loadSummary()
+  // (above) — the widget skips its initial onChange to avoid a duplicate
+  // boot fetch.
+  async function onWidgetFilterChange(filterState) {
+    const params = new URLSearchParams();
+    if (filterState.date_from) params.set("date_from", filterState.date_from);
+    if (filterState.date_to)   params.set("date_to",   filterState.date_to);
+    if (filterState.location_ids.length)
+      params.set("location_ids",      filterState.location_ids.join(","));
+    if (filterState.caller_ids.length)
+      params.set("caller_ids",        filterState.caller_ids.join(","));
+    if (filterState.phone_routing_ids.length)
+      params.set("phone_routing_ids", filterState.phone_routing_ids.join(","));
+    if (filterState.campaign_ids.length)
+      params.set("campaign_ids",      filterState.campaign_ids.join(","));
+
+    const qs = params.toString();
+    const url = "/api/projects/" + PROJECT_ID + "/summary" + (qs ? ("?" + qs) : "");
+    try {
+      const s = await EA.fetchJSON(url);
+      state.summary = s;
+      EA.DashboardSummary.renderStats(s.stat_cards   || {});
+      EA.DashboardSummary.renderLeaderboard(s.top_agents || []);
+      EA.DashboardSummary.renderRecent(s.recent_calls || []);
+    } catch (err) {
+      EA.toast(err.message || "Failed to refresh project data.", "error");
+    }
   }
 
   // ── Export by Location (Dashboard tab, admin-only) ──────

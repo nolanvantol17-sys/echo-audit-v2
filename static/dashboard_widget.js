@@ -2,18 +2,34 @@
    dashboard_widget.js — reusable analytics widget.
 
    Renders one horizontal filter row (Locations / Group by / Callers /
-   Phone Routing) + a Chart.js chart below. Hits /api/dashboard/filters for
-   the dropdown options and /api/dashboard/chart for the data.
+   Phone Routing / Campaign + date pills + view-by) + a Chart.js chart
+   below. Hits /api/dashboard/filters for the dropdown options and
+   /api/dashboard/chart for the data.
 
    Usage:
      EA.DashboardWidget.init({
-       container: HTMLElement,        // required: empty host node
-       projectId: number | null,      // optional: scope to one project
+       container:    HTMLElement,    // required: empty host node
+       projectId:    number | null,  // optional: scope to one project
        defaultViewBy: "date" | "caller" | "location" | "phone_routing",
-       hideFilters: ["locations"],    // optional: array of filter keys to hide
-                                      //   ("locations", "callers", "phone_routings")
-       hideViewByModes: ["location"], // optional: array of view_by options
-                                      //   to hide from the dropdown
+       defaultDatePreset: "7" | "30" | "90" | "365" | "all",
+                                     //   optional: per-instance default date
+                                     //   range. Falls back to global
+                                     //   DEFAULT_DATE_PRESET when omitted.
+       hideFilters:    ["locations"],   // optional: hide LEGACY filters
+                                        //   (locations, callers, phone_routings)
+       showFilters:    ["campaigns"],   // optional: show OPT-IN filters
+                                        //   (currently only "campaigns").
+                                        //   Hidden unless explicitly listed.
+       hideViewByModes: ["location"],   // optional: hide view_by options
+       onChange:       function (state) // optional: fires AFTER each user-
+                                        //   initiated chart reload with the
+                                        //   current filter snapshot. Host
+                                        //   pages subscribe to refetch their
+                                        //   own surfaces (stat tiles, etc).
+                                        //   state shape:
+                                        //     {date_from, date_to,
+                                        //      location_ids, caller_ids,
+                                        //      phone_routing_ids, campaign_ids}
      });
 
    Self-contained — relies only on window.EA + Chart.js (already loaded by
@@ -51,6 +67,11 @@
         <span class="daw-ms-caret">▾</span>
       </button>
 
+      <button type="button" class="daw-ms-btn" data-key="campaigns">
+        <span class="daw-ms-label">All Campaigns</span>
+        <span class="daw-ms-caret">▾</span>
+      </button>
+
       <button type="button" class="daw-ms-btn" data-key="phone_routings">
         <span class="daw-ms-label">All Phone Routings</span>
         <span class="daw-ms-caret">▾</span>
@@ -61,6 +82,7 @@
         <button type="button" class="daw-pill" data-range="30">30D</button>
         <button type="button" class="daw-pill" data-range="90">90D</button>
         <button type="button" class="daw-pill" data-range="365">1Y</button>
+        <button type="button" class="daw-pill" data-range="all">All time</button>
       </div>
     </div>
 
@@ -560,6 +582,11 @@
     return { from: isoDay(start), to: isoDay(today) };
   }
 
+  // Global default. Per-instance override: pass `opts.defaultDatePreset`.
+  // Kept at "30" so existing widget consumers (/app/index, /app/projects)
+  // retain their working monthly framing — only the project hub passes
+  // "all" today, scoping the all-time default to where the user asked
+  // for it. The "all time" pill itself is globally visible regardless.
   const DEFAULT_DATE_PRESET = "30";
 
   // ── Main init ──
@@ -582,10 +609,24 @@
     const emptyEl     = root.querySelector(".daw-chart-empty");
     const viewBySel   = root.querySelector(".daw-view-by");
 
-    // Optional: hide specific multi-select filters by data-key.
-    // The filter's state stays at its "All …" default, so the widget
-    // behaves as if no filter was applied.
+    // Filter visibility — two orthogonal mechanisms:
+    //   hideFilters: ["locations"]  → hide LEGACY filters that are shown by
+    //                                  default. The filter's state stays at
+    //                                  its "All …" default so the widget
+    //                                  behaves as if no filter was applied.
+    //   showFilters: ["campaigns"]  → opt in to NEW filters that are hidden
+    //                                  by default. (Today only "campaigns".)
+    //                                  Hidden ones still have their MS object
+    //                                  initialized — destroy() can call
+    //                                  .close() safely either way.
     const hideFilters = Array.isArray(opts.hideFilters) ? opts.hideFilters : [];
+    const showFilters = Array.isArray(opts.showFilters) ? opts.showFilters : [];
+
+    // Campaigns is opt-in. Hide unless explicitly whitelisted.
+    if (!showFilters.includes("campaigns")) {
+      const campBtn = root.querySelector('[data-key="campaigns"]');
+      if (campBtn) campBtn.hidden = true;
+    }
     hideFilters.forEach((key) => {
       const btn = root.querySelector('[data-key="' + key + '"]');
       if (btn) btn.hidden = true;
@@ -604,7 +645,8 @@
 
     let chart = null;
     let allPhoneRoutings = [];   // raw phone routing list for client-side narrowing
-    let datePreset = DEFAULT_DATE_PRESET;
+    // Per-instance default takes precedence; falls back to global constant.
+    let datePreset = opts.defaultDatePreset || DEFAULT_DATE_PRESET;
 
     // Date pill wiring
     const pillBtns = root.querySelectorAll(".daw-pill");
@@ -651,6 +693,10 @@
       allLabel: "All Phone Routings",
       onChange: reload,
     });
+    const campMS = createMultiSelect(root.querySelector('[data-key="campaigns"]'), {
+      allLabel: "All Campaigns",
+      onChange: reload,
+    });
 
     function narrowPhoneRoutingsByLocation() {
       const loc = locMS.get();
@@ -677,9 +723,11 @@
       const loc    = locMS.get();
       const caller = callerMS.get();
       const phr    = phrMS.get();
+      const camp   = campMS.get();
       if (!loc.all    && loc.ids.length)    params.set("location_ids",       loc.ids.join(","));
       if (!caller.all && caller.ids.length) params.set("caller_ids",         caller.ids.join(","));
       if (!phr.all    && phr.ids.length)    params.set("phone_routing_ids",  phr.ids.join(","));
+      if (!camp.all   && camp.ids.length)   params.set("campaign_ids",       camp.ids.join(","));
 
       const range = dateRangeFor(datePreset);
       if (range.from) params.set("date_from", range.from);
@@ -687,7 +735,36 @@
       return params;
     }
 
-    async function reload() {
+    // Snapshot of current filter state — what the host's onChange callback
+    // receives. Mirrors /api/dashboard/chart and /api/projects/<id>/summary
+    // param vocabulary so the host can splat it into URLSearchParams.
+    function currentFilterState() {
+      const range  = dateRangeFor(datePreset);
+      const loc    = locMS.get();
+      const caller = callerMS.get();
+      const phr    = phrMS.get();
+      const camp   = campMS.get();
+      return {
+        date_from:         range.from,
+        date_to:           range.to,
+        location_ids:      loc.all    ? [] : loc.ids,
+        caller_ids:        caller.all ? [] : caller.ids,
+        phone_routing_ids: phr.all    ? [] : phr.ids,
+        campaign_ids:      camp.all   ? [] : camp.ids,
+      };
+    }
+
+    function notifyChange() {
+      if (typeof opts.onChange !== "function") return;
+      try { opts.onChange(currentFilterState()); }
+      catch (e) { console.warn("DashboardWidget onChange threw:", e); }
+    }
+
+    // reloadOpts: { skipNotify: bool } — initial boot reload skips notify
+    // because the host already loaded its baseline data; only user-initiated
+    // filter changes need to ping the host.
+    async function reload(reloadOpts) {
+      reloadOpts = reloadOpts || {};
       const params = buildParams();
       showLoading();
       let data;
@@ -695,14 +772,17 @@
         data = await EA.fetchJSON("/api/dashboard/chart?" + params.toString());
       } catch (err) {
         showEmpty(err.message || "Failed to load chart.");
+        if (!reloadOpts.skipNotify) notifyChange();
         return;
       }
       if (!hasChartPoints(data)) {
         showEmpty();
         if (chart) { chart.destroy(); chart = null; }
+        if (!reloadOpts.skipNotify) notifyChange();
         return;
       }
       renderChart(data);
+      if (!reloadOpts.skipNotify) notifyChange();
     }
 
     function renderChart(data) {
@@ -744,9 +824,13 @@
         allPhoneRoutings = (data.phone_routings || []).map((r) => ({
           id: r.phone_routing_id, name: r.phone_routing_name, location_id: r.location_id,
         }));
+        const campaigns = (data.campaigns || []).map((r) => ({
+          id: r.campaign_id, name: r.campaign_name,
+        }));
         locMS.setItems(locs);
         callerMS.setItems(callers);
         narrowPhoneRoutingsByLocation();
+        campMS.setItems(campaigns);
       } catch (err) {
         // Filters are non-critical — chart still works with no options.
         console.warn("Failed to load filter options:", err);
@@ -755,7 +839,9 @@
 
     // Boot: fetch filter options + initial chart in parallel.
     showLoading();
-    Promise.all([loadFilters(), reload()]).catch(() => {});
+    // Initial reload skips notifyChange — host has already loaded its
+    // baseline data, and the widget's default state matches what they used.
+    Promise.all([loadFilters(), reload({ skipNotify: true })]).catch(() => {});
 
     // Teardown handle — called by host page on PageRouter swap-away so the
     // chart instance, its ResizeObserver, and any open multi-select popovers
