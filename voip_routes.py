@@ -28,7 +28,7 @@ from flask_login import current_user, login_required
 
 from audit_log import (
     ACTION_CREATED, ACTION_DELETED, ACTION_UPDATED,
-    ENTITY_COMPANY, write_audit_log,
+    ENTITY_COMPANY, ENTITY_SCHEDULED_CALL, write_audit_log,
 )
 from auth import role_required
 from db import IS_POSTGRES, get_conn, q
@@ -113,6 +113,94 @@ def _audit(user_id, action_id, company_id, metadata=None, conn=None):
         user_id, action_id, ENTITY_COMPANY, company_id,
         metadata=metadata, conn=conn,
     )
+
+
+def _maybe_handle_elevenlabs_dial_failure(provider_key, payload):
+    """Pre-parser handler for ElevenLabs `call_initiation_failure` events.
+
+    These fire when ElevenLabs/Twilio refuse to place the outbound call
+    (bad number, carrier rejection, account misconfig, etc.) and lack the
+    `dynamic_variables` payload that `ElevenLabsProvider.parse_webhook`'s
+    whitelist requires. Without this handler the parser drops the event
+    silently and the originating `scheduled_call` row stays in 'initiated'
+    state until the 10-min dock-timeout derivation kicks in.
+
+    Returns True if the event was a dial failure (the route should short-
+    circuit with 200 OK), False otherwise.
+    """
+    if provider_key != "elevenlabs":
+        return False
+    if payload.get("type") != "call_initiation_failure":
+        return False
+
+    data = payload.get("data") or {}
+    conv_id = data.get("conversation_id")
+    if not conv_id:
+        # Recognized event type but missing the dedup key — nothing to update.
+        # Still return True so the parser whitelist doesn't re-handle it.
+        logger.info(
+            "[voip_webhook elevenlabs] call_initiation_failure missing "
+            "conversation_id; nothing to attribute"
+        )
+        return True
+
+    failure_reason = (data.get("failure_reason") or "Call initiation failed")[:500]
+
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            q("""SELECT sc_id, sc_requested_by_user_id, sc_status
+                   FROM scheduled_calls
+                  WHERE sc_conversation_id = ?"""),
+            (conv_id,),
+        )
+        row = _row_to_dict(cur.fetchone())
+        if not row:
+            logger.info(
+                "[voip_webhook elevenlabs] dial failure for unknown "
+                "conversation_id=%s — no scheduled_call row to update",
+                conv_id,
+            )
+            return True
+
+        # Defensive: only flip if still 'initiated'. If anything already
+        # progressed it (graded / no_answer / failed), don't overwrite.
+        if row["sc_status"] == "initiated":
+            conn.execute(
+                q("""UPDATE scheduled_calls
+                        SET sc_status = 'failed',
+                            sc_status_message = ?,
+                            sc_completed_at = NOW()
+                      WHERE sc_id = ?"""),
+                (failure_reason, row["sc_id"]),
+            )
+            conn.commit()
+            write_audit_log(
+                row["sc_requested_by_user_id"], ACTION_UPDATED,
+                ENTITY_SCHEDULED_CALL, row["sc_id"],
+                metadata={
+                    "event":           "elevenlabs_dial_failure",
+                    "failure_reason":  failure_reason,
+                    "from_status":     "initiated",
+                    "to_status":       "failed",
+                    "conversation_id": conv_id,
+                },
+            )
+            logger.info(
+                "[voip_webhook elevenlabs] sc_id=%s flipped to failed "
+                "(reason=%r)",
+                row["sc_id"], failure_reason,
+            )
+        else:
+            logger.info(
+                "[voip_webhook elevenlabs] dial failure for sc_id=%s but "
+                "sc_status=%s; not overwriting",
+                row["sc_id"], row["sc_status"],
+            )
+    finally:
+        conn.close()
+
+    return True
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -230,6 +318,15 @@ def voip_webhook(company_id):
         payload = json.loads(raw_body) if raw_body else {}
     except json.JSONDecodeError:
         return _err("Invalid JSON payload", 400)
+
+    # ── Pre-handler: ElevenLabs dial-failure events ──
+    # `call_initiation_failure` events lack the `dynamic_variables` payload
+    # that the parser whitelist requires, so without this they'd be silently
+    # dropped and the originating scheduled_call would stay 'initiated'
+    # until the 10-min dock-timeout derivation. Plumb the failure back to
+    # the row + audit-log it.
+    if _maybe_handle_elevenlabs_dial_failure(provider_key, payload):
+        return jsonify({"ok": True, "handled": "elevenlabs_dial_failure"}), 200
 
     try:
         event = provider.parse_webhook(payload, headers)

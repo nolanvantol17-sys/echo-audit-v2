@@ -208,7 +208,11 @@ def _score_to_numeric(value, score_type) -> float:
             return 0.0
     s = str(value).strip().lower()
     if s == "yes":
-        return 10.0
+        # Mirrors interactions_routes.py:_score_to_numeric (Yes→9.9). Both
+        # paths must agree because interaction_rubric_scores.chk_irs_score_value
+        # caps at <= 9.9 (see schema.sql). Pre-2026-05-01 this was 10.0; the
+        # constraint tightening in commit 68432b6 made that an instant fail.
+        return 9.9
     if s == "no":
         return 0.0
     return 5.0

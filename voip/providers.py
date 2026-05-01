@@ -571,13 +571,28 @@ class ElevenLabsProvider(VoIPProvider):
         if not payload:
             return None
 
-        # Drop post_call_audio events (2.5MB+ base64 inline audio). The
-        # transcription event arrives separately with the same conversation_id
-        # and carries everything we need (transcript, dynamic_variables,
-        # metadata). Returning None makes the route handler ACK 200 without
-        # queueing — ElevenLabs won't retry, and we sidestep the
-        # UNIQUE(call_id) dedup collision the audio event would cause.
-        if payload.get("type") == "post_call_audio":
+        # Whitelist: process ONLY post_call_transcription events. Every other
+        # ElevenLabs event type (post_call_audio, call_initiation_failure,
+        # conversation_initiated, …) gets dropped with an INFO log line so
+        # we have observability if ElevenLabs ever renames the canonical
+        # event and AI shops silently stop processing. Dropped events
+        # trigger the route handler's 200-OK "ignored" path — ElevenLabs
+        # won't retry, and we sidestep the UNIQUE(call_id) dedup collision
+        # early-lifecycle events would cause.
+        #
+        # Historical note: post_call_audio carries a 2.5MB base64 audio blob
+        # that the transcription event references via URL, so dropping it
+        # was mandatory even pre-whitelist. call_initiation_failure events
+        # are surfaced separately by a pre-handler in voip_routes.py that
+        # plumbs the dial failure back to the originating scheduled_call.
+        event_type = payload.get("type")
+        if event_type != "post_call_transcription":
+            if event_type:
+                logger.info(
+                    "[voip_webhook elevenlabs] dropped event type=%r conversation_id=%s",
+                    event_type,
+                    _safe_get(payload, "data", "conversation_id"),
+                )
             return None
 
         data = payload.get("data") or {}
