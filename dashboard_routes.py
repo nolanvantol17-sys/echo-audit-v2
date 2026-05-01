@@ -5,8 +5,9 @@ All routes scope to the current company through the project chain:
     interaction → project → projects.company_id.
 
 Month-scoping uses the current calendar month in UTC. Dashboard chart route
-supports view_by modes: date (line), project / respondent / caller / location
-/ phone_routing (bar averages).
+supports view_by modes: date (line), project / caller / location /
+phone_routing (bar averages). "respondent" is accepted as a legacy alias for
+"caller" — both group on i.caller_user_id.
 """
 
 from datetime import date, timedelta
@@ -428,20 +429,15 @@ def get_chart():
     project_id = request.args.get("project_id")
 
     # Multi-value filters: accept CSV ids (location_ids, caller_ids,
-    # phone_routing_ids). For backward compat, also accept the singular
-    # variants used by older callers.
+    # phone_routing_ids). The singular `location_id` alias is preserved for
+    # backcompat with bookmarked filter URLs from older eras.
     location_ids = _parse_id_list(request.args.get("location_ids"))
     caller_ids   = _parse_id_list(request.args.get("caller_ids"))
-    if not caller_ids:
-        caller_ids = _parse_id_list(request.args.get("respondent_user_ids"))
     phone_routing_ids = _parse_id_list(request.args.get("phone_routing_ids"))
 
     legacy_loc = request.args.get("location_id")
     if legacy_loc and not location_ids:
         location_ids = _parse_id_list(legacy_loc)
-    legacy_resp = request.args.get("respondent_user_id")
-    if legacy_resp and not caller_ids:
-        caller_ids = _parse_id_list(legacy_resp)
 
     filters = [
         "p.company_id = ?",
@@ -463,24 +459,31 @@ def get_chart():
     if caller_ids:
         filters.append(f"i.caller_user_id IN {_in_clause(len(caller_ids))}")
         params.extend(caller_ids)
+    # Location filter goes directly through i.interaction_location_id —
+    # the canonical column for "which location did this call hit". Avoids
+    # depending on the phone_routing chain (empty for tenants who don't
+    # populate phone_routing) and on projects.phone_routing_id (NULL on
+    # all-locations projects like Mayfair "Legacy V1").
+    if location_ids:
+        filters.append(f"i.interaction_location_id IN {_in_clause(len(location_ids))}")
+        params.extend(location_ids)
+    # Phone routing filter goes through projects.phone_routing_id directly —
+    # no JOIN required to filter; only required when grouping (view_by=phone_routing).
+    if phone_routing_ids:
+        filters.append(f"p.phone_routing_id IN {_in_clause(len(phone_routing_ids))}")
+        params.extend(phone_routing_ids)
 
-    # Decide whether we need joins to phone_routing / locations. Required if
-    # any location/phone_routing filter is set, OR the view_by groups by them.
-    needs_phone_routing = bool(phone_routing_ids or location_ids) or view_by in ("location", "phone_routing")
-    needs_locations = bool(location_ids) or view_by == "location"
-
-    phone_routing_join = ""
-    locations_join = ""
-    if needs_phone_routing:
-        phone_routing_join = "JOIN phone_routing phr ON phr.phone_routing_id = p.phone_routing_id"
-        if phone_routing_ids:
-            filters.append(f"phr.phone_routing_id IN {_in_clause(len(phone_routing_ids))}")
-            params.extend(phone_routing_ids)
-    if needs_locations:
-        locations_join = "JOIN locations l ON l.location_id = phr.location_id"
-        if location_ids:
-            filters.append(f"phr.location_id IN {_in_clause(len(location_ids))}")
-            params.extend(location_ids)
+    # Joins are now strictly for grouping/display, never for filtering.
+    # view_by=phone_routing needs phr.phone_routing_name; view_by=location
+    # needs l.location_name. Other view_by modes touch neither table.
+    phone_routing_join = (
+        "JOIN phone_routing phr ON phr.phone_routing_id = p.phone_routing_id"
+        if view_by == "phone_routing" else ""
+    )
+    locations_join = (
+        "JOIN locations l ON l.location_id = i.interaction_location_id"
+        if view_by == "location" else ""
+    )
 
     where_clause = " AND ".join(filters)
 
@@ -565,18 +568,16 @@ def get_chart():
         if view_by == "caller":
             sql = f"""
                 SELECT
-                    i.respondent_user_id,
-                    (u.user_first_name || ' ' || u.user_last_name) AS respondent_name,
+                    i.caller_user_id,
+                    (u.user_first_name || ' ' || u.user_last_name) AS caller_name,
                     AVG(i.{metric}) AS avg_score,
                     COUNT(*) AS call_count
                 FROM interactions i
                 JOIN projects p ON p.project_id = i.project_id
-                {phone_routing_join}
-                {locations_join}
-                JOIN users u    ON u.user_id    = i.respondent_user_id
+                JOIN users u    ON u.user_id    = i.caller_user_id
                 WHERE {where_clause}
-                  AND i.respondent_user_id IS NOT NULL
-                GROUP BY i.respondent_user_id, respondent_name
+                  AND i.caller_user_id IS NOT NULL
+                GROUP BY i.caller_user_id, caller_name
                 ORDER BY avg_score DESC
             """
             cur = conn.execute(q(sql), params)
@@ -584,13 +585,13 @@ def get_chart():
             for row in _rows(cur):
                 avg = row["avg_score"]
                 avg = round(float(avg), 2) if avg is not None else None
-                labels.append(row["respondent_name"])
+                labels.append(row["caller_name"])
                 data.append(avg)
                 points.append({
-                    "respondent_user_id": row["respondent_user_id"],
-                    "respondent_name":    row["respondent_name"],
-                    "avg_score":          avg,
-                    "call_count":         row["call_count"],
+                    "caller_user_id": row["caller_user_id"],
+                    "caller_name":    row["caller_name"],
+                    "avg_score":      avg,
+                    "call_count":     row["call_count"],
                 })
             return jsonify({
                 "type":     "bar",
