@@ -2522,21 +2522,13 @@
   // Out-of-band flow — bypasses the form submit path entirely. Validates
   // the existing form selectors (caller / location / project / phone-on-
   // file required), confirms with EA.confirmDialog, then POSTs to
-  // /api/grade/ai-shop and polls /api/grade/ai-shop/<sc_id>/status until
-  // terminal. Phone is sourced from state.allLocations cache (loaded by
-  // loadLocations) and formatted with the existing formatPhone() helper.
-  const AI_SHOP_OVERLAY_MSGS = {
-    initiated:        "Call scheduled. Waiting for the AI caller to confirm…",
-    webhook_received: "Call placed and completed. Processing…",
-    processing:       "Grading the call…",
-  };
-  const AI_SHOP_POLL_FAST_MS = 3000;    // first 60s
-  const AI_SHOP_POLL_SLOW_MS = 5000;    // after 60s
-  const AI_SHOP_POLL_CAP_MS  = 600000;  // 10-minute hard cap
-
-  function _aiShopSleep(ms) {
-    return new Promise(function (r) { setTimeout(r, ms); });
-  }
+  // /api/grade/ai-shop. On success: a brief toast + __refreshDock() so the
+  // new row surfaces in the persistent dock; the user stays on the page and
+  // can navigate freely while the dock tracks progress. The dedicated
+  // /api/grade/ai-shop/<sc_id>/status endpoint stays in place for future
+  // row-click-to-detail UX. Phone is sourced from state.allLocations cache
+  // (loaded by loadLocations) and formatted with the existing formatPhone()
+  // helper.
 
   function _aiShopConfirmBody(callerName, locationName, phoneDisplay) {
     const wrap = document.createElement("div");
@@ -2612,8 +2604,6 @@
     });
     if (!ok) return;
 
-    const overlay = EA.showOverlay("Placing call…");
-
     let initiateResp;
     try {
       const r = await fetch("/api/grade/ai-shop", {
@@ -2629,172 +2619,22 @@
       });
       initiateResp = await r.json().catch(function () { return {}; });
       if (!r.ok) {
-        overlay.close();
         const errMsg = (initiateResp && initiateResp.error) || ("HTTP " + r.status);
-        const body = document.createElement("div");
-        body.appendChild(document.createTextNode(errMsg));
-        await EA.confirmDialog({
-          title: "Couldn't place the call",
-          body:  body,
-          okLabel: "Close", cancelLabel: "Close",
-        });
+        EA.toast(errMsg, "error");
         return;
       }
     } catch (err) {
-      overlay.close();
-      const body = document.createElement("div");
-      body.appendChild(document.createTextNode(String(err)));
-      await EA.confirmDialog({
-        title: "Couldn't reach Echo Audit",
-        body:  body,
-        okLabel: "Close", cancelLabel: "Close",
-      });
+      EA.toast("Couldn't reach Echo Audit: " + String(err), "error");
       return;
     }
 
-    const scId = initiateResp && initiateResp.sc_id;
-    if (!scId) {
-      overlay.close();
+    if (!initiateResp || !initiateResp.sc_id) {
       EA.toast("Unexpected response from server (no sc_id).", "error");
       return;
     }
 
-    await _aiShopPoll(scId, overlay);
-  }
-
-  async function _aiShopPoll(scId, overlay) {
-    const startedAt = Date.now();
-    while (true) {
-      const elapsedMs = Date.now() - startedAt;
-      if (elapsedMs > AI_SHOP_POLL_CAP_MS) {
-        overlay.close();
-        const body = document.createElement("div");
-        body.appendChild(document.createTextNode(
-          "The call is still running after 10 minutes. Check Past Grades when it completes."
-        ));
-        await EA.confirmDialog({
-          title: "Still in progress",
-          body:  body,
-          okLabel: "Close", cancelLabel: "Close",
-        });
-        return;
-      }
-
-      let data;
-      try {
-        const r = await fetch("/api/grade/ai-shop/" + scId + "/status");
-        if (!r.ok) {
-          await _aiShopSleep(AI_SHOP_POLL_SLOW_MS);
-          continue;
-        }
-        data = await r.json();
-      } catch (_err) {
-        await _aiShopSleep(AI_SHOP_POLL_SLOW_MS);
-        continue;
-      }
-
-      const msg = AI_SHOP_OVERLAY_MSGS[data.display_status] || "Working…";
-      overlay.set(msg);
-
-      if (data.is_terminal) {
-        overlay.close();
-        await _aiShopShowTerminal(data);
-        return;
-      }
-
-      const nextDelay = elapsedMs < 60000
-                        ? AI_SHOP_POLL_FAST_MS
-                        : AI_SHOP_POLL_SLOW_MS;
-      await _aiShopSleep(nextDelay);
-    }
-  }
-
-  async function _aiShopShowTerminal(data) {
-    const body = document.createElement("div");
-
-    if (data.display_status === "graded") {
-      const lead = document.createElement("p");
-      lead.textContent = "Call complete!";
-      body.appendChild(lead);
-      if (data.interaction_overall_score !== null
-          && data.interaction_overall_score !== undefined) {
-        const score = document.createElement("p");
-        const strong = document.createElement("strong");
-        strong.textContent = "Score: ";
-        score.appendChild(strong);
-        score.appendChild(document.createTextNode(EA.formatScore(data.interaction_overall_score)));
-        body.appendChild(score);
-      }
-      const ok = await EA.confirmDialog({
-        title: "AI shop graded",
-        body:  body,
-        okLabel: "View Interaction",
-        cancelLabel: "Close",
-        variant: "primary",
-      });
-      if (ok && data.interaction_id) {
-        window.location.href = "/app/history/" + data.interaction_id;
-      }
-      return;
-    }
-
-    if (data.display_status === "no_answer") {
-      const p = document.createElement("p");
-      p.textContent = "Call did not connect to a real conversation "
-                    + "(voicemail, hold message, or unanswered).";
-      body.appendChild(p);
-      const ok = await EA.confirmDialog({
-        title: "No answer",
-        body:  body,
-        okLabel: "View Interaction",
-        cancelLabel: "Close",
-        variant: "primary",
-      });
-      if (ok && data.interaction_id) {
-        window.location.href = "/app/history/" + data.interaction_id;
-      }
-      return;
-    }
-
-    if (data.display_status === "failed") {
-      const lead = document.createElement("p");
-      lead.textContent = "Failed to place the call.";
-      body.appendChild(lead);
-      if (data.status_message) {
-        const detail = document.createElement("p");
-        detail.textContent = data.status_message;
-        body.appendChild(detail);
-      }
-      await EA.confirmDialog({
-        title: "AI shop failed",
-        body:  body,
-        okLabel: "Close", cancelLabel: "Close",
-      });
-      return;
-    }
-
-    if (data.display_status === "timeout") {
-      const p = document.createElement("p");
-      p.textContent = "Call still in progress after 10 minutes. "
-                    + "Check Past Grades when complete.";
-      body.appendChild(p);
-      await EA.confirmDialog({
-        title: "Still in progress",
-        body:  body,
-        okLabel: "Close", cancelLabel: "Close",
-      });
-      return;
-    }
-
-    // Defensive — unknown terminal label. Show what we got.
-    const p = document.createElement("p");
-    p.textContent = "Unexpected status: " + (data.display_status || "(none)");
-    body.appendChild(p);
-    await EA.confirmDialog({
-      title: "Done",
-      body:  body,
-      okLabel: "Close", cancelLabel: "Close",
-    });
+    EA.toast("AI Shop scheduled at " + locationName + ".", "success");
+    if (window.__refreshDock) window.__refreshDock();
   }
 
   // ── Project + location preservation across grades ────────
