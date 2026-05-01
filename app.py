@@ -38,6 +38,7 @@ from labels_routes import labels_bp
 from platform_admin_routes import platform_admin_bp
 from settings_routes import settings_bp
 from scheduled_calls_routes import scheduled_calls_bp
+from active_jobs_routes import active_jobs_bp
 # Re-exported from helpers so "from app import get_effective_company_id" works
 # for any callers that expect the helper to live on the main app module.
 # check_rate_limit and increment_usage live in helpers to avoid a circular
@@ -132,6 +133,10 @@ def create_app():
     # Arc C: scheduled_calls (outbound AI shop scheduling — bridges to
     # the external AI caller service, parallel to voip_bp's inbound bridge).
     app.register_blueprint(scheduled_calls_bp)
+
+    # Persistent multi-job dock — unified feed UNION'ing grade_jobs +
+    # scheduled_calls into one shape for the base.html dock UI.
+    app.register_blueprint(active_jobs_bp)
 
     # Phase 6: settings, account, labels, export, super-admin platform
     app.register_blueprint(settings_bp)
