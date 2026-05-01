@@ -44,7 +44,7 @@
   const EA = (window.EA = window.EA || {});
 
   const SCORE_TYPES = [
-    { value: "out_of_10",      label: "1–10 scale" },
+    { value: "out_of_10",      label: "0.0–9.9 scale" },
     { value: "yes_no",         label: "Yes / No" },
     { value: "yes_no_pending", label: "Yes / No / Pending" },
   ];

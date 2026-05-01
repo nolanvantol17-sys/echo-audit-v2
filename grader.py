@@ -77,8 +77,8 @@ def build_rubric_prompt(criteria: list) -> str:
         scale = c.get("scale", 10)
         guidance = (c.get("scoring_guidance") or "").strip()
         if ctype == "numeric":
-            lines.append(f"{i}. {name} (1\u2013{scale})")
-            lines.append(f"   Score on a 1\u2013{scale} scale where 1 is very poor and {scale} is excellent.")
+            lines.append(f"{i}. {name} (0.0\u20139.9)")
+            lines.append(f"   Score on a 0.0\u20139.9 scale to one decimal place where 0.0 is total failure and 9.9 is excellent.")
             if guidance:
                 lines.append(f"   Scoring guidance for {name}: {guidance}")
         elif ctype == "yes_no":
@@ -252,7 +252,7 @@ def grade_with_claude(
         ctype = c.get("type", "numeric")
         scale = c.get("scale", 10)
         if ctype == "numeric":
-            scores_parts.append(f'    "{name}": <1-{scale}>')
+            scores_parts.append(f'    "{name}": <0.0-9.9, one decimal>')
         elif ctype == "yes_no":
             scores_parts.append(f'    "{name}": "Yes or No"')
         else:
@@ -274,12 +274,14 @@ TRANSCRIPT:
 {transcript}
 
 SCORING INSTRUCTIONS — CRITICAL:
-- Score 9-10: Fully satisfied the criterion with no gaps.
-- Score 7-8: Mostly satisfied but at least one identifiable gap.
-- Score 5-6: Multiple noticeable gaps.
-- Score 3-4: Largely failed.
-- Score 1-2: Completely failed.
-CRITICAL RULE: A score of 7 or below REQUIRES justification — name the specific thing the agent did poorly.
+- Use a continuous 0.0–9.9 scale and ALWAYS report one decimal place (e.g. 8.4, 9.1, 6.7). The maximum possible score is 9.9 — never return 10.0 or higher.
+- Score 9.0–9.9: Fully satisfied the criterion with no gaps.
+- Score 7.0–8.9: Mostly satisfied but at least one identifiable gap.
+- Score 5.0–6.9: Multiple noticeable gaps.
+- Score 3.0–4.9: Largely failed.
+- Score 0.0–2.9: Completely failed.
+Use the decimal to express where within a band the performance lands — a strong-but-imperfect 8.4 is meaningfully different from a borderline 7.1.
+CRITICAL RULE: A score of 7.0 or below REQUIRES justification — name the specific thing the agent did poorly.
 
 GREETING STANDARD:
 Agent's name + company/department name, warm and professional. Award full credit if both elements are present in any phrasing.

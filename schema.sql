@@ -553,10 +553,10 @@ CREATE TABLE interactions (
 
     CONSTRAINT chk_interactions_overall_score
         CHECK (interaction_overall_score IS NULL
-            OR (interaction_overall_score >= 0 AND interaction_overall_score <= 10)),
+            OR (interaction_overall_score >= 0 AND interaction_overall_score <= 9.9)),
     CONSTRAINT chk_interactions_original_score
         CHECK (interaction_original_score IS NULL
-            OR (interaction_original_score >= 0 AND interaction_original_score <= 10)),
+            OR (interaction_original_score >= 0 AND interaction_original_score <= 9.9)),
     CONSTRAINT chk_interactions_regrade_count
         CHECK (interaction_regrade_count >= 0)
 );
@@ -607,7 +607,7 @@ CREATE TABLE interaction_rubric_scores (
     CONSTRAINT chk_irs_snapshot_weight
         CHECK (irs_snapshot_weight > 0),
     CONSTRAINT chk_irs_score_value
-        CHECK (irs_score_value >= 0 AND irs_score_value <= 10)
+        CHECK (irs_score_value >= 0 AND irs_score_value <= 9.9)
 );
 
 CREATE INDEX idx_irs_interaction_id ON interaction_rubric_scores (interaction_id);
@@ -670,7 +670,7 @@ CREATE TABLE performance_reports (
 
     CONSTRAINT chk_pr_avg_score
         CHECK (pr_average_score IS NULL
-            OR (pr_average_score >= 0 AND pr_average_score <= 10)),
+            OR (pr_average_score >= 0 AND pr_average_score <= 9.9)),
     CONSTRAINT chk_pr_call_count
         CHECK (pr_call_count >= 0),
     -- Exactly one of subject_user_id / respondent_id should be set per

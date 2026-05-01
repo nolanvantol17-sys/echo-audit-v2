@@ -328,7 +328,13 @@ def _criteria_to_snapshot(criterion):
 
 
 def _score_to_numeric(value, score_type):
-    """Normalize a raw score value to a NUMERIC(5,2) in [0,10] for storage."""
+    """Normalize a raw score value to a NUMERIC(5,2) in [0, 9.9] for storage.
+
+    Yes/No items map to 9.9 / 0.0 (and Pending → 5.0) so they sit at the
+    same ceiling as numeric items after the 9.9 cap; otherwise a Yes would
+    pull a weighted-average overall score above what any numeric item can
+    contribute, undoing the ceiling.
+    """
     if value is None:
         return 0.0
     if score_type == "numeric":
@@ -336,10 +342,10 @@ def _score_to_numeric(value, score_type):
             return float(value)
         except (TypeError, ValueError):
             return 0.0
-    # yes_no / yes_no_pending → map to 10 / 0 / 5
+    # yes_no / yes_no_pending → map to 9.9 / 0.0 / 5.0
     s = str(value).strip().lower()
     if s == "yes":
-        return 10.0
+        return 9.9
     if s == "no":
         return 0.0
     return 5.0  # Pending / unknown
