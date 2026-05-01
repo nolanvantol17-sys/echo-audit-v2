@@ -1,6 +1,7 @@
 anthropic
 assemblyai
 cryptography
+elevenlabs>=1.50
 flask
 flask-login
 gunicorn
