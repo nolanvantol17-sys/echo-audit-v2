@@ -121,15 +121,22 @@ def _display_title(source, location_name):
     return f"AI Shop at {loc}"
 
 
-# ── GET /api/active-jobs ─────────────────────────────────────────
+# ── Core query (also called from app.py context processor for first-paint) ──
 
 
-@active_jobs_bp.route("/active-jobs", methods=["GET"])
-@login_required
-def list_active_jobs():
-    company_id = get_effective_company_id()
-    if company_id is None:
-        return _err("No company context", 400)
+def get_active_jobs_for_user(company_id, user_id):
+    """Return the unified active-jobs list for a (company_id, user_id).
+
+    Used by both:
+      - GET /api/active-jobs (route handler below)
+      - app.py context processor (server-side initial paint for the dock)
+
+    Returns a list of dicts in the public response shape. Returns [] if
+    company_id or user_id is None — safe to call before auth resolution
+    completes.
+    """
+    if company_id is None or user_id is None:
+        return []
 
     cutoff_iso = (
         datetime.now(timezone.utc) - timedelta(hours=ACTIVE_WINDOW_HOURS)
@@ -192,7 +199,6 @@ def list_active_jobs():
         LIMIT ?
     """
 
-    user_id = current_user.user_id
     params = (
         company_id, user_id, cutoff_iso,    # grade_jobs branch
         company_id, user_id, cutoff_iso,    # scheduled_calls branch
@@ -239,4 +245,16 @@ def list_active_jobs():
             },
         })
 
-    return jsonify(results)
+    return results
+
+
+# ── GET /api/active-jobs ─────────────────────────────────────────
+
+
+@active_jobs_bp.route("/active-jobs", methods=["GET"])
+@login_required
+def list_active_jobs():
+    company_id = get_effective_company_id()
+    if company_id is None:
+        return _err("No company context", 400)
+    return jsonify(get_active_jobs_for_user(company_id, current_user.user_id))

@@ -223,6 +223,33 @@
 
 </div>
 
+{# ── Persistent multi-job dock — shows in-flight + recently-completed
+     work for the current user. Bottom-right collapsed pill that expands
+     upward into a panel. Hidden entirely when the active list is empty.
+     Auth-gated so /login and other public routes don't render it. #}
+{% if current_user.is_authenticated %}
+<div id="active-jobs-dock" class="ajd-dock" hidden>
+  <button type="button" id="ajd-pill" class="ajd-pill" aria-expanded="false"
+          aria-controls="ajd-panel" aria-label="Active jobs">
+    <span class="ajd-pill-dot" aria-hidden="true"></span>
+    <span class="ajd-pill-count">0</span>
+    <span class="ajd-pill-label">in flight</span>
+  </button>
+  <div id="ajd-panel" class="ajd-panel" hidden role="region" aria-label="Active jobs panel">
+    <div class="ajd-panel-header">
+      <span class="ajd-panel-title">Active jobs</span>
+      <button type="button" id="ajd-panel-close" class="ajd-panel-close"
+              aria-label="Collapse">×</button>
+    </div>
+    <div id="ajd-panel-list" class="ajd-panel-list"></div>
+  </div>
+</div>
+<script>
+  // Server-side first-paint payload — see active_jobs_dock.js for use.
+  window.__INITIAL_DOCK_STATE = {{ active_jobs_initial | tojson }};
+</script>
+{% endif %}
+
 <script>
   // Tiny global so panel/popover JS can role-gate without each caller passing
   // the value down. Server-side decorators remain the source of truth — this
@@ -234,6 +261,9 @@
 </script>
 <script src="{{ url_for('static', filename='app.js') }}?v={{ static_v('app.js') }}"></script>
 <script src="{{ url_for('static', filename='page_router.js') }}?v={{ static_v('page_router.js') }}"></script>
+{% if current_user.is_authenticated %}
+<script src="{{ url_for('static', filename='active_jobs_dock.js') }}?v={{ static_v('active_jobs_dock.js') }}"></script>
+{% endif %}
 {# audio_player.js / interaction_view.js / interaction_panel.js are loaded
    per-page (extra_js block) on the ~4 pages that actually use them, so the
    other half of the sidebar doesn't pay for them on every nav. #}

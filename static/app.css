@@ -1585,3 +1585,142 @@ tr.row-flagged td { background: rgba(239,68,68,0.06); }
     background: rgba(0,0,0,0.55);     /* dim the page on mobile */
   }
 }
+
+/* ── Persistent multi-job dock (active_jobs_dock.js) ─────────
+   Bottom-right floating pill that expands upward into a panel. Mirrors
+   the .gj-pill / .gj-row visual vocabulary so users moving between the
+   grade-page #gj-pane and the global dock get the same status semantics. */
+.ajd-dock {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 150;             /* above content (10-20), below overlays (200) */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.ajd-dock[hidden] { display: none !important; }
+
+.ajd-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.ajd-pill:hover { border-color: var(--accent); transform: translateY(-1px); }
+.ajd-pill[aria-expanded="true"] { border-color: var(--accent); }
+.ajd-pill-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.ajd-pill-count { font-weight: 700; }
+.ajd-pill-label { color: var(--muted); font-weight: 500; }
+
+.ajd-panel {
+  width: 340px;
+  max-height: 60vh;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.ajd-panel[hidden] { display: none !important; }
+.ajd-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ajd-panel-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+.ajd-panel-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 2px 8px;
+}
+.ajd-panel-close:hover { color: var(--text); }
+.ajd-panel-list {
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Row — mirrors .gj-row from grade.html for visual continuity. */
+.ajd-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: default;
+  transition: background 80ms;
+}
+.ajd-row.clickable { cursor: pointer; }
+.ajd-row.clickable:hover { background: var(--surface-3); }
+.ajd-row-summary { min-width: 0; }
+.ajd-row-title {
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ajd-row-meta {
+  font-size: 0.74rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Status pill — mirrors .gj-pill semantics. Same color tokens, same shape. */
+.ajd-pill-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.ajd-pill-status.queued      { background: var(--accent-soft); color: #93c5fd; }
+.ajd-pill-status.in_progress { background: var(--warning-bg);  color: var(--warning); }
+.ajd-pill-status.graded      { background: var(--success-bg);  color: var(--success); }
+.ajd-pill-status.no_answer   { background: var(--surface-3);   color: var(--muted); }
+.ajd-pill-status.failed      { background: var(--danger-bg);   color: var(--danger); }
+.ajd-pill-status.timeout     { background: var(--danger-bg);   color: var(--danger); }

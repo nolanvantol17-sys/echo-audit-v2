@@ -196,6 +196,7 @@ def _register_context_processors(app):
             "keyterms_prompt_max_terms": 200,
             "keyterm_min_length":  5,
             "keyterm_max_length":  50,
+            "active_jobs_initial": [],
         }
         try:
             import grader as _grader
@@ -214,6 +215,18 @@ def _register_context_processors(app):
 
         active_cid = get_effective_company_id()
         ctx["active_org_id"] = active_cid
+
+        # Dock first-paint payload — server-side initial state for the
+        # persistent multi-job dock so it renders populated on first paint
+        # instead of flashing empty before the first /api/active-jobs poll.
+        # Best-effort: a query failure here must not 500 the page render.
+        try:
+            from active_jobs_routes import get_active_jobs_for_user
+            ctx["active_jobs_initial"] = get_active_jobs_for_user(
+                active_cid, current_user.user_id,
+            )
+        except Exception:
+            logger.warning("active_jobs context processor failed", exc_info=True)
 
         try:
             conn = db.get_conn()
