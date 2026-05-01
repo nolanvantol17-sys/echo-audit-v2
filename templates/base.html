@@ -227,7 +227,9 @@
      work for the current user. Bottom-right collapsed pill that expands
      upward into a panel. Hidden entirely when the active list is empty.
      Auth-gated so /login and other public routes don't render it. #}
-{% if current_user.is_authenticated %}
+{# Also suppressed on /app/grade where the in-page #gj-pane is the sole
+   job-status surface — see is_grade gate at top of file. #}
+{% if current_user.is_authenticated and not is_grade %}
 <div id="active-jobs-dock" class="ajd-dock" hidden>
   <button type="button" id="ajd-pill" class="ajd-pill" aria-expanded="false"
           aria-controls="ajd-panel" aria-label="Active jobs">
@@ -261,7 +263,7 @@
 </script>
 <script src="{{ url_for('static', filename='app.js') }}?v={{ static_v('app.js') }}"></script>
 <script src="{{ url_for('static', filename='page_router.js') }}?v={{ static_v('page_router.js') }}"></script>
-{% if current_user.is_authenticated %}
+{% if current_user.is_authenticated and not is_grade %}
 <script src="{{ url_for('static', filename='active_jobs_dock.js') }}?v={{ static_v('active_jobs_dock.js') }}"></script>
 {% endif %}
 {# audio_player.js / interaction_view.js / interaction_panel.js are loaded

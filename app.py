@@ -220,13 +220,16 @@ def _register_context_processors(app):
         # persistent multi-job dock so it renders populated on first paint
         # instead of flashing empty before the first /api/active-jobs poll.
         # Best-effort: a query failure here must not 500 the page render.
-        try:
-            from active_jobs_routes import get_active_jobs_for_user
-            ctx["active_jobs_initial"] = get_active_jobs_for_user(
-                active_cid, current_user.user_id,
-            )
-        except Exception:
-            logger.warning("active_jobs context processor failed", exc_info=True)
+        # Skipped on /app/grade where the dock is suppressed in favor of
+        # the in-page #gj-pane (see is_grade gate in base.html).
+        if request.path != "/app/grade":
+            try:
+                from active_jobs_routes import get_active_jobs_for_user
+                ctx["active_jobs_initial"] = get_active_jobs_for_user(
+                    active_cid, current_user.user_id,
+                )
+            except Exception:
+                logger.warning("active_jobs context processor failed", exc_info=True)
 
         try:
             conn = db.get_conn()
