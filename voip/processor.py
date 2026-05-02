@@ -38,6 +38,14 @@ from helpers import load_active_hints
 from voip.audio_fetcher import fetch_and_store_audio_async
 from voip.classifier import classify_call
 from voip.credentials import decrypt_credentials
+# Cross-module helpers — voip processor mirrors steps 2-4 of the
+# interactions_routes.py grading flow so AI shop grades land in
+# performance_reports the same way as web-form grades. Load order in
+# app.py: interactions_routes (line 27) + performance_reports (line 28)
+# both load before voip_routes (line 32) imports this module, so a
+# top-level import is safe — no circular risk verified.
+from interactions_routes import _link_interaction_respondent, _upsert_respondent
+from performance_reports import update_performance_report_async
 
 logger = logging.getLogger(__name__)
 
@@ -426,6 +434,78 @@ def _set_interaction_call_start_from_schedule(voip_queue_id):
         conn.close()
 
 
+def _company_id_for_interaction(interaction_id):
+    """Look up company_id via the project — used by sites that need
+    per-tenant context after the interaction is created."""
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            q("""SELECT p.company_id
+                   FROM interactions i
+                   JOIN projects p ON p.project_id = i.project_id
+                  WHERE i.interaction_id = ?"""),
+            (interaction_id,),
+        )
+        row = cur.fetchone()
+        return (dict(row).get("company_id") if row else None)
+    finally:
+        conn.close()
+
+
+def _location_id_for_interaction(interaction_id):
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            q("SELECT interaction_location_id FROM interactions WHERE interaction_id = ?"),
+            (interaction_id,),
+        )
+        row = cur.fetchone()
+        return (dict(row).get("interaction_location_id") if row else None)
+    finally:
+        conn.close()
+
+
+def _attach_respondent_and_fire_report(interaction_id, company_id,
+                                       respondent_name, location_id):
+    """Upsert + link a respondent for the freshly-graded interaction, then
+    fire the (async) performance_report update. Mirrors steps 2-4 of the
+    interactions_routes.py grading flow (line 748-774).
+
+    Best-effort: the respondent upsert is wrapped so a failure here doesn't
+    roll back the already-persisted grade. The async report fire is a no-op
+    if respondent_id ends up None (matches update_performance_report_async's
+    own guard at performance_reports.py line 299-302).
+    """
+    if not interaction_id or not company_id:
+        return None
+    respondent_id = None
+    conn = get_conn()
+    try:
+        respondent_id, _canonical = _upsert_respondent(
+            conn, company_id, location_id, respondent_name,
+        )
+        if respondent_id is not None:
+            _link_interaction_respondent(conn, interaction_id, respondent_id)
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.warning(
+            "[ai_shop] respondent upsert/link failed (interaction=%s)",
+            interaction_id, exc_info=True,
+        )
+    finally:
+        conn.close()
+    update_performance_report_async(
+        interaction_id, company_id,
+        respondent_user_id=None,        # voip flow has no known-user subject
+        respondent_id=respondent_id,
+    )
+    return respondent_id
+
+
 def _create_interaction(project_id, call_date, *,
                         location_id=None, campaign_id=None,
                         caller_user_id=None, call_duration_seconds=None):
@@ -666,6 +746,12 @@ def _grade_and_finalize(voip_queue_id, interaction_id, *,
     )
     _link_to_scheduled_call(voip_queue_id, "graded")
     _set_interaction_call_start_from_schedule(voip_queue_id)
+    _attach_respondent_and_fire_report(
+        interaction_id,
+        company_id      = _company_id_for_interaction(interaction_id),
+        respondent_name = grade_result.get("responder_name"),
+        location_id     = _location_id_for_interaction(interaction_id),
+    )
     # Fire-and-forget ElevenLabs audio post-fetch. Provider-gated: AAI flow
     # already has its own audio path, and other VoIP providers don't expose
     # a conversation→audio endpoint compatible with this fetcher.
