@@ -946,13 +946,20 @@
     // A completed grade showing the result panel is NOT dirty.
     const resultVisible = !$("#grade-result-section").hidden;
     if (resultVisible && window.gradeComplete) return false;
-    if (document.getElementById("overlay-host")) return true;  // mid-grade
+    // Treat the form as dirty ONLY when the user has work that could be lost:
+    //   - grade POST in flight (overlay visible)
+    //   - uploaded file selected but not yet submitted
+    //   - recording captured (blob held) but not yet submitted
+    //   - recording actively in progress (MediaRecorder mid-capture)
+    // Picking project + location dropdowns is NOT work-in-flight; that
+    // condition was the source of the false-positive nav-away prompt on
+    // every page load. The .state === "recording" guard avoids stale
+    // liveRecordingMedia refs left behind by resetLiveRecording.
+    if (document.getElementById("overlay-host")) return true;
     if (state.audioFile) return true;
     if (state.liveRecordingBlob) return true;
-    if (state.liveRecordingMedia) return true;  // recording in progress
-    const projectId  = ($("#gf-project")  || {}).value || "";
-    const locationId = ($("#gf-location") || {}).value || "";
-    if (projectId && locationId) return true;
+    const rec = state.liveRecordingMedia;
+    if (rec && rec.state === "recording") return true;
     return false;
   };
   window.addEventListener("beforeunload", function (e) {
