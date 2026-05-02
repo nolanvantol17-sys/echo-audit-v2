@@ -366,6 +366,66 @@ def _link_to_scheduled_call(voip_queue_id, terminal_status):
         conn.close()
 
 
+def _set_interaction_call_start_from_schedule(voip_queue_id):
+    """Set interactions.interaction_call_start_time from the matching
+    scheduled_calls.sc_requested_at (AI Shop calls only). Idempotent —
+    only writes when interaction_call_start_time IS NULL. Best-effort,
+    never raises out.
+
+    Why: voip processor's _create_interaction() doesn't populate
+    interaction_call_start_time, so AI shop graded rows fall through
+    EA.formatCallTime()'s `startTime || uploadedAt` check and render
+    as "—" on every display surface. Setting it here at the point we've
+    just confirmed the scheduled_calls linkage gives every surface a
+    real timestamp without touching any API/template/JS.
+    """
+    if not voip_queue_id:
+        return
+    conn = get_conn()
+    try:
+        if IS_POSTGRES:
+            conn.execute(
+                """UPDATE interactions
+                      SET interaction_call_start_time = sc.sc_requested_at
+                     FROM voip_call_queue vcq
+                     JOIN scheduled_calls sc
+                       ON sc.sc_conversation_id = vcq.voip_queue_call_id
+                    WHERE vcq.voip_queue_id = %s
+                      AND interactions.interaction_id = vcq.voip_queue_interaction_id
+                      AND interactions.interaction_call_start_time IS NULL""",
+                (voip_queue_id,),
+            )
+        else:
+            conn.execute(
+                """UPDATE interactions
+                      SET interaction_call_start_time = (
+                          SELECT sc.sc_requested_at
+                            FROM voip_call_queue vcq
+                            JOIN scheduled_calls sc
+                              ON sc.sc_conversation_id = vcq.voip_queue_call_id
+                           WHERE vcq.voip_queue_id = ?
+                      )
+                    WHERE interaction_id = (
+                          SELECT voip_queue_interaction_id
+                            FROM voip_call_queue WHERE voip_queue_id = ?
+                      )
+                      AND interaction_call_start_time IS NULL""",
+                (voip_queue_id, voip_queue_id),
+            )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        logger.warning(
+            "[ai_shop] _set_interaction_call_start_from_schedule failed "
+            "(queue_id=%s)", voip_queue_id, exc_info=True,
+        )
+    finally:
+        conn.close()
+
+
 def _create_interaction(project_id, call_date, *,
                         location_id=None, campaign_id=None,
                         caller_user_id=None, call_duration_seconds=None):
@@ -605,6 +665,7 @@ def _grade_and_finalize(voip_queue_id, interaction_id, *,
         error="", interaction_id=interaction_id,
     )
     _link_to_scheduled_call(voip_queue_id, "graded")
+    _set_interaction_call_start_from_schedule(voip_queue_id)
     # Fire-and-forget ElevenLabs audio post-fetch. Provider-gated: AAI flow
     # already has its own audio path, and other VoIP providers don't expose
     # a conversation→audio endpoint compatible with this fetcher.
@@ -726,6 +787,7 @@ def _process(voip_queue_id: int) -> None:
                 error="", interaction_id=interaction_id,
             )
             _link_to_scheduled_call(voip_queue_id, "no_answer")
+            _set_interaction_call_start_from_schedule(voip_queue_id)
             return
 
         # Classify before grading. Voicemails / hold-only / failed → no_answer
@@ -746,6 +808,7 @@ def _process(voip_queue_id: int) -> None:
                 error="", interaction_id=interaction_id,
             )
             _link_to_scheduled_call(voip_queue_id, "no_answer")
+            _set_interaction_call_start_from_schedule(voip_queue_id)
             # Voicemail/hold audio is genuinely useful for the manager —
             # fire the same async fetch as the success-grade path. Provider-
             # gated; AAI/no-conv-id flows skip naturally.
