@@ -229,6 +229,9 @@ details.report-location > summary > .score-pill {
         return n + (isNaN(avg) ? 0 : avg * cnt);
       }, 0);
       const avg = totalCalls ? (weightedSum / totalCalls) : null;
+      // No-answer count is per-LOCATION (not per-respondent); all rows in
+      // this group share the same location, so any row's value is canonical.
+      const noAnswers = (rows[0] && rows[0].location_no_answer_count) || 0;
 
       const respondentRows = rows.map((r) => {
         const cls = EA.scoreClass(r.pr_average_score);
@@ -259,6 +262,7 @@ details.report-location > summary > .score-pill {
             '<span class="report-loc-meta muted text-small">' +
               rows.length + ' respondent' + (rows.length === 1 ? '' : 's') +
               ' · ' + totalCalls + ' call' + (totalCalls === 1 ? '' : 's') +
+              (noAnswers > 0 ? (' · ' + noAnswers + ' unanswered') : '') +
             '</span>' +
             '<span class="score-pill ' + avgCls + '">' + avgText + '</span>' +
           '</summary>' +
@@ -389,6 +393,7 @@ details.report-location > summary > .score-pill {
             ? '<span class="text-small muted">Multiple callers may be represented in this report</span>'
             : '') +
           '<span class="text-small muted">' + (r.pr_call_count || 0) + ' calls · ' +
+            (r.no_answer_count > 0 ? (r.no_answer_count + ' unanswered · ') : '') +
             EA.esc(firstDate) + ' → ' + EA.esc(lastDate) + '</span>' +
         '</div>' +
         '<span class="trend ' + trend + '">' + trendArrow + ' ' +
@@ -408,7 +413,37 @@ details.report-location > summary > .score-pill {
                '<th style="text-align:right;">Score</th>' +
              '</tr></thead><tbody>' + rowsHtml + '</tbody></table>')
           : '<div class="empty-state">No interactions recorded.</div>') +
-      '</div>';
+      '</div>' +
+
+      // Separate stat — not mixed into the score average (per locked product
+      // reasoning: scores measure quality-of-answer; no-answers measure
+      // reachability — different signals). Conditional render: hidden when
+      // the location had zero unanswered calls in the report's date window.
+      (r.no_answer_count > 0
+        ? ('<div class="panel" style="margin-top:14px;">' +
+             '<div class="panel-title">Unanswered calls at this location ' +
+               '<span class="muted text-small" style="font-weight:normal;">' +
+                 '(' + r.no_answer_count + ' during this period — ' +
+                 'caller could not be identified, so attributed location-wide)' +
+               '</span>' +
+             '</div>' +
+             '<table class="history-table"><thead><tr>' +
+               '<th>Date</th><th>Time</th>' +
+             '</tr></thead><tbody>' +
+               r.no_answer_events.map(function (n) {
+                 const callTime = EA.formatCallTime(
+                   n.interaction_call_start_time,
+                   n.interaction_uploaded_at,
+                   n.interaction_call_duration_seconds,
+                 );
+                 return '<tr data-iid="' + n.interaction_id + '">' +
+                          '<td>' + EA.esc(EA.formatDate(n.interaction_date)) + '</td>' +
+                          '<td class="muted text-small">' + EA.esc(callTime) + '</td>' +
+                        '</tr>';
+               }).join("") +
+             '</tbody></table>' +
+           '</div>')
+        : '');
 
     $("#btn-back-to-list").addEventListener("click", backToList);
     detail.querySelectorAll("tr[data-iid]").forEach((tr) => {

@@ -196,6 +196,34 @@ def list_performance_reports():
     try:
         cur = conn.execute(q(union_sql), (company_id, company_id))
         rows = _rows(cur)
+
+        # Per-location no-answer counts. Derived at render time so we never
+        # carry stale counts and never need a backfill. No-answer interactions
+        # have NULL respondent_id (no one answered to be detected), so they
+        # roll up at the LOCATION level and are surfaced as a separate signal
+        # from per-respondent score averages.
+        loc_ids = sorted({r["location_id"] for r in rows if r.get("location_id")})
+        no_answers_by_loc = {}
+        if loc_ids:
+            placeholders = ",".join(["?"] * len(loc_ids))
+            cur = conn.execute(
+                q(f"""SELECT i.interaction_location_id AS loc_id,
+                             COUNT(*) AS n
+                        FROM interactions i
+                        JOIN projects p ON p.project_id = i.project_id
+                       WHERE p.company_id = ?
+                         AND i.status_id = 44
+                         AND i.interaction_deleted_at IS NULL
+                         AND i.interaction_location_id IN ({placeholders})
+                       GROUP BY i.interaction_location_id"""),
+                [company_id] + loc_ids,
+            )
+            for sr in cur.fetchall():
+                d = _row_to_dict(sr)
+                no_answers_by_loc[d["loc_id"]] = d["n"]
+        for r in rows:
+            r["location_no_answer_count"] = no_answers_by_loc.get(r.get("location_id"), 0)
+
         # Group the flat list into {location_name: [reports]}
         grouped = {}
         for r in rows:
@@ -273,6 +301,44 @@ def get_performance_report(performance_report_id):
             row["interactions"] = _rows(cur)
         else:
             row["interactions"] = []
+
+        # No-answer events at the same location, scoped to the report's
+        # first-to-last graded interaction_date. Render-time derivation —
+        # no schema change, no backfill needed. See list-view comment for
+        # the per-respondent attribution rationale (location-level only).
+        no_answer_events: list = []
+        loc_id = None
+        date_lo = date_hi = None
+        if row["interactions"]:
+            cur = conn.execute(
+                q("""SELECT interaction_location_id
+                       FROM interactions WHERE interaction_id = ?"""),
+                (row["interactions"][0]["interaction_id"],),
+            )
+            lr = _row_to_dict(cur.fetchone()) or {}
+            loc_id = lr.get("interaction_location_id")
+            dates = [it["interaction_date"] for it in row["interactions"]
+                     if it.get("interaction_date")]
+            if dates:
+                date_lo = min(dates)
+                date_hi = max(dates)
+        if loc_id and date_lo and date_hi:
+            cur = conn.execute(
+                q("""SELECT interaction_id, interaction_date,
+                            interaction_call_start_time,
+                            interaction_call_duration_seconds,
+                            interaction_uploaded_at
+                       FROM interactions
+                      WHERE interaction_location_id = ?
+                        AND status_id = 44
+                        AND interaction_deleted_at IS NULL
+                        AND interaction_date BETWEEN ? AND ?
+                      ORDER BY interaction_date DESC, interaction_id DESC"""),
+                (loc_id, date_lo, date_hi),
+            )
+            no_answer_events = _rows(cur)
+        row["no_answer_events"] = no_answer_events
+        row["no_answer_count"]  = len(no_answer_events)
 
         return jsonify(row)
     finally:
