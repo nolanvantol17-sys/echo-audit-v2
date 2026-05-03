@@ -231,6 +231,15 @@ def export_interactions():
                 ws.cell(row=1, column=col).font = BOLD
             ws.freeze_panes = "A2"
 
+            # Per-row height estimator for wrapped Call Summary cells.
+            # Call Summary is capped at width=80; effective wrap ≈ 75 chars
+            # per line at default Calibri 11pt; line height ≈ 15pt.
+            def _row_height_for_summary(summary, cpl=75, line_h=15, min_h=15):
+                if not isinstance(summary, str) or not summary:
+                    return min_h
+                lines = max(1, (len(summary) + cpl - 1) // cpl)
+                return max(min_h, lines * line_h)
+
             total = len(rows)
             for idx, r in enumerate(rows, start=1):
                 yield json.dumps({
@@ -243,10 +252,15 @@ def export_interactions():
                 cw = r.get("call_when")
                 if hasattr(cw, "strftime"):
                     date_str = cw.date().isoformat() if hasattr(cw, "date") else cw.isoformat()[:10]
-                    time_str = cw.strftime("%H:%M")
+                    time_str = cw.strftime("%-I:%M %p")
                 elif isinstance(cw, str):
                     date_str = cw[:10]
-                    time_str = cw[11:16] if len(cw) >= 16 else ""
+                    time_str = ""
+                    if len(cw) >= 16:
+                        try:
+                            time_str = datetime.fromisoformat(cw[:19]).strftime("%-I:%M %p")
+                        except (ValueError, TypeError):
+                            time_str = cw[11:16]   # last-resort raw 24-hour
                 else:
                     date_str = ""
                     time_str = ""
@@ -268,12 +282,16 @@ def export_interactions():
                     )
 
                 total_score = r.get("interaction_overall_score")
+                if r.get("status_id") == 44:
+                    total_value = "No answer"
+                else:
+                    total_value = float(total_score) if total_score is not None else ""
                 row = [
                     r.get("location_name") or "",
                     date_str,
                     time_str,
                     r.get("respondent_display") or "",
-                    float(total_score) if total_score is not None else "",
+                    total_value,
                 ]
                 for col in rubric_columns:
                     v = row_scores.get(col)
@@ -292,6 +310,12 @@ def export_interactions():
                 # Wrap-text + top-align on the Call Summary cell so capped
                 # columns don't clip long single-sentence summaries.
                 ws.cell(row=ws.max_row, column=ws.max_column).alignment = WRAP
+                # Bold Total Score per data row (column 5) so it pops as the
+                # at-a-glance focus column. Header is already bold from G2.4.
+                ws.cell(row=ws.max_row, column=5).font = BOLD
+                # Auto-grow row height to fit the wrapped Call Summary so
+                # users see the whole sentence without expanding the row.
+                ws.row_dimensions[ws.max_row].height = _row_height_for_summary(summary)
 
             # Auto-fit column widths from longest visible value (header +
             # every data row). Call Summary is capped at 80 — wrap-text on
