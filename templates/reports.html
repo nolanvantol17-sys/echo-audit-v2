@@ -269,8 +269,7 @@ details.report-location > summary > .score-pill {
       const locSummaryRow = (noAnswers > 0 && locId)
         ? ('<div class="report-resp-row report-loc-summary-row" data-location-id="' + locId + '">' +
              '<div>' +
-               '<div style="font-weight:500;"><em class="muted">Location summary</em></div>' +
-               '<div class="muted text-small">Reachability — no caller identified</div>' +
+               '<div style="font-weight:500;">No Answers</div>' +
              '</div>' +
              '<span class="score-pill no-answer-pill">' + noAnswers + ' unanswered</span>' +
            '</div>')
@@ -400,7 +399,7 @@ details.report-location > summary > .score-pill {
         '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-list">← Back</button>' +
       '</div>' +
       '<div class="page-title" style="margin-bottom:6px;">' +
-        EA.esc(r.location_name || "Location") + ' — Unanswered calls' +
+        EA.esc(r.location_name || "Location") + ' — No Answers' +
       '</div>' +
       '<div class="text-small muted" style="margin-bottom:14px;">' +
         r.no_answer_count + ' unanswered call' + (r.no_answer_count === 1 ? '' : 's') +
