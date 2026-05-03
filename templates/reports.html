@@ -48,6 +48,14 @@ details.report-location > summary > .score-pill {
     padding: 2px 9px;
 }
 
+/* Location-summary row — visually distinct from per-respondent rows so it
+   never reads as a person. Italic title (in the row HTML) + neutral
+   no-answer pill color. */
+.report-loc-summary-row .score-pill.no-answer-pill {
+    background: var(--surface-3);
+    color: var(--muted);
+}
+
 /* ── Filter banners ──────────────────────────────────────
    Inline display:flex would override the [hidden] attribute (inline beats
    UA stylesheet). Scope flex to :not([hidden]) so hidden actually hides. */
@@ -253,6 +261,21 @@ details.report-location > summary > .score-pill {
         );
       }).join("");
 
+      // Location-level "summary" row inside the group, rendered when the
+      // location has ≥1 no-answer event. NOT a respondent — surfaced as a
+      // separate location-reachability signal alongside per-respondent rows.
+      // Italic title + neutral pill make it clearly distinct from a person.
+      const locId = (rows[0] && rows[0].location_id) || null;
+      const locSummaryRow = (noAnswers > 0 && locId)
+        ? ('<div class="report-resp-row report-loc-summary-row" data-location-id="' + locId + '">' +
+             '<div>' +
+               '<div style="font-weight:500;"><em class="muted">Location summary</em></div>' +
+               '<div class="muted text-small">Reachability — no caller identified</div>' +
+             '</div>' +
+             '<span class="score-pill no-answer-pill">' + noAnswers + ' unanswered</span>' +
+           '</div>')
+        : '';
+
       const avgCls = (avg === null || avg === undefined) ? 'gray' : EA.scoreClass(avg);
       const avgText = (avg === null || avg === undefined) ? '—' : EA.formatScore(avg);
       return (
@@ -266,7 +289,7 @@ details.report-location > summary > .score-pill {
             '</span>' +
             '<span class="score-pill ' + avgCls + '">' + avgText + '</span>' +
           '</summary>' +
-          '<div class="collapsible-body">' + respondentRows + '</div>' +
+          '<div class="collapsible-body">' + respondentRows + locSummaryRow + '</div>' +
         '</details>'
       );
     }).join("");
@@ -277,6 +300,12 @@ details.report-location > summary > .score-pill {
       row.addEventListener("click", () => {
         if (window.getSelection().toString().length > 0) return;
         openReport(row.dataset.reportId);
+      });
+    });
+    wrap.querySelectorAll(".report-resp-row[data-location-id]").forEach((row) => {
+      row.addEventListener("click", () => {
+        if (window.getSelection().toString().length > 0) return;
+        openLocationDetail(row.dataset.locationId);
       });
     });
   }
@@ -319,6 +348,79 @@ details.report-location > summary > .score-pill {
     $("#report-detail-section").innerHTML = "";
     $("#reports-list-section").hidden = false;
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  // ── Location-summary detail view ──────────────────
+  // Reuses #report-detail-section (one detail surface per page, mutually
+  // exclusive with the per-respondent detail). On backToList the section
+  // is hidden + cleared regardless of which detail was open, so no
+  // per-detail teardown needed.
+  async function openLocationDetail(locationId) {
+    const list   = $("#reports-list-section");
+    const detail = $("#report-detail-section");
+    list.hidden = true;
+    detail.hidden = false;
+    detail.innerHTML =
+      '<div class="skeleton" style="height:32px;width:240px;margin:0 0 14px;"></div>' +
+      '<div class="skeleton" style="height:240px;"></div>';
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    try {
+      const r = await EA.fetchJSON(
+        "/api/performance-reports/location/" + encodeURIComponent(locationId) + "/no-answers"
+      );
+      renderLocationDetail(r);
+    } catch (err) {
+      detail.innerHTML =
+        '<div class="panel"><div class="section-error">' +
+          EA.esc(err.message || "Failed to load location summary.") +
+        '</div>' +
+        '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-list" style="margin-top:12px;">Back to list</button>' +
+        '</div>';
+      $("#btn-back-to-list").addEventListener("click", backToList);
+    }
+  }
+
+  function renderLocationDetail(r) {
+    const detail = $("#report-detail-section");
+    const events = r.no_answer_events || [];
+    const rowsHtml = events.map(function (n) {
+      const callTime = EA.formatCallTime(
+        n.interaction_call_start_time,
+        n.interaction_uploaded_at,
+        n.interaction_call_duration_seconds,
+      );
+      return '<tr data-iid="' + n.interaction_id + '">' +
+               '<td>' + EA.esc(EA.formatDate(n.interaction_date)) + '</td>' +
+               '<td class="muted text-small">' + EA.esc(callTime) + '</td>' +
+             '</tr>';
+    }).join("");
+
+    detail.innerHTML =
+      '<div class="hstack-wrap" style="margin-bottom:12px;">' +
+        '<button type="button" class="btn btn-ghost btn-sm" id="btn-back-to-list">← Back</button>' +
+      '</div>' +
+      '<div class="page-title" style="margin-bottom:6px;">' +
+        EA.esc(r.location_name || "Location") + ' — Unanswered calls' +
+      '</div>' +
+      '<div class="text-small muted" style="margin-bottom:14px;">' +
+        r.no_answer_count + ' unanswered call' + (r.no_answer_count === 1 ? '' : 's') +
+        ' at this location' +
+      '</div>' +
+      '<div class="panel">' +
+        '<div class="panel-title">Unanswered calls at this location</div>' +
+        (events.length
+          ? ('<table class="history-table"><thead><tr>' +
+               '<th>Date</th><th>Time</th>' +
+             '</tr></thead><tbody>' + rowsHtml + '</tbody></table>')
+          : '<div class="empty-state">No unanswered calls recorded.</div>') +
+      '</div>';
+
+    $("#btn-back-to-list").addEventListener("click", backToList);
+    detail.querySelectorAll("tr[data-iid]").forEach((tr) => {
+      tr.addEventListener("click", () => {
+        window.location.href = "/app/history/" + tr.dataset.iid;
+      });
+    });
   }
 
   function renderDetail(r) {
@@ -393,7 +495,6 @@ details.report-location > summary > .score-pill {
             ? '<span class="text-small muted">Multiple callers may be represented in this report</span>'
             : '') +
           '<span class="text-small muted">' + (r.pr_call_count || 0) + ' calls · ' +
-            (r.no_answer_count > 0 ? (r.no_answer_count + ' unanswered · ') : '') +
             EA.esc(firstDate) + ' → ' + EA.esc(lastDate) + '</span>' +
         '</div>' +
         '<span class="trend ' + trend + '">' + trendArrow + ' ' +
@@ -413,37 +514,7 @@ details.report-location > summary > .score-pill {
                '<th style="text-align:right;">Score</th>' +
              '</tr></thead><tbody>' + rowsHtml + '</tbody></table>')
           : '<div class="empty-state">No interactions recorded.</div>') +
-      '</div>' +
-
-      // Separate stat — not mixed into the score average (per locked product
-      // reasoning: scores measure quality-of-answer; no-answers measure
-      // reachability — different signals). Conditional render: hidden when
-      // the location had zero unanswered calls in the report's date window.
-      (r.no_answer_count > 0
-        ? ('<div class="panel" style="margin-top:14px;">' +
-             '<div class="panel-title">Unanswered calls at this location ' +
-               '<span class="muted text-small" style="font-weight:normal;">' +
-                 '(' + r.no_answer_count + ' total at this location — ' +
-                 'caller could not be identified, so attributed location-wide)' +
-               '</span>' +
-             '</div>' +
-             '<table class="history-table"><thead><tr>' +
-               '<th>Date</th><th>Time</th>' +
-             '</tr></thead><tbody>' +
-               r.no_answer_events.map(function (n) {
-                 const callTime = EA.formatCallTime(
-                   n.interaction_call_start_time,
-                   n.interaction_uploaded_at,
-                   n.interaction_call_duration_seconds,
-                 );
-                 return '<tr data-iid="' + n.interaction_id + '">' +
-                          '<td>' + EA.esc(EA.formatDate(n.interaction_date)) + '</td>' +
-                          '<td class="muted text-small">' + EA.esc(callTime) + '</td>' +
-                        '</tr>';
-               }).join("") +
-             '</tbody></table>' +
-           '</div>')
-        : '');
+      '</div>';
 
     $("#btn-back-to-list").addEventListener("click", backToList);
     detail.querySelectorAll("tr[data-iid]").forEach((tr) => {

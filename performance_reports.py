@@ -255,8 +255,7 @@ def get_performance_report(performance_report_id):
                     COALESCE(
                         r.respondent_name,
                         NULLIF(TRIM(u.user_first_name || ' ' || u.user_last_name), '')
-                    ) AS respondent_name,
-                    r.location_id AS respondent_location_id
+                    ) AS respondent_name
                  FROM performance_reports pr
                  LEFT JOIN users       u ON u.user_id       = pr.subject_user_id
                  LEFT JOIN departments d ON d.department_id = u.department_id
@@ -303,44 +302,61 @@ def get_performance_report(performance_report_id):
         else:
             row["interactions"] = []
 
-        # No-answer events at the same location — LOCATION-LEVEL signal,
-        # not scoped to this respondent's graded date window. Every
-        # respondent's report at the same location surfaces the same set
-        # (per locked product reasoning: no-answers are about location
-        # reachability, not per-respondent quality, so a respondent with
-        # a narrow graded history shouldn't see fewer no-answers than a
-        # respondent with a wide one at the same place).
-        # Authoritative location comes from respondents.location_id;
-        # falls back to the first graded interaction's location for the
-        # (currently nonexistent) known-user report path.
-        no_answer_events: list = []
-        loc_id = row.get("respondent_location_id")
-        if loc_id is None and row["interactions"]:
-            cur = conn.execute(
-                q("""SELECT interaction_location_id
-                       FROM interactions WHERE interaction_id = ?"""),
-                (row["interactions"][0]["interaction_id"],),
-            )
-            lr = _row_to_dict(cur.fetchone()) or {}
-            loc_id = lr.get("interaction_location_id")
-        if loc_id:
-            cur = conn.execute(
-                q("""SELECT interaction_id, interaction_date,
-                            interaction_call_start_time,
-                            interaction_call_duration_seconds,
-                            interaction_uploaded_at
-                       FROM interactions
-                      WHERE interaction_location_id = ?
-                        AND status_id = 44
-                        AND interaction_deleted_at IS NULL
-                      ORDER BY interaction_date DESC, interaction_id DESC"""),
-                (loc_id,),
-            )
-            no_answer_events = _rows(cur)
-        row["no_answer_events"] = no_answer_events
-        row["no_answer_count"]  = len(no_answer_events)
-
         return jsonify(row)
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+# GET /api/performance-reports/location/<id>/no-answers
+# ═══════════════════════════════════════════════════════════════
+#
+# Location-level no-answer report card. Returns ALL no_answer interactions
+# at the given location (no date scoping — locked product reasoning is that
+# no-answers are a location-reachability signal, surfaced separately from
+# any per-respondent quality report). Tenant-scoped: 404 on cross-tenant
+# location_id.
+
+
+@reports_bp.route("/performance-reports/location/<int:location_id>/no-answers",
+                  methods=["GET"])
+@login_required
+def get_location_no_answers(location_id):
+    company_id, err = _require_company()
+    if err: return err
+
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            q("""SELECT location_id, location_name
+                   FROM locations
+                  WHERE location_id = ? AND company_id = ?
+                    AND location_deleted_at IS NULL"""),
+            (location_id, company_id),
+        )
+        loc = _row_to_dict(cur.fetchone())
+        if not loc:
+            return _err("Location not found", 404)
+
+        cur = conn.execute(
+            q("""SELECT interaction_id, interaction_date,
+                        interaction_call_start_time,
+                        interaction_call_duration_seconds,
+                        interaction_uploaded_at
+                   FROM interactions
+                  WHERE interaction_location_id = ?
+                    AND status_id = 44
+                    AND interaction_deleted_at IS NULL
+                  ORDER BY interaction_date DESC, interaction_id DESC"""),
+            (location_id,),
+        )
+        events = _rows(cur)
+        return jsonify({
+            "location_id":      loc["location_id"],
+            "location_name":    loc["location_name"],
+            "no_answer_count":  len(events),
+            "no_answer_events": events,
+        })
     finally:
         conn.close()
 
