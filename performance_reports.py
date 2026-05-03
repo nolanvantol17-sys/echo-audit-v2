@@ -255,7 +255,8 @@ def get_performance_report(performance_report_id):
                     COALESCE(
                         r.respondent_name,
                         NULLIF(TRIM(u.user_first_name || ' ' || u.user_last_name), '')
-                    ) AS respondent_name
+                    ) AS respondent_name,
+                    r.location_id AS respondent_location_id
                  FROM performance_reports pr
                  LEFT JOIN users       u ON u.user_id       = pr.subject_user_id
                  LEFT JOIN departments d ON d.department_id = u.department_id
@@ -302,14 +303,19 @@ def get_performance_report(performance_report_id):
         else:
             row["interactions"] = []
 
-        # No-answer events at the same location, scoped to the report's
-        # first-to-last graded interaction_date. Render-time derivation —
-        # no schema change, no backfill needed. See list-view comment for
-        # the per-respondent attribution rationale (location-level only).
+        # No-answer events at the same location — LOCATION-LEVEL signal,
+        # not scoped to this respondent's graded date window. Every
+        # respondent's report at the same location surfaces the same set
+        # (per locked product reasoning: no-answers are about location
+        # reachability, not per-respondent quality, so a respondent with
+        # a narrow graded history shouldn't see fewer no-answers than a
+        # respondent with a wide one at the same place).
+        # Authoritative location comes from respondents.location_id;
+        # falls back to the first graded interaction's location for the
+        # (currently nonexistent) known-user report path.
         no_answer_events: list = []
-        loc_id = None
-        date_lo = date_hi = None
-        if row["interactions"]:
+        loc_id = row.get("respondent_location_id")
+        if loc_id is None and row["interactions"]:
             cur = conn.execute(
                 q("""SELECT interaction_location_id
                        FROM interactions WHERE interaction_id = ?"""),
@@ -317,12 +323,7 @@ def get_performance_report(performance_report_id):
             )
             lr = _row_to_dict(cur.fetchone()) or {}
             loc_id = lr.get("interaction_location_id")
-            dates = [it["interaction_date"] for it in row["interactions"]
-                     if it.get("interaction_date")]
-            if dates:
-                date_lo = min(dates)
-                date_hi = max(dates)
-        if loc_id and date_lo and date_hi:
+        if loc_id:
             cur = conn.execute(
                 q("""SELECT interaction_id, interaction_date,
                             interaction_call_start_time,
@@ -332,9 +333,8 @@ def get_performance_report(performance_report_id):
                       WHERE interaction_location_id = ?
                         AND status_id = 44
                         AND interaction_deleted_at IS NULL
-                        AND interaction_date BETWEEN ? AND ?
                       ORDER BY interaction_date DESC, interaction_id DESC"""),
-                (loc_id, date_lo, date_hi),
+                (loc_id,),
             )
             no_answer_events = _rows(cur)
         row["no_answer_events"] = no_answer_events
