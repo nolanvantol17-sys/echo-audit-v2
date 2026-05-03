@@ -554,46 +554,14 @@
       document.getElementById("dash-chart-wrap").hidden = false;
       document.getElementById("dash-bottom").hidden = false;
       widgetHandle = EA.DashboardWidget.init({
-        container:         document.getElementById("dashboard-widget"),
-        defaultViewBy:     "date",
-        // Default all-time so tiles + chart agree with the (also all-time)
-        // initial /api/dashboard fetch above. Mirrors the project hub.
-        defaultDatePreset: "all",
-        showFilters:       ["campaigns"],
-        onChange:          onWidgetFilterChange,
+        container: document.getElementById("dashboard-widget"),
+        defaultViewBy: "date",
       });
       EA.DashboardSummary.renderStats(d.stat_cards || {});
       EA.DashboardSummary.renderLeaderboard(d.leaderboard || []);
       EA.DashboardSummary.renderRecent(d.recent_interactions || []);
     } catch (err) {
       console.warn("Dashboard summary load failed:", err);
-    }
-  }
-
-  // Widget → host bridge. Fires after each user-initiated filter change.
-  // Refetches /api/dashboard with matching params and re-renders stats +
-  // leaderboard + recent. Initial boot uses loadDashboardSummary() above —
-  // the widget skips its first onChange to avoid a duplicate fetch.
-  async function onWidgetFilterChange(filterState) {
-    const params = new URLSearchParams();
-    if (filterState.date_from) params.set("date_from", filterState.date_from);
-    if (filterState.date_to)   params.set("date_to",   filterState.date_to);
-    if (filterState.location_ids.length)
-      params.set("location_ids",      filterState.location_ids.join(","));
-    if (filterState.caller_ids.length)
-      params.set("caller_ids",        filterState.caller_ids.join(","));
-    if (filterState.phone_routing_ids.length)
-      params.set("phone_routing_ids", filterState.phone_routing_ids.join(","));
-    if (filterState.campaign_ids.length)
-      params.set("campaign_ids",      filterState.campaign_ids.join(","));
-    const qs = params.toString();
-    try {
-      const d = await EA.fetchJSON("/api/dashboard" + (qs ? ("?" + qs) : ""));
-      EA.DashboardSummary.renderStats(d.stat_cards || {});
-      EA.DashboardSummary.renderLeaderboard(d.leaderboard || []);
-      EA.DashboardSummary.renderRecent(d.recent_interactions || []);
-    } catch (err) {
-      EA.toast(err.message || "Failed to refresh dashboard.", "error");
     }
   }
 

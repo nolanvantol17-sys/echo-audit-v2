@@ -467,33 +467,6 @@
     if (zero) zero.hidden = false;
   }
 
-  // Widget → host bridge. Fires after each user-initiated filter change.
-  // Refetches /api/dashboard with matching params and re-renders stats +
-  // leaderboard + recent. Initial boot uses init()'s baseline fetch — the
-  // widget skips its first onChange to avoid a duplicate fetch.
-  async function onWidgetFilterChange(filterState) {
-    const params = new URLSearchParams();
-    if (filterState.date_from) params.set("date_from", filterState.date_from);
-    if (filterState.date_to)   params.set("date_to",   filterState.date_to);
-    if (filterState.location_ids.length)
-      params.set("location_ids",      filterState.location_ids.join(","));
-    if (filterState.caller_ids.length)
-      params.set("caller_ids",        filterState.caller_ids.join(","));
-    if (filterState.phone_routing_ids.length)
-      params.set("phone_routing_ids", filterState.phone_routing_ids.join(","));
-    if (filterState.campaign_ids.length)
-      params.set("campaign_ids",      filterState.campaign_ids.join(","));
-    const qs = params.toString();
-    try {
-      const d = await EA.fetchJSON("/api/dashboard" + (qs ? ("?" + qs) : ""));
-      renderStats(d.stat_cards || {});
-      renderLeaderboard(d.leaderboard || []);
-      renderRecent(d.recent_interactions || []);
-    } catch (err) {
-      EA.toast(err.message || "Failed to refresh dashboard.", "error");
-    }
-  }
-
   // ── Boot: dashboard summary first so we can decide whether to render
   //     the chart widget at all (skipped in the zero-state). ──
   // Wrapped in init() + registered with EA.PageRouter so content swaps
@@ -512,13 +485,8 @@
         return { teardown() {} };
       }
       widgetHandle = EA.DashboardWidget.init({
-        container:         document.getElementById("dashboard-widget"),
-        defaultViewBy:     "date",
-        // Default all-time so tiles + chart agree with the (also all-time)
-        // initial /api/dashboard fetch above. Mirrors the project hub.
-        defaultDatePreset: "all",
-        showFilters:       ["campaigns"],
-        onChange:          onWidgetFilterChange,
+        container: document.getElementById("dashboard-widget"),
+        defaultViewBy: "date",
       });
       renderStats(d.stat_cards || {});
       renderLeaderboard(d.leaderboard || []);
