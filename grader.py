@@ -372,17 +372,13 @@ Respond with the single sentence only — no preamble, no quotes."""
 
 
 def summarize_no_answer_for_export(transcript: str) -> str:
-    """Return a short canonical Call-Summary label for a status=44 row.
+    """Return the canonical Call-Summary label for a status=44 row.
 
-    Reuses the live VoIP classifier so the export label tracks whatever the
-    classifier already decided in production. Empty transcripts short-circuit
-    (no Claude call). Returns one of: "No answer", "Voicemail".
+    Always "No answer" — Carlos's G2.2 directive collapsed the prior
+    Voicemail/No-answer split into a single label. Helper kept (vs inlining
+    at the export site) for future flexibility if richer labels return.
     """
-    if not transcript or not transcript.strip():
-        return "No answer"
-    from voip.classifier import classify_call
-    label = classify_call(transcript, None, None)
-    return "Voicemail" if label == "voicemail" else "No answer"
+    return "No answer"
 
 
 # ── Flags + totals ─────────────────────────────────────────────

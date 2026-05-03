@@ -95,7 +95,9 @@ def export_interactions():
     """
     try:
         from openpyxl import Workbook
-        from openpyxl.styles import Alignment
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.formatting.rule import FormulaRule
+        from openpyxl.utils import get_column_letter
     except ImportError:
         return _err("openpyxl is not installed on the server", 500)
 
@@ -162,7 +164,8 @@ def export_interactions():
                                 r.respondent_name,
                                 NULLIF(TRIM(respondent.user_first_name || ' '
                                             || respondent.user_last_name), ''),
-                                i.interaction_responder_name
+                                NULLIF(TRIM(i.interaction_responder_name), ''),
+                                'Name Not Detected'
                             )                                       AS respondent_display,
                             COALESCE(
                                 sc.sc_requested_at,
@@ -218,9 +221,15 @@ def export_interactions():
             # Center-align score columns on header + every data row. 1-based:
             # Total Score is column 5; rubric columns run 6..(5+N).
             CENTER = Alignment(horizontal="center", vertical="center")
+            WRAP   = Alignment(wrap_text=True, vertical="top")
             score_cols = [5] + list(range(6, 6 + len(rubric_columns)))
             for col in score_cols:
                 ws.cell(row=1, column=col).alignment = CENTER
+            # Bold + freeze header row.
+            BOLD = Font(bold=True)
+            for col in range(1, ws.max_column + 1):
+                ws.cell(row=1, column=col).font = BOLD
+            ws.freeze_panes = "A2"
 
             total = len(rows)
             for idx, r in enumerate(rows, start=1):
@@ -280,6 +289,41 @@ def export_interactions():
                 ws.append(row)
                 for col in score_cols:
                     ws.cell(row=ws.max_row, column=col).alignment = CENTER
+                # Wrap-text + top-align on the Call Summary cell so capped
+                # columns don't clip long single-sentence summaries.
+                ws.cell(row=ws.max_row, column=ws.max_column).alignment = WRAP
+
+            # Auto-fit column widths from longest visible value (header +
+            # every data row). Call Summary is capped at 80 — wrap-text on
+            # its data cells handles the overflow into multi-line cells.
+            CS_COL = ws.max_column
+            for col_idx in range(1, ws.max_column + 1):
+                max_len = max(
+                    (len(str(ws.cell(row=r, column=col_idx).value))
+                     for r in range(1, ws.max_row + 1)
+                     if ws.cell(row=r, column=col_idx).value is not None),
+                    default=10,
+                )
+                width = min(max_len + 2, 80) if col_idx == CS_COL else max_len + 2
+                ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+            # Conditional formatting on score columns (data range only).
+            # ISNUMBER guard skips empty / Yes-No string cells so no fill
+            # appears on no-answer rows or non-numeric criteria.
+            GREEN  = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+            YELLOW = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+            RED    = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+            if ws.max_row >= 2:
+                for col_idx in score_cols:
+                    cl  = get_column_letter(col_idx)
+                    rng = f"{cl}2:{cl}{ws.max_row}"
+                    top = f"{cl}2"
+                    ws.conditional_formatting.add(rng, FormulaRule(
+                        formula=[f"AND(ISNUMBER({top}),{top}<5)"], fill=RED))
+                    ws.conditional_formatting.add(rng, FormulaRule(
+                        formula=[f"AND(ISNUMBER({top}),{top}>=5,{top}<7)"], fill=YELLOW))
+                    ws.conditional_formatting.add(rng, FormulaRule(
+                        formula=[f"AND(ISNUMBER({top}),{top}>=7)"], fill=GREEN))
 
             buf = io.BytesIO()
             wb.save(buf)
