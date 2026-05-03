@@ -16,7 +16,8 @@ import base64
 import io
 import json
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from flask import Blueprint, Response, jsonify, request, send_file, stream_with_context
 from flask_login import current_user, login_required
@@ -27,6 +28,12 @@ from db import IS_POSTGRES, get_conn, q
 from helpers import get_effective_company_id
 
 logger = logging.getLogger(__name__)
+
+# Display timezone for the Past Grades export. Hardcoded for the current
+# Mayfair-only tenant base (see followup_per_tenant_timezone_support memory
+# for the per-tenant-tz path). Module-level constant — ZoneInfo objects are
+# thread-safe and cheap to share.
+TZ_CENTRAL = ZoneInfo("America/Chicago")
 
 export_bp = Blueprint("export", __name__, url_prefix="/api/export")
 
@@ -251,14 +258,26 @@ def export_interactions():
 
                 cw = r.get("call_when")
                 if hasattr(cw, "strftime"):
-                    date_str = cw.date().isoformat() if hasattr(cw, "date") else cw.isoformat()[:10]
+                    # Postgres TIMESTAMPTZ → tz-aware UTC. Defensive: attach
+                    # UTC if naive (SQLite / dev paths). Convert to Central
+                    # so date + time both reflect what the user saw on their
+                    # wall clock when the call happened.
+                    if cw.tzinfo is None:
+                        cw = cw.replace(tzinfo=timezone.utc)
+                    cw = cw.astimezone(TZ_CENTRAL)
+                    date_str = cw.date().isoformat()
                     time_str = cw.strftime("%-I:%M %p")
                 elif isinstance(cw, str):
                     date_str = cw[:10]
                     time_str = ""
                     if len(cw) >= 16:
                         try:
-                            time_str = datetime.fromisoformat(cw[:19]).strftime("%-I:%M %p")
+                            dt = datetime.fromisoformat(cw[:19])
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=timezone.utc)
+                            dt = dt.astimezone(TZ_CENTRAL)
+                            date_str = dt.date().isoformat()
+                            time_str = dt.strftime("%-I:%M %p")
                         except (ValueError, TypeError):
                             time_str = cw[11:16]   # last-resort raw 24-hour
                 else:
