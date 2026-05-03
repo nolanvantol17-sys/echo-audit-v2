@@ -4,10 +4,14 @@ dashboard_routes.py — Echo Audit V2 Phase 4 dashboard + chart routes.
 All routes scope to the current company through the project chain:
     interaction → project → projects.company_id.
 
-Month-scoping uses the current calendar month in UTC. Dashboard chart route
-supports view_by modes: date (line), project / caller / location /
-phone_routing (bar averages). "respondent" is accepted as a legacy alias for
-"caller" — both group on i.caller_user_id.
+Both /api/dashboard and /api/dashboard/chart accept the same filter vocabulary
+(date_from, date_to, location_ids, caller_ids, phone_routing_ids,
+campaign_ids — plus legacy location_id / campaign_id singular aliases). When
+no filters are supplied the response is all-time. Active projects + recent
+interactions intentionally ignore filters — they're live-state surfaces, not
+slice metrics. Dashboard chart route supports view_by modes: date (line),
+project / caller / location / phone_routing (bar averages). "respondent" is
+accepted as a legacy alias for "caller" — both group on i.caller_user_id.
 """
 
 from datetime import date, timedelta
@@ -16,7 +20,7 @@ from flask import Blueprint, jsonify, request
 from flask_login import login_required
 
 from dashboard_helpers import (
-    _month_bounds, _report_url_for, _roll_up_locations, _trend_for_calls,
+    _report_url_for, _roll_up_locations, _trend_for_calls,
 )
 from db import IS_POSTGRES, get_conn, q
 from helpers import get_effective_company_id
@@ -105,13 +109,50 @@ def get_dashboard():
     company_id, err = _require_company()
     if err: return err
 
-    month_start, month_end = _month_bounds()
+    # Filter params (vocabulary mirrors /api/dashboard/chart and
+    # /api/projects/<id>/summary so the widget snapshot can be splatted
+    # straight in). When no params are supplied the response is all-time.
+    date_from = request.args.get("date_from")
+    date_to   = request.args.get("date_to")
+    location_ids      = _parse_id_list(request.args.get("location_ids"))
+    caller_ids        = _parse_id_list(request.args.get("caller_ids"))
+    phone_routing_ids = _parse_id_list(request.args.get("phone_routing_ids"))
+    campaign_ids      = _parse_id_list(request.args.get("campaign_ids"))
+
+    legacy_loc = request.args.get("location_id")
+    if legacy_loc and not location_ids:
+        location_ids = _parse_id_list(legacy_loc)
+    legacy_camp = request.args.get("campaign_id")
+    if legacy_camp and not campaign_ids:
+        campaign_ids = _parse_id_list(legacy_camp)
+
+    extra_where  = []
+    extra_params = []
+    if date_from:
+        extra_where.append("i.interaction_date >= ?")
+        extra_params.append(date_from)
+    if date_to:
+        extra_where.append("i.interaction_date <= ?")
+        extra_params.append(date_to)
+    if location_ids:
+        extra_where.append(f"i.interaction_location_id IN {_in_clause(len(location_ids))}")
+        extra_params.extend(location_ids)
+    if caller_ids:
+        extra_where.append(f"i.caller_user_id IN {_in_clause(len(caller_ids))}")
+        extra_params.extend(caller_ids)
+    if phone_routing_ids:
+        extra_where.append(f"p.phone_routing_id IN {_in_clause(len(phone_routing_ids))}")
+        extra_params.extend(phone_routing_ids)
+    if campaign_ids:
+        extra_where.append(f"i.campaign_id IN {_in_clause(len(campaign_ids))}")
+        extra_params.extend(campaign_ids)
+    extra_clause = (" AND " + " AND ".join(extra_where)) if extra_where else ""
 
     conn = get_conn()
     try:
         # total_calls, avg_score, below_threshold (scored calls only)
         cur = conn.execute(
-            q("""SELECT
+            q(f"""SELECT
                     COUNT(*) AS total_calls,
                     AVG(i.interaction_overall_score) AS avg_score,
                     COUNT(CASE WHEN i.interaction_overall_score < 5.0 THEN 1 END)
@@ -121,9 +162,8 @@ def get_dashboard():
                  WHERE p.company_id = ?
                    AND i.interaction_deleted_at IS NULL
                    AND i.status_id <> ?
-                   AND i.interaction_date >= ?
-                   AND i.interaction_date <  ?"""),
-            (company_id, STATUS_NO_ANSWER, month_start, month_end),
+                   {extra_clause}"""),
+            tuple([company_id, STATUS_NO_ANSWER, *extra_params]),
         )
         scored_row = _row_to_dict(cur.fetchone()) or {}
         avg_raw = scored_row.get("avg_score")
@@ -131,18 +171,18 @@ def get_dashboard():
 
         # no_answer_count (separately counted)
         cur = conn.execute(
-            q("""SELECT COUNT(*) AS cnt FROM interactions i
+            q(f"""SELECT COUNT(*) AS cnt FROM interactions i
                  JOIN projects p ON p.project_id = i.project_id
                  WHERE p.company_id = ?
                    AND i.interaction_deleted_at IS NULL
                    AND i.status_id = ?
-                   AND i.interaction_date >= ?
-                   AND i.interaction_date <  ?"""),
-            (company_id, STATUS_NO_ANSWER, month_start, month_end),
+                   {extra_clause}"""),
+            tuple([company_id, STATUS_NO_ANSWER, *extra_params]),
         )
         no_answer_count = _scalar(_row_to_dict(cur.fetchone()), "cnt", 0)
 
-        # active_projects (status 1, non-deleted)
+        # active_projects (status 1, non-deleted) — intentionally NOT
+        # filter-scoped; this is a live-state count, not a slice metric.
         cur = conn.execute(
             q("""SELECT COUNT(*) AS cnt FROM projects
                  WHERE company_id = ? AND status_id = 1
@@ -151,14 +191,14 @@ def get_dashboard():
         )
         active_projects = _scalar(_row_to_dict(cur.fetchone()), "cnt", 0)
 
-        # leaderboard: top 3 callers this month, keyed on respondent_id so
+        # leaderboard: top 3 callers in scope, keyed on respondent_id so
         # same-named respondents at different locations remain distinct cards.
         # Each row is enriched with the home-location roll-up, a rolling
         # 30-day trend, most-recent-call timestamp, and a Performance Reports
         # deep-link by respondent_id (PR is 1:1 with respondent).
         # NULL / empty / 'Name Not Detected' names are excluded.
         cur = conn.execute(
-            q("""SELECT
+            q(f"""SELECT
                     r.respondent_id,
                     TRIM(r.respondent_name) AS respondent_name,
                     r.location_id,
@@ -171,15 +211,14 @@ def get_dashboard():
                    AND i.interaction_deleted_at IS NULL
                    AND i.status_id <> ?
                    AND i.interaction_overall_score IS NOT NULL
-                   AND i.interaction_date >= ?
-                   AND i.interaction_date <  ?
                    AND r.respondent_name IS NOT NULL
                    AND TRIM(r.respondent_name) <> ''
                    AND TRIM(r.respondent_name) <> 'Name Not Detected'
+                   {extra_clause}
                  GROUP BY r.respondent_id, r.respondent_name, r.location_id
                  ORDER BY avg_score DESC
                  LIMIT 3"""),
-            (company_id, STATUS_NO_ANSWER, month_start, month_end),
+            tuple([company_id, STATUS_NO_ANSWER, *extra_params]),
         )
         rolling_start = date.today() - timedelta(days=30)
         leaderboard = []
@@ -188,9 +227,9 @@ def get_dashboard():
             name = row["respondent_name"]
             avg = row.get("avg_score")
 
-            # Per-respondent month-scoped detail → locations + last_call.
+            # Per-respondent in-scope detail → locations + last_call.
             cur2 = conn.execute(
-                q("""SELECT
+                q(f"""SELECT
                         l.location_name,
                         i.interaction_date,
                         i.interaction_call_start_time,
@@ -203,10 +242,9 @@ def get_dashboard():
                        AND i.interaction_deleted_at IS NULL
                        AND i.status_id <> ?
                        AND i.interaction_overall_score IS NOT NULL
-                       AND i.interaction_date >= ?
-                       AND i.interaction_date <  ?
-                       AND i.respondent_id = ?"""),
-                (company_id, STATUS_NO_ANSWER, month_start, month_end, respondent_id),
+                       AND i.respondent_id = ?
+                       {extra_clause}"""),
+                tuple([company_id, STATUS_NO_ANSWER, respondent_id, *extra_params]),
             )
             month_calls = _rows(cur2)
             locations = _roll_up_locations(month_calls)
@@ -292,7 +330,7 @@ def get_dashboard():
         recent = _rows(cur)
 
         # Derived: no_answer_rate = no_ans / (graded + no_ans). Null when
-        # the denominator is zero (no terminal calls this month). Mirrors
+        # the denominator is zero (no terminal calls in scope). Mirrors
         # the list_locations pattern so per-tile and per-row math agree.
         graded_total = _scalar(scored_row, "total_calls", 0)
         nar_denom    = (graded_total or 0) + (no_answer_count or 0)
@@ -309,8 +347,6 @@ def get_dashboard():
             },
             "leaderboard":        leaderboard,
             "recent_interactions": recent,
-            "month_start":        month_start.isoformat(),
-            "month_end":          (month_end - timedelta(days=1)).isoformat(),
         })
     finally:
         conn.close()
