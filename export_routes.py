@@ -95,6 +95,7 @@ def export_interactions():
     """
     try:
         from openpyxl import Workbook
+        from openpyxl.styles import Alignment
     except ImportError:
         return _err("openpyxl is not installed on the server", 500)
 
@@ -138,7 +139,7 @@ def export_interactions():
     actor_user_id = current_user.user_id
 
     def _generate():
-        from grader import summarize_call_for_export
+        from grader import summarize_call_for_export, summarize_no_answer_for_export
 
         try:
             conn = get_conn()
@@ -152,6 +153,7 @@ def export_interactions():
                 cur = conn.execute(
                     q(f"""SELECT
                             i.interaction_id,
+                            i.status_id,
                             i.interaction_overall_score,
                             i.interaction_transcript,
                             i.interaction_responder_name,
@@ -213,6 +215,13 @@ def export_interactions():
                       "Total Score"] + rubric_columns + ["Call Summary"]
             ws.append(header)
 
+            # Center-align score columns on header + every data row. 1-based:
+            # Total Score is column 5; rubric columns run 6..(5+N).
+            CENTER = Alignment(horizontal="center", vertical="center")
+            score_cols = [5] + list(range(6, 6 + len(rubric_columns)))
+            for col in score_cols:
+                ws.cell(row=1, column=col).alignment = CENTER
+
             total = len(rows)
             for idx, r in enumerate(rows, start=1):
                 yield json.dumps({
@@ -234,12 +243,20 @@ def export_interactions():
                     time_str = ""
 
                 row_scores = scores_by_iid.get(r["interaction_id"], {})
-                summary = summarize_call_for_export(
-                    transcript=r.get("interaction_transcript") or "",
-                    scores_per_criterion=row_scores,
-                    location_name=r.get("location_name"),
-                    respondent_name=r.get("respondent_display"),
-                )
+                # No-answer rows get a short canonical label instead of a
+                # narrative summary — see grader.summarize_no_answer_for_export
+                # for the label set + classifier reuse.
+                if r.get("status_id") == 44:
+                    summary = summarize_no_answer_for_export(
+                        r.get("interaction_transcript") or ""
+                    )
+                else:
+                    summary = summarize_call_for_export(
+                        transcript=r.get("interaction_transcript") or "",
+                        scores_per_criterion=row_scores,
+                        location_name=r.get("location_name"),
+                        respondent_name=r.get("respondent_display"),
+                    )
 
                 total_score = r.get("interaction_overall_score")
                 row = [
@@ -261,6 +278,8 @@ def export_interactions():
                             row.append(str(v))
                 row.append(summary)
                 ws.append(row)
+                for col in score_cols:
+                    ws.cell(row=ws.max_row, column=col).alignment = CENTER
 
             buf = io.BytesIO()
             wb.save(buf)

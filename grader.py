@@ -314,15 +314,15 @@ def summarize_call_for_export(transcript: str,
                               scores_per_criterion: dict,
                               location_name: str = None,
                               respondent_name: str = None) -> str:
-    """Generate a fresh, comprehensive call summary for spreadsheet export.
+    """Generate a one-sentence call summary for spreadsheet export.
 
-    Run sequentially during export — uses Haiku for cost.
-    Returns a single string (3-6 sentences, no markdown). On failure returns
+    Run sequentially during export — uses Haiku for cost. Single sentence
+    so the cell stays readable in a spreadsheet view. On failure returns
     "(summary unavailable)" so the export still succeeds.
-    """
-    if not transcript or not transcript.strip():
-        return "(no transcript)"
 
+    No-answer rows (status_id=44) should call summarize_no_answer_for_export
+    instead — this helper assumes a real, graded conversation.
+    """
     score_lines = []
     for name, value in (scores_per_criterion or {}).items():
         if value is None:
@@ -337,16 +337,14 @@ def summarize_call_for_export(transcript: str,
 
     prompt = f"""You are summarizing a customer service call for a spreadsheet export.
 
-This summary is the ONLY narrative writeup for this call — no per-criterion
-explanations are being included alongside it. Write a comprehensive summary
-covering what went well, what went poorly, the key call moments, and any
-notable observations about the agent's performance.
+Write ONE sentence covering the most important takeaway about the call —
+either the strongest moment of the agent's performance or the most notable
+shortcoming, whichever stands out most.
 
 Constraints:
-- 3-6 sentences total.
-- No markdown, no bullet points, no headings — flowing prose only.
+- Exactly ONE sentence. No preamble, no second sentence.
+- No markdown, no bullets, no headings.
 - Readable inside a single spreadsheet cell.
-- Reference specific call moments where relevant.
 
 {header_block}
 
@@ -356,12 +354,12 @@ RUBRIC SCORES (already graded — use as context, do not restate verbatim):
 TRANSCRIPT:
 {transcript}
 
-Respond with the summary text only — no preamble, no quotes."""
+Respond with the single sentence only — no preamble, no quotes."""
 
     try:
         response = _claude.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=600,
+            max_tokens=150,
             temperature=0.3,
             messages=[{"role": "user", "content": prompt}],
             timeout=60.0,
@@ -371,6 +369,20 @@ Respond with the summary text only — no preamble, no quotes."""
     except Exception:
         logger.exception("summarize_call_for_export failed")
         return "(summary unavailable)"
+
+
+def summarize_no_answer_for_export(transcript: str) -> str:
+    """Return a short canonical Call-Summary label for a status=44 row.
+
+    Reuses the live VoIP classifier so the export label tracks whatever the
+    classifier already decided in production. Empty transcripts short-circuit
+    (no Claude call). Returns one of: "No answer", "Voicemail".
+    """
+    if not transcript or not transcript.strip():
+        return "No answer"
+    from voip.classifier import classify_call
+    label = classify_call(transcript, None, None)
+    return "Voicemail" if label == "voicemail" else "No answer"
 
 
 # ── Flags + totals ─────────────────────────────────────────────
