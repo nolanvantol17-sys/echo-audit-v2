@@ -1,8 +1,9 @@
 """
 export_routes.py — Echo Audit V2 Phase 6 data export + restore.
 
-Three routes:
-    GET  /api/export/interactions  — Excel (.xlsx) download
+Four routes:
+    POST /api/export/interactions  — Excel (.xlsx) of selected interactions
+    POST /api/export/call-package  — Unified ZIP (per-call PDF + transcript + audio)
     GET  /api/export/backup        — Full-tenant JSON backup
     POST /api/export/restore       — Restore a JSON backup (all-or-nothing)
 
@@ -16,6 +17,7 @@ import base64
 import io
 import json
 import logging
+import zipfile
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -398,6 +400,214 @@ def export_interactions():
         headers={
             "Cache-Control":     "no-cache, no-transform",
             "X-Accel-Buffering": "no",  # disable proxy buffering on Railway edge
+        },
+    )
+
+
+# ═══════════════════════════════════════════════════════════════
+# POST /api/export/call-package  — Unified ZIP (PDF + transcript + audio)
+# ═══════════════════════════════════════════════════════════════
+
+
+@export_bp.route("/call-package", methods=["POST"])
+@login_required
+@role_required("admin", "super_admin")
+def export_call_package():
+    """NDJSON-streaming unified ZIP of selected interactions.
+
+    Body: {"interaction_ids": [int, ...]}  (1-50, all in current company).
+
+    Response: application/x-ndjson, one JSON object per line:
+        {"type":"progress","current":N,"total":M,"label":"..."}
+        {"type":"done","filename":"...","zip_base64":"..."}
+        {"type":"error","message":"..."}
+
+    Each interaction becomes a folder inside the ZIP:
+        {Location} — {YYYY-MM-DD} {h-mm AM/PM} (#{iid})/
+            score_card.pdf            (always — per-row try/except so one
+                                       bad render doesn't kill the package)
+            transcript.txt            (only if interaction_transcript non-empty)
+            recording.{mp3,webm,m4a}  (only if audio bytes present)
+
+    NDJSON+base64 chosen for parity with the xlsx export pattern + per-row
+    progress UX. Holds the full ZIP in server RAM at peak — see the
+    followup_call_package_binary_stream_threshold memory for when to switch
+    to a direct binary stream.
+    """
+    from interactions_routes import (
+        _safe_filename_segment, _sniff_audio_ext, STATUS_NO_ANSWER,
+    )
+    import pdf_export
+
+    company_id, err = _require_company()
+    if err: return err
+
+    body = request.get_json(silent=True) or {}
+    raw_ids = body.get("interaction_ids") or []
+    try:
+        interaction_ids = [int(x) for x in raw_ids]
+    except (TypeError, ValueError):
+        return _err("interaction_ids must be a list of integers", 400)
+    if not interaction_ids:
+        return _err("Select at least one interaction.", 400)
+    if len(interaction_ids) > 50:
+        return _err("Maximum 50 interactions per package.", 400)
+
+    # Pre-validate company scope before opening the stream so auth-style
+    # errors come back as proper HTTP errors instead of mid-stream JSON.
+    placeholders = ",".join(["?"] * len(interaction_ids))
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            q(f"""SELECT i.interaction_id
+                    FROM interactions i
+                    JOIN projects p ON p.project_id = i.project_id
+                   WHERE p.company_id = ?
+                     AND i.interaction_deleted_at IS NULL
+                     AND i.interaction_id IN ({placeholders})"""),
+            [company_id] + interaction_ids,
+        )
+        valid_ids = {r["interaction_id"] for r in cur.fetchall()}
+    finally:
+        conn.close()
+    missing = [iid for iid in interaction_ids if iid not in valid_ids]
+    if missing:
+        return _err(
+            f"{len(missing)} interaction(s) not found or not in your company.", 404,
+        )
+
+    actor_user_id = current_user.user_id
+
+    def _generate():
+        try:
+            conn = get_conn()
+            try:
+                # Universal call_when via the same COALESCE chain as the xlsx
+                # export so folder names match what the user sees in Past Grades.
+                cur = conn.execute(
+                    q(f"""SELECT
+                            i.interaction_id, i.status_id,
+                            i.interaction_transcript, i.interaction_audio_data,
+                            i.interaction_audio_url,
+                            loc.location_name,
+                            COALESCE(
+                                sc.sc_requested_at,
+                                vcq.voip_queue_created_at,
+                                i.interaction_call_start_time,
+                                i.interaction_uploaded_at,
+                                i.interaction_submitted_at
+                            ) AS call_when
+                          FROM interactions i
+                          JOIN projects p              ON p.project_id     = i.project_id
+                          LEFT JOIN locations loc      ON loc.location_id  = i.interaction_location_id
+                          LEFT JOIN voip_call_queue vcq ON vcq.voip_queue_interaction_id = i.interaction_id
+                          LEFT JOIN scheduled_calls sc  ON sc.sc_conversation_id        = vcq.voip_queue_call_id
+                         WHERE p.company_id = ?
+                           AND i.interaction_deleted_at IS NULL
+                           AND i.interaction_id IN ({placeholders})
+                         ORDER BY call_when DESC NULLS LAST, i.interaction_id DESC"""),
+                    [company_id] + interaction_ids,
+                )
+                rows = _rows(cur)
+
+                zip_buf = io.BytesIO()
+                total = len(rows)
+                with zipfile.ZipFile(zip_buf, "w") as zf:
+                    for idx, r in enumerate(rows, start=1):
+                        loc_name  = r.get("location_name") or "Unknown Location"
+                        iid       = r["interaction_id"]
+                        cw        = r.get("call_when")
+                        is_no_ans = (r.get("status_id") == STATUS_NO_ANSWER)
+
+                        # UTC → Central (matches G4 export convention).
+                        if cw is not None and getattr(cw, "tzinfo", None) is None:
+                            cw = cw.replace(tzinfo=timezone.utc)
+                        cw_central = cw.astimezone(TZ_CENTRAL) if cw else None
+
+                        if cw_central:
+                            stamp = (
+                                cw_central.date().isoformat() + " "
+                                + cw_central.strftime("%-I-%M %p")
+                            )
+                        else:
+                            stamp = "unknown-date"
+
+                        # Filesystem-safe location: strip /\:*?"<>| but keep
+                        # spaces + em-dash for human-readable folder names.
+                        # Modern UTF-8 ZIP supports the em-dash everywhere
+                        # (PKZIP 6.3.2, every modern extractor).
+                        safe_loc = "".join(
+                            ch for ch in loc_name if ch not in '/\\:*?"<>|'
+                        ).strip() or "Unknown Location"
+                        folder = f"{safe_loc} — {stamp} (#{iid})"
+                        if is_no_ans:
+                            folder += " — NO ANSWER"
+
+                        yield json.dumps({
+                            "type":    "progress",
+                            "current": idx,
+                            "total":   total,
+                            "label":   f"Adding {safe_loc} ({idx}/{total})",
+                        }) + "\n"
+
+                        # PDF — per-row try/except so one bad row doesn't kill
+                        # the whole package (matches bulk_export pattern).
+                        try:
+                            pdf_bytes = pdf_export.render_interaction_pdf(conn, iid)
+                            zf.writestr(f"{folder}/score_card.pdf", pdf_bytes,
+                                        compress_type=zipfile.ZIP_DEFLATED)
+                        except Exception:
+                            logger.exception(
+                                "call package: PDF render failed for iid=%s", iid)
+
+                        # Transcript — only if non-empty.
+                        transcript = r.get("interaction_transcript")
+                        if transcript and transcript.strip():
+                            zf.writestr(f"{folder}/transcript.txt", transcript,
+                                        compress_type=zipfile.ZIP_DEFLATED)
+
+                        # Audio — only if bytes present. Postgres BYTEA path
+                        # only; SQLite filesystem path skipped (defensive — prod
+                        # is always Postgres for this data).
+                        audio_bytes = None
+                        audio_ext   = None
+                        if IS_POSTGRES and r.get("interaction_audio_data"):
+                            audio_bytes = bytes(r["interaction_audio_data"])
+                            audio_ext   = _sniff_audio_ext(audio_bytes)
+                        if audio_bytes:
+                            zf.writestr(f"{folder}/recording{audio_ext}", audio_bytes,
+                                        compress_type=zipfile.ZIP_STORED)
+            finally:
+                conn.close()
+
+            zip_buf.seek(0)
+            zip_b64 = base64.b64encode(zip_buf.read()).decode("ascii")
+
+            try:
+                write_audit_log(
+                    actor_user_id, ACTION_EXPORTED, ENTITY_COMPANY, company_id,
+                    metadata={"action":          "export_call_package",
+                              "interaction_ids": interaction_ids,
+                              "row_count":       total},
+                )
+            except Exception:
+                logger.exception("export_call_package audit write failed")
+
+            yield json.dumps({
+                "type":       "done",
+                "filename":   f"call_package_{date.today().isoformat()}.zip",
+                "zip_base64": zip_b64,
+            }) + "\n"
+        except Exception as exc:
+            logger.exception("export_call_package stream failed")
+            yield json.dumps({"type": "error", "message": str(exc)}) + "\n"
+
+    return Response(
+        stream_with_context(_generate()),
+        mimetype="application/x-ndjson",
+        headers={
+            "Cache-Control":     "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
         },
     )
 

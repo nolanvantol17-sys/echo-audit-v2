@@ -168,12 +168,12 @@
 <div id="hist-action-bar" class="hist-sticky-bar" hidden>
   <span class="selected-meta">
     <span id="hist-action-count">0</span> selected
-    <span id="hist-action-warn-export" class="selected-warn" hidden>(max 10 for export)</span>
+    <span id="hist-action-warn-export" class="selected-warn" hidden>(max 50 for export)</span>
     <span id="hist-action-warn-delete" class="selected-warn" hidden>(max 25 for delete)</span>
   </span>
   <div>
     <button type="button" class="btn btn-ghost btn-sm"   id="hist-action-clear">Clear</button>
-    <button type="button" class="btn btn-ghost btn-sm"   id="hist-action-export">↓ Export Selected</button>
+    <button type="button" class="btn btn-ghost btn-sm"   id="hist-action-export">↓ Download Call Package</button>
     <button type="button" class="btn btn-danger btn-sm"  id="hist-action-delete">🗑 Delete Selected</button>
   </div>
 </div>
@@ -203,7 +203,7 @@
   // Caps: export 10, delete 25 (enforced in updateActionBar).
   const selectedIds = new Set();
   const EXPORT_CAP     = 50;   // selection-driven xlsx (header button) — server-side AI summaries
-  const ZIP_EXPORT_CAP = 10;   // sticky-bar per-row ZIP download (browser concurrency limit)
+  const ZIP_EXPORT_CAP = 50;   // sticky-bar unified-ZIP Call Package — single-stream NDJSON
   const DELETE_CAP     = 25;
   let _multiDeleteInFlight = false;
 
@@ -663,17 +663,138 @@
     });
   }
 
+  let _callPackageInFlight = false;
+
   function onExportSelected() {
     const items = _resolveSelectedRows();
     if (!items.length) { EA.toast("Nothing selected.", "error"); return; }
     if (items.length > ZIP_EXPORT_CAP) {
-      EA.toast("Maximum " + ZIP_EXPORT_CAP + " interactions per ZIP export.", "error");
+      EA.toast("Maximum " + ZIP_EXPORT_CAP + " interactions per package.", "error");
       return;
     }
-    const rows = items.map(function (it) {
-      return { name: it.name, url: "/api/interactions/" + it.iid + "/export" };
+    const ids = items.map(function (it) { return it.iid; });
+    runCallPackageStream(ids);
+  }
+
+  // Unified Call Package — single ZIP via /api/export/call-package. Mirrors
+  // runExportStream's NDJSON pattern; user sees per-row progress while the
+  // server builds the ZIP, then the browser downloads one unified file.
+  async function runCallPackageStream(ids) {
+    if (_callPackageInFlight) return;
+    _callPackageInFlight = true;
+    const exportBtn = document.getElementById("hist-action-export");
+    if (exportBtn) exportBtn.disabled = true;
+
+    const modal = openCallPackageProgressModal(ids.length);
+    let downloaded = false;
+    try {
+      const resp = await fetch("/api/export/call-package", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/x-ndjson" },
+        body:    JSON.stringify({ interaction_ids: ids }),
+      });
+      if (!resp.ok) {
+        const txt = await resp.text();
+        let msg = "Call package failed.";
+        try { msg = (JSON.parse(txt).error) || msg; } catch (_) {}
+        throw new Error(msg);
+      }
+      const reader  = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let evt;
+          try { evt = JSON.parse(line); } catch (_) { continue; }
+          if (evt.type === "progress") {
+            modal.update(evt.current, evt.total, evt.label);
+          } else if (evt.type === "done") {
+            triggerZipDownload(evt.filename, evt.zip_base64);
+            downloaded = true;
+          } else if (evt.type === "error") {
+            throw new Error(evt.message || "Call package failed.");
+          }
+        }
+      }
+      if (!downloaded) throw new Error("Call package ended without a file.");
+      modal.success();
+    } catch (err) {
+      modal.error((err && err.message) || "Call package failed.");
+    } finally {
+      _callPackageInFlight = false;
+      if (exportBtn) exportBtn.disabled = false;
+      updateActionBar();
+    }
+  }
+
+  function triggerZipDownload(filename, b64) {
+    const bytes = Uint8Array.from(atob(b64), function (c) { return c.charCodeAt(0); });
+    const blob  = new Blob([bytes], { type: "application/zip" });
+    const url = URL.createObjectURL(blob);
+    const a   = document.createElement("a");
+    a.href = url; a.download = filename || "call_package.zip";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+  }
+
+  function openCallPackageProgressModal(total) {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.style.zIndex = "260";
+    overlay.innerHTML =
+      '<div class="modal-card" style="max-width:480px;">' +
+        '<div class="modal-header">Building call package</div>' +
+        '<div class="modal-body">' +
+          '<p id="cpkg-label" class="text-small muted" style="margin:0 0 12px;">' +
+            'Adding 0 of ' + total + '…' +
+          '</p>' +
+          '<div style="height:8px;background:var(--surface-3);border-radius:4px;overflow:hidden;">' +
+            '<div id="cpkg-bar" style="height:100%;width:0%;background:var(--accent);transition:width .25s;"></div>' +
+          '</div>' +
+          '<p id="cpkg-note" class="text-small muted" style="margin:12px 0 0;">' +
+            'Bundling the score card, transcript, and recording for each call into a single ZIP.' +
+          '</p>' +
+        '</div>' +
+        '<div class="modal-footer">' +
+          '<button type="button" class="btn btn-ghost" id="cpkg-close" disabled>Close</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    const closeBtn = overlay.querySelector("#cpkg-close");
+    closeBtn.addEventListener("click", function () {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
     });
-    EA.BulkExportModal.openProgress({ rows: rows });
+    return {
+      update: function (cur, totalN, label) {
+        overlay.querySelector("#cpkg-label").textContent =
+          label || ("Adding " + cur + " of " + totalN + "…");
+        overlay.querySelector("#cpkg-bar").style.width =
+          ((cur / Math.max(totalN, 1)) * 100).toFixed(1) + "%";
+      },
+      success: function () {
+        overlay.querySelector("#cpkg-label").textContent = "Done — file downloaded.";
+        overlay.querySelector("#cpkg-bar").style.width = "100%";
+        overlay.querySelector("#cpkg-note").textContent = "";
+        closeBtn.disabled = false;
+        closeBtn.textContent = "Close";
+      },
+      error: function (msg) {
+        overlay.querySelector("#cpkg-label").textContent = "Failed: " + msg;
+        overlay.querySelector("#cpkg-bar").style.background = "var(--danger)";
+        overlay.querySelector("#cpkg-note").textContent = "";
+        closeBtn.disabled = false;
+        closeBtn.textContent = "Close";
+      },
+    };
   }
 
   async function onDeleteSelected() {
