@@ -23,6 +23,29 @@
   .loc-search-input          { flex: 1; max-width: 360px; }
   .loc-search-meta           { color: var(--muted); font-size: 0.82rem; }
 
+  /* ── Project+Campaign rollup export strip (L-2) ──────── */
+  .loc-rollup-strip {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 14px;
+    padding: 12px 14px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    flex-wrap: wrap;
+  }
+  .loc-rollup-strip .field-label {
+    font-weight: 500;
+    color: var(--muted);
+    margin-right: 4px;
+  }
+  .loc-rollup-strip select {
+    min-width: 200px;
+    max-width: 280px;
+  }
+  .loc-rollup-strip .spacer  { flex: 1; }
+
   /* ── Property name link (subtle) ─────────────────────── */
   /* Inherit cell text color so the link doesn't visually compete with the
      metric pills next to it; underline only on hover signals discoverability. */
@@ -182,6 +205,21 @@
     if (!mount) return;
 
     mount.innerHTML =
+      '<div class="loc-rollup-strip" id="loc-rollup-strip">' +
+        '<span class="field-label">Project</span>' +
+        '<select id="loc-rollup-project" class="field-select" disabled>' +
+          '<option value="">Loading…</option>' +
+        '</select>' +
+        '<span class="field-label">Campaign</span>' +
+        '<select id="loc-rollup-campaign" class="field-select" disabled>' +
+          '<option value="">—</option>' +
+        '</select>' +
+        '<span class="spacer"></span>' +
+        '<button type="button" class="btn btn-primary btn-sm" id="loc-rollup-export" disabled ' +
+                'title="Pick a project and campaign to enable export">' +
+          '↓ Export Location Report' +
+        '</button>' +
+      '</div>' +
       '<div class="loc-search-row">' +
         '<input type="search" id="loc-search" class="field-input loc-search-input" ' +
                'placeholder="Search by name or phone…">' +
@@ -206,6 +244,10 @@
     // first mount of the Locations tab.
     document.getElementById("loc-export-clear").addEventListener("click", clearSelection);
     document.getElementById("loc-export-go")   .addEventListener("click", onExportSelected);
+
+    // L-2 rollup export: wire button + kick off project loader.
+    document.getElementById("loc-rollup-export").addEventListener("click", onRollupExport);
+    loadRollupProjects();
 
     loadLocations();
   }
@@ -464,6 +506,234 @@
       return;
     }
     EA.BulkExportModal.openMulti({ locations: selected });
+  }
+
+  // ── Location Rollup export (L-2) ────────────────────────
+  // Project + Campaign cascading dropdown + NDJSON-streaming Excel download.
+  // Backend: POST /api/export/location-rollup (commit 41de0b1). Single-flight
+  // gate prevents overlapping streams; pickers re-disable while in-flight.
+  let _rollupExportInFlight = false;
+
+  async function loadRollupProjects() {
+    const sel = document.getElementById("loc-rollup-project");
+    if (!sel) return;
+    try {
+      const projects = await EA.fetchJSON("/api/projects");
+      if (!projects || !projects.length) {
+        sel.innerHTML = '<option value="">(no projects yet)</option>';
+        sel.disabled = true;
+        refreshRollupButton();
+        return;
+      }
+      sel.innerHTML = '<option value="">Select a project…</option>' +
+        projects.map(function (p) {
+          return '<option value="' + p.project_id + '">' +
+                 EA.esc(p.project_name) + '</option>';
+        }).join("");
+      sel.disabled = false;
+      sel.addEventListener("change", onRollupProjectChange);
+    } catch (err) {
+      sel.innerHTML = '<option value="">Failed to load projects</option>';
+      sel.disabled = true;
+      EA.toast(err.message || "Failed to load projects.", "error");
+    }
+  }
+
+  async function onRollupProjectChange() {
+    const projectId   = document.getElementById("loc-rollup-project").value;
+    const campaignSel = document.getElementById("loc-rollup-campaign");
+    if (!projectId) {
+      campaignSel.innerHTML = '<option value="">—</option>';
+      campaignSel.disabled  = true;
+      refreshRollupButton();
+      return;
+    }
+    campaignSel.innerHTML = '<option value="">Loading…</option>';
+    campaignSel.disabled  = true;
+    try {
+      const campaigns = await EA.fetchJSON(
+        "/api/projects/" + encodeURIComponent(projectId) + "/campaigns"
+      );
+      if (!campaigns || !campaigns.length) {
+        campaignSel.innerHTML = '<option value="">(no campaigns yet)</option>';
+        campaignSel.disabled  = true;
+        refreshRollupButton();
+        return;
+      }
+      // Default-select first (most-recently-used) campaign — matches the
+      // Grade page's items[0] rule. /api/projects/<id>/campaigns sorts by
+      // last_used_at DESC NULLS LAST.
+      campaignSel.innerHTML = campaigns.map(function (c, idx) {
+        return '<option value="' + c.campaign_id + '"' +
+               (idx === 0 ? " selected" : "") + '>' +
+               EA.esc(c.campaign_name) + '</option>';
+      }).join("");
+      campaignSel.disabled = false;
+      campaignSel.addEventListener("change", refreshRollupButton);
+      refreshRollupButton();
+    } catch (err) {
+      campaignSel.innerHTML = '<option value="">Failed to load campaigns</option>';
+      campaignSel.disabled  = true;
+      EA.toast(err.message || "Failed to load campaigns.", "error");
+    }
+  }
+
+  function refreshRollupButton() {
+    const projectId  = document.getElementById("loc-rollup-project") .value;
+    const campaignId = document.getElementById("loc-rollup-campaign").value;
+    const btn        = document.getElementById("loc-rollup-export");
+    if (!btn) return;
+    if (_rollupExportInFlight) {
+      btn.disabled = true;
+      btn.title    = "An export is already in progress.";
+      return;
+    }
+    if (!projectId || !campaignId) {
+      btn.disabled = true;
+      btn.title    = "Pick a project and campaign to enable export";
+    } else {
+      btn.disabled = false;
+      btn.title    = "";
+    }
+  }
+
+  function setRollupPickersDisabled(d) {
+    const projectSel  = document.getElementById("loc-rollup-project");
+    const campaignSel = document.getElementById("loc-rollup-campaign");
+    // When re-enabling, only enable selects that have real options — empty/
+    // failure-state selects stay disabled.
+    if (projectSel) {
+      projectSel.disabled = d || (projectSel.options.length <= 1
+                                  && !projectSel.options[0].value);
+    }
+    if (campaignSel) {
+      campaignSel.disabled = d || !campaignSel.value;
+    }
+  }
+
+  async function onRollupExport() {
+    if (_rollupExportInFlight) return;
+    const projectId  = parseInt(document.getElementById("loc-rollup-project") .value, 10);
+    const campaignId = parseInt(document.getElementById("loc-rollup-campaign").value, 10);
+    if (!projectId || !campaignId) return;
+
+    _rollupExportInFlight = true;
+    refreshRollupButton();
+    setRollupPickersDisabled(true);
+
+    const modal = openRollupProgressModal();
+    let downloaded = false;
+    try {
+      const resp = await fetch("/api/export/location-rollup", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/x-ndjson" },
+        body:    JSON.stringify({ project_id: projectId, campaign_id: campaignId }),
+      });
+      if (!resp.ok) {
+        const txt = await resp.text();
+        let msg = "Export failed.";
+        try { msg = (JSON.parse(txt).error) || msg; } catch (_) {}
+        throw new Error(msg);
+      }
+      const reader  = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let evt;
+          try { evt = JSON.parse(line); } catch (_) { continue; }
+          if (evt.type === "progress") {
+            modal.update(evt.current, evt.total, evt.label);
+          } else if (evt.type === "done") {
+            triggerXlsxDownload(evt.filename, evt.xlsx_base64);
+            downloaded = true;
+          } else if (evt.type === "error") {
+            throw new Error(evt.message || "Export failed.");
+          }
+        }
+      }
+      if (!downloaded) throw new Error("Export ended without a file.");
+      modal.success();
+    } catch (err) {
+      modal.error((err && err.message) || "Export failed.");
+    } finally {
+      _rollupExportInFlight = false;
+      setRollupPickersDisabled(false);
+      refreshRollupButton();
+    }
+  }
+
+  function triggerXlsxDownload(filename, b64) {
+    const bytes = Uint8Array.from(atob(b64), function (c) { return c.charCodeAt(0); });
+    const blob  = new Blob([bytes], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const a   = document.createElement("a");
+    a.href = url; a.download = filename || "location_rollup.xlsx";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+  }
+
+  function openRollupProgressModal() {
+    // Inline clone of openExportProgressModal from history.html. Two text
+    // changes: title + note copy; everything else identical to the per-call
+    // export modal pattern.
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.style.zIndex = "260";
+    overlay.innerHTML =
+      '<div class="modal-card" style="max-width:480px;">' +
+        '<div class="modal-header">Building location report</div>' +
+        '<div class="modal-body">' +
+          '<p id="loc-rollup-label" class="text-small muted" style="margin:0 0 12px;">' +
+            'Preparing…' +
+          '</p>' +
+          '<div style="height:8px;background:var(--surface-3);border-radius:4px;overflow:hidden;">' +
+            '<div id="loc-rollup-bar" style="height:100%;width:0%;background:var(--accent);transition:width .25s;"></div>' +
+          '</div>' +
+          '<p id="loc-rollup-note" class="text-small muted" style="margin:12px 0 0;">' +
+            'Building the Excel includes per-location summaries — this can take 15-30 seconds.' +
+          '</p>' +
+        '</div>' +
+        '<div class="modal-footer">' +
+          '<button type="button" class="btn btn-ghost" id="loc-rollup-close" disabled>Close</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    const closeBtn = overlay.querySelector("#loc-rollup-close");
+    closeBtn.addEventListener("click", function () {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    });
+    return {
+      update: function (cur, totalN, label) {
+        overlay.querySelector("#loc-rollup-label").textContent =
+          label || ("Generating " + cur + " of " + totalN + "…");
+        overlay.querySelector("#loc-rollup-bar").style.width =
+          ((cur / Math.max(totalN, 1)) * 100).toFixed(1) + "%";
+      },
+      success: function () {
+        overlay.querySelector("#loc-rollup-label").textContent = "Done — file downloaded.";
+        overlay.querySelector("#loc-rollup-bar").style.width = "100%";
+        overlay.querySelector("#loc-rollup-note").textContent = "";
+        closeBtn.disabled = false;
+      },
+      error: function (msg) {
+        const labelEl = overlay.querySelector("#loc-rollup-label");
+        labelEl.textContent = "Export failed: " + msg;
+        labelEl.style.color = "var(--danger)";
+        closeBtn.disabled = false;
+      },
+    };
   }
 
   // ── Bulk upload ─────────────────────────────────────────
