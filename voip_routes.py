@@ -134,6 +134,16 @@ def _maybe_handle_elevenlabs_dial_failure(provider_key, payload):
         return False
 
     data = payload.get("data") or {}
+    # Diagnostic — capture full call_initiation_failure payload shape so we
+    # can pin down which ElevenLabs field distinguishes "no-answer" from
+    # genuine connection error when failure_reason="unknown" arrives.
+    # Remove once the dial-failure handler is updated to read metadata.body.
+    logger.info(
+        "[voip_webhook elevenlabs] call_initiation_failure full payload "
+        "conv_id=%s failure_reason=%r data_keys=%s metadata=%r",
+        data.get("conversation_id"), data.get("failure_reason"),
+        list(data.keys()), data.get("metadata"),
+    )
     conv_id = data.get("conversation_id")
     if not conv_id:
         # Recognized event type but missing the dedup key — nothing to update.
