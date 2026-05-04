@@ -601,6 +601,7 @@ _INDUSTRY_SEEDS = [
 _VOICE_AGENT_SEEDS = [
     # (name, description, elevenlabs_id, is_active)
     ('Jenna', 'friendly female', 'agent_2501kqacg5qhemjs6qkd56d3ypfy', True),
+    ('Jeff Carter', 'friendly male', 'agent_7701kqntfy2yfbysmbgf3c60hhnf', True),
 ]
 
 
