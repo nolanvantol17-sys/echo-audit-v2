@@ -536,6 +536,7 @@ _ACTION_TYPE_SEEDS = [
     (8, 'exported'),
     (9, 'scheduled_ai_shop'),
     (10, 'dismissed'),
+    (11, 'test_flag_changed'),
 ]
 
 _TARGET_ENTITY_TYPE_SEEDS = [

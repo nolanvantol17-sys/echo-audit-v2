@@ -28,7 +28,8 @@ import grader
 import pdf_export
 from audit_log import (
     ACTION_EXPORTED, ACTION_GRADED, ACTION_REGRADED,
-    ACTION_SUBMITTED, ENTITY_INTERACTION, write_audit_log,
+    ACTION_SUBMITTED, ACTION_TEST_FLAG_CHANGED,
+    ENTITY_INTERACTION, write_audit_log,
 )
 from auth import role_required
 from db import IS_POSTGRES, get_conn, q
@@ -380,7 +381,8 @@ def _insert_interaction_row(conn, *, project_id, caller_user_id, respondent_user
                             campaign_id=None,
                             call_start_time=None, call_end_time=None,
                             call_duration_seconds=None,
-                            set_uploaded_at=False):
+                            set_uploaded_at=False,
+                            is_test=False):
     """Insert a fresh interaction row. Returns interaction_id.
 
     Live recordings pass call_start/end/duration; uploads leave them None.
@@ -391,6 +393,8 @@ def _insert_interaction_row(conn, *, project_id, caller_user_id, respondent_user
     downstream respondent upserts and report routing.
     campaign_id is optional; when set, it tags the interaction for per-
     campaign reporting slices (tenant-verified by the caller).
+    is_test=True flags the row as a test/diagnostic call so it's excluded
+    from every aggregate (dashboards, intel, exports, performance reports).
     """
     if IS_POSTGRES:
         cur = conn.execute(
@@ -400,15 +404,15 @@ def _insert_interaction_row(conn, *, project_id, caller_user_id, respondent_user
                     interaction_date, interaction_submitted_at, status_id,
                     interaction_call_start_time, interaction_call_end_time,
                     interaction_call_duration_seconds,
-                    interaction_uploaded_at)
+                    interaction_uploaded_at, interaction_is_test)
                VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s,
-                       CASE WHEN %s THEN NOW() ELSE NULL END)
+                       CASE WHEN %s THEN NOW() ELSE NULL END, %s)
                RETURNING interaction_id""",
             (project_id, caller_user_id, respondent_user_id,
              location_id, campaign_id,
              interaction_date, status_id,
              call_start_time, call_end_time, call_duration_seconds,
-             bool(set_uploaded_at)),
+             bool(set_uploaded_at), bool(is_test)),
         )
         return cur.fetchone()["interaction_id"]
     conn.execute(
@@ -418,14 +422,14 @@ def _insert_interaction_row(conn, *, project_id, caller_user_id, respondent_user
                 interaction_date, interaction_submitted_at, status_id,
                 interaction_call_start_time, interaction_call_end_time,
                 interaction_call_duration_seconds,
-                interaction_uploaded_at)
+                interaction_uploaded_at, interaction_is_test)
            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?,
-                   CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END)""",
+                   CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END, ?)""",
         (project_id, caller_user_id, respondent_user_id,
          location_id, campaign_id,
          interaction_date, status_id,
          call_start_time, call_end_time, call_duration_seconds,
-         1 if set_uploaded_at else 0),
+         1 if set_uploaded_at else 0, 1 if is_test else 0),
     )
     return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
@@ -846,6 +850,8 @@ def submit_grade():
     except (TypeError, ValueError):
         call_duration_seconds = None
 
+    is_test = (request.form.get("is_test") or "").strip().lower() == "true"
+
     # Optional client-supplied rubric JSON
     rubric_raw = request.form.get("rubric")
     client_rubric = None
@@ -922,6 +928,7 @@ def submit_grade():
             call_end_time=call_end_time,
             call_duration_seconds=call_duration_seconds,
             set_uploaded_at=True,
+            is_test=is_test,
         )
         conn.commit()
     except Exception:
@@ -1174,6 +1181,11 @@ def list_interactions():
     filters = ["p.company_id = ?", "i.interaction_deleted_at IS NULL"]
     params = [company_id]
 
+    # Hide test calls by default. Pass ?include_test=1 to surface them
+    # (powers the "Show test calls" toggle on history.html in I-F-2-b).
+    if args.get("include_test") != "1":
+        filters.append("i.interaction_is_test = FALSE")
+
     if args.get("project_id"):
         filters.append("i.project_id = ?")
         params.append(args["project_id"])
@@ -1233,6 +1245,7 @@ def list_interactions():
             i.interaction_uploaded_at,
             i.interaction_created_at,
             i.interaction_updated_at,
+            i.interaction_is_test,
             p.project_name,
             phr.phone_routing_name,
             loc.location_id,
@@ -1262,6 +1275,199 @@ def list_interactions():
         return jsonify(_rows(cur))
     finally:
         conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+# POST /api/interactions/<id>/test-flag  —  flip the test-call flag
+# POST /api/interactions/bulk-test-flag  —  bulk flip
+# ═══════════════════════════════════════════════════════════════
+# Admin/super_admin only. Test calls are excluded from every aggregate
+# (dashboards, intel, exports, performance reports). Cache invalidation
+# fires compute_location_intel_async + update_performance_report_async
+# so cached AI text refreshes after a flip — the same persistence trap
+# that hit Bella Terra in 2026-04 (test grades baked into li_summary).
+
+
+def _coerce_is_test(payload, key="is_test"):
+    """Strict coerce of the JSON payload field. Returns (bool, error_msg)."""
+    if not isinstance(payload, dict):
+        return None, "Body must be a JSON object"
+    if key not in payload:
+        return None, f"Missing '{key}' in body"
+    raw = payload[key]
+    if isinstance(raw, bool):
+        return raw, None
+    return None, f"'{key}' must be a boolean"
+
+
+def _flip_test_flag(conn, interaction_id, company_id, new_value, actor_id):
+    """Apply the flip + emit audit log. Returns (location_id, respondent_id,
+    respondent_user_id, before_value) on success, or None if interaction
+    isn't tenant-owned / soft-deleted / unchanged. Caller is responsible
+    for firing cache-invalidation hooks in batch after this returns.
+    """
+    cur = conn.execute(
+        q("""SELECT i.interaction_is_test,
+                    i.interaction_location_id,
+                    i.respondent_id,
+                    i.respondent_user_id
+               FROM interactions i
+               JOIN projects p ON p.project_id = i.project_id
+              WHERE i.interaction_id = ?
+                AND p.company_id = ?
+                AND i.interaction_deleted_at IS NULL"""),
+        (interaction_id, company_id),
+    )
+    row = _row_to_dict(cur.fetchone())
+    if not row:
+        return None
+
+    before = bool(row["interaction_is_test"])
+    if before == bool(new_value):
+        # No-op — caller can skip audit + invalidation.
+        return (row["interaction_location_id"], row["respondent_id"],
+                row["respondent_user_id"], before)
+
+    conn.execute(
+        q("""UPDATE interactions
+                SET interaction_is_test = ?
+              WHERE interaction_id = ?"""),
+        (bool(new_value), interaction_id),
+    )
+    write_audit_log(
+        actor_id, ACTION_TEST_FLAG_CHANGED,
+        ENTITY_INTERACTION, interaction_id,
+        metadata={"is_test_before": before, "is_test_after": bool(new_value)},
+        conn=conn,
+    )
+    return (row["interaction_location_id"], row["respondent_id"],
+            row["respondent_user_id"], before)
+
+
+@interactions_bp.route("/interactions/<int:interaction_id>/test-flag", methods=["POST"])
+@login_required
+@role_required("admin", "super_admin")
+def set_interaction_test_flag(interaction_id):
+    company_id, err = _require_company()
+    if err: return err
+
+    new_value, msg = _coerce_is_test(request.get_json(silent=True))
+    if msg: return _err(msg, 400)
+
+    actor_id = current_user.user_id
+    conn = get_conn()
+    try:
+        result = _flip_test_flag(conn, interaction_id, company_id,
+                                 new_value, actor_id)
+        if result is None:
+            conn.rollback()
+            return _err("Interaction not found", 404)
+        location_id, respondent_id, respondent_user_id, before = result
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+    # Cache invalidation — only on actual flips (skip when before==after).
+    if before != bool(new_value):
+        if location_id:
+            compute_location_intel_async(location_id, company_id)
+        if respondent_id or respondent_user_id:
+            update_performance_report_async(
+                interaction_id, company_id,
+                respondent_user_id=respondent_user_id,
+                respondent_id=respondent_id,
+            )
+
+    return jsonify({
+        "success": True,
+        "interaction_id": interaction_id,
+        "interaction_is_test": bool(new_value),
+        "changed": before != bool(new_value),
+    })
+
+
+@interactions_bp.route("/interactions/bulk-test-flag", methods=["POST"])
+@login_required
+@role_required("admin", "super_admin")
+def bulk_set_interaction_test_flag():
+    company_id, err = _require_company()
+    if err: return err
+
+    payload = request.get_json(silent=True)
+    new_value, msg = _coerce_is_test(payload)
+    if msg: return _err(msg, 400)
+
+    raw_ids = payload.get("interaction_ids") if isinstance(payload, dict) else None
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return _err("Missing or empty 'interaction_ids'", 400)
+    try:
+        iids = [int(x) for x in raw_ids]
+    except (TypeError, ValueError):
+        return _err("interaction_ids must all be integers", 400)
+    # Cap to a sane upper bound to keep the per-row loop quick + audit
+    # log bounded. Mirror ZIP_EXPORT_CAP convention from history.html.
+    if len(iids) > 50:
+        return _err("Maximum 50 interactions per bulk request", 400)
+
+    actor_id = current_user.user_id
+    updated_iids = []
+    skipped_iids = []
+    # Dedup invalidation targets: same location/respondent flipped many
+    # times in one bulk call should fire one async refresh, not N.
+    intel_targets = set()      # set of (location_id, company_id)
+    pr_targets = []            # list of (interaction_id, respondent_id, respondent_user_id)
+
+    conn = get_conn()
+    try:
+        for iid in iids:
+            try:
+                result = _flip_test_flag(conn, iid, company_id, new_value, actor_id)
+            except Exception:
+                logger.exception("[bulk-test-flag] flip failed for iid=%s", iid)
+                skipped_iids.append(iid)
+                continue
+            if result is None:
+                skipped_iids.append(iid)
+                continue
+            location_id, respondent_id, respondent_user_id, before = result
+            if before == bool(new_value):
+                # No-op — counted as updated (idempotent), but skip invalidation.
+                updated_iids.append(iid)
+                continue
+            updated_iids.append(iid)
+            if location_id:
+                intel_targets.add((location_id, company_id))
+            if respondent_id or respondent_user_id:
+                pr_targets.append((iid, respondent_id, respondent_user_id))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+    for loc_id, comp_id in intel_targets:
+        compute_location_intel_async(loc_id, comp_id)
+    for iid, rid, ruid in pr_targets:
+        update_performance_report_async(
+            iid, company_id,
+            respondent_user_id=ruid,
+            respondent_id=rid,
+        )
+
+    return jsonify({
+        "updated": len(updated_iids),
+        "updated_ids": updated_iids,
+        "skipped": skipped_iids,
+        "is_test": bool(new_value),
+    })
 
 
 # ═══════════════════════════════════════════════════════════════

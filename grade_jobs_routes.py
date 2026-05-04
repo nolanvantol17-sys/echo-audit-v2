@@ -129,6 +129,8 @@ def create_grade_job():
     except (TypeError, ValueError):
         call_duration_seconds = None
 
+    is_test = (request.form.get("is_test") or "").strip().lower() == "true"
+
     # Rate-limit gates — fail fast before queuing.
     ok, msg = check_rate_limit(company_id, "assemblyai")
     if not ok: return _err(msg, 429)
@@ -177,6 +179,7 @@ def create_grade_job():
         call_start_time=call_start_time,
         call_end_time=call_end_time,
         call_duration_seconds=call_duration_seconds,
+        is_test=is_test,
     )
 
     process_grade_job_async(job_id, actor_user_id)

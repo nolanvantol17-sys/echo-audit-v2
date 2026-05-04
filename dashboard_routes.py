@@ -176,6 +176,7 @@ def get_dashboard():
                  JOIN projects p ON p.project_id = i.project_id
                  WHERE p.company_id = ?
                    AND i.interaction_deleted_at IS NULL
+                   AND i.interaction_is_test = FALSE
                    AND i.status_id = ?
                    {extra_clause}"""),
             tuple([company_id, STATUS_NO_ANSWER, *extra_params]),

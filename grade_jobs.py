@@ -134,6 +134,7 @@ def enqueue_grade_job(
     call_start_time=None,
     call_end_time=None,
     call_duration_seconds=None,
+    is_test=False,
 ):
     """Create interaction row + persist audio onto it + insert grade_jobs row.
 
@@ -161,6 +162,7 @@ def enqueue_grade_job(
             call_end_time=call_end_time,
             call_duration_seconds=call_duration_seconds,
             set_uploaded_at=True,
+            is_test=is_test,
         )
 
         # Persist audio onto the interaction row. PG: bytes into BYTEA.
