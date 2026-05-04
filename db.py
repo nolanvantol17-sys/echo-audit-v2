@@ -490,6 +490,20 @@ _ADDITIVE_MIGRATIONS = [
     # rows, so aggregate filters added in this commit are inert until ops
     # flip a row to TRUE (no UI to flip yet — that ships in I-F-2).
     "ALTER TABLE interactions ADD COLUMN IF NOT EXISTS interaction_is_test BOOLEAN NOT NULL DEFAULT FALSE",
+
+    # J-1: voice_agents table + sc_voice_agent_id column. The table CREATE
+    # MUST come BEFORE the ALTER on scheduled_calls — the FK fails otherwise
+    # on a fresh _ADDITIVE_MIGRATIONS run. Globally scoped today; see
+    # schema.sql comment for future per-tenant scoping plan.
+    """CREATE TABLE IF NOT EXISTS voice_agents (
+        voice_agent_id            SERIAL PRIMARY KEY,
+        voice_agent_name          TEXT NOT NULL,
+        voice_agent_description   TEXT,
+        voice_agent_elevenlabs_id TEXT NOT NULL UNIQUE,
+        voice_agent_is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+        voice_agent_created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    "ALTER TABLE scheduled_calls ADD COLUMN IF NOT EXISTS sc_voice_agent_id INTEGER REFERENCES voice_agents(voice_agent_id) ON DELETE SET NULL",
 ]
 
 
@@ -580,6 +594,16 @@ _INDUSTRY_SEEDS = [
 ]
 
 
+# J-1: Pickable voice agents for AI Shop outbound calls. Keyed on the
+# ElevenLabs ID for idempotent dedup — agent name/description can be edited
+# freely without breaking the seed. Nolan adds new agents via SQL when he
+# has the ElevenLabs IDs from his dashboard.
+_VOICE_AGENT_SEEDS = [
+    # (name, description, elevenlabs_id, is_active)
+    ('Jenna', 'friendly female', 'agent_2501kqacg5qhemjs6qkd56d3ypfy', True),
+]
+
+
 def seed_defaults():
     """Seed lookup tables in dependency order. Idempotent — skips existing rows.
 
@@ -641,6 +665,20 @@ def seed_defaults():
                     SELECT {_ph}, {_ph}
                     WHERE NOT EXISTS (SELECT 1 FROM industries WHERE industry_id = {_ph})""",
                 (iid, iname, iid),
+            )
+
+        # 6. voice_agents (J-1). Idempotent dedup keyed on the ElevenLabs ID
+        # so name/description edits in DB are preserved across boots.
+        for (vname, vdesc, vel_id, vactive) in _VOICE_AGENT_SEEDS:
+            conn.execute(
+                f"""INSERT INTO voice_agents
+                        (voice_agent_name, voice_agent_description,
+                         voice_agent_elevenlabs_id, voice_agent_is_active)
+                    SELECT {_ph}, {_ph}, {_ph}, {_ph}
+                    WHERE NOT EXISTS
+                        (SELECT 1 FROM voice_agents
+                         WHERE voice_agent_elevenlabs_id = {_ph})""",
+                (vname, vdesc, vel_id, vactive, vel_id),
             )
 
         conn.commit()

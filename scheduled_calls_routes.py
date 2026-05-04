@@ -55,6 +55,7 @@ def schedule_ai_shop():
     project_id     = _as_int(data.get("project_id"))
     campaign_id    = _as_int(data.get("campaign_id"))     # optional
     caller_user_id = _as_int(data.get("caller_user_id"))
+    voice_agent_id = _as_int(data.get("voice_agent_id"))  # optional (J-1)
 
     if not (location_id and project_id and caller_user_id):
         return jsonify(error="location_id, project_id, and caller_user_id are required"), 400
@@ -71,6 +72,25 @@ def schedule_ai_shop():
         )
         if err:
             return jsonify(error=err), 403
+
+        # J-1: resolve voice_agent_id → voice_agent_elevenlabs_id. Reject
+        # missing or inactive. NULL → fall through (initiate_call uses env
+        # var fallback). Voice agents are globally scoped today, so no
+        # tenant check needed; future per-tenant rollout will add it here.
+        elevenlabs_agent_id = None
+        if voice_agent_id is not None:
+            cur = conn.execute(
+                q("""SELECT voice_agent_elevenlabs_id, voice_agent_is_active
+                       FROM voice_agents WHERE voice_agent_id = ?"""),
+                (voice_agent_id,),
+            )
+            va_row = cur.fetchone()
+            va = dict(va_row) if va_row else None
+            if not va:
+                return jsonify(error="voice_agent_id not found"), 400
+            if not va["voice_agent_is_active"]:
+                return jsonify(error="voice_agent is inactive"), 400
+            elevenlabs_agent_id = va["voice_agent_elevenlabs_id"]
 
         # locations.location_phone is canonical for both outbound dial AND
         # inbound webhook matching (verified D2 recon).
@@ -95,11 +115,13 @@ def schedule_ai_shop():
                 """INSERT INTO scheduled_calls
                        (sc_location_id, sc_project_id, sc_campaign_id,
                         sc_caller_user_id, sc_requested_by_user_id,
+                        sc_voice_agent_id,
                         sc_phone_number, sc_status)
-                   VALUES (%s, %s, %s, %s, %s, %s, 'initiated')
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, 'initiated')
                    RETURNING sc_id""",
                 (location_id, project_id, campaign_id,
-                 caller_user_id, current_user.user_id, phone_e164),
+                 caller_user_id, current_user.user_id,
+                 voice_agent_id, phone_e164),
             )
             sc_id = cur.fetchone()["sc_id"]
         else:
@@ -107,10 +129,12 @@ def schedule_ai_shop():
                 """INSERT INTO scheduled_calls
                        (sc_location_id, sc_project_id, sc_campaign_id,
                         sc_caller_user_id, sc_requested_by_user_id,
+                        sc_voice_agent_id,
                         sc_phone_number, sc_status)
-                   VALUES (?, ?, ?, ?, ?, ?, 'initiated')""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'initiated')""",
                 (location_id, project_id, campaign_id,
-                 caller_user_id, current_user.user_id, phone_e164),
+                 caller_user_id, current_user.user_id,
+                 voice_agent_id, phone_e164),
             )
             sc_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.commit()
@@ -125,6 +149,7 @@ def schedule_ai_shop():
             phone_e164,
             location_id=location_id, project_id=project_id,
             campaign_id=campaign_id, caller_user_id=caller_user_id,
+            agent_id=elevenlabs_agent_id,
         )
     except ElevenLabsCallError as exc:
         ai_error = str(exc)
@@ -179,6 +204,7 @@ def schedule_ai_shop():
                 "project_id":       project_id,
                 "campaign_id":      campaign_id,
                 "caller_user_id":   caller_user_id,
+                "voice_agent_id":   voice_agent_id,
                 "phone_number":     phone_e164,
                 "ai_caller_status": "failed" if ai_error else "initiated",
                 "ai_caller_error":  ai_error,

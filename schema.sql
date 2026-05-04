@@ -1057,7 +1057,27 @@ CREATE TRIGGER trg_grade_jobs_updated_at BEFORE UPDATE ON grade_jobs
 
 
 -- ================================================================
--- 30. scheduled_calls  (Arc C — outbound AI shop scheduling audit)
+-- 30. voice_agents  (J-1 — pickable ElevenLabs voice for AI shop calls)
+-- ================================================================
+-- Globally scoped today (no voice_agent_company_id). When the first
+-- BYO-ElevenLabs tenant onboards, add an optional voice_agent_company_id
+-- INT NULL REFERENCES companies(company_id) and filter the GET endpoint
+-- by company_id (or include rows where company_id IS NULL as shared).
+-- voice_agent_elevenlabs_id is the natural unique identifier — agent
+-- name/description can be edited freely without breaking dispatch.
+-- Declared before scheduled_calls so the sc_voice_agent_id FK resolves.
+CREATE TABLE voice_agents (
+    voice_agent_id            SERIAL PRIMARY KEY,
+    voice_agent_name          TEXT NOT NULL,
+    voice_agent_description   TEXT,
+    voice_agent_elevenlabs_id TEXT NOT NULL UNIQUE,
+    voice_agent_is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+    voice_agent_created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+
+-- ================================================================
+-- 31. scheduled_calls  (Arc C — outbound AI shop scheduling audit)
 -- ================================================================
 -- Tenant scope is DERIVED via sc_location_id → locations.company_id; no
 -- sc_company_id column, per Echo Audit convention. Stored sc_status values
@@ -1076,6 +1096,8 @@ CREATE TABLE scheduled_calls (
                                 REFERENCES users     (user_id)     ON DELETE RESTRICT,
     sc_requested_by_user_id INTEGER NOT NULL
                                 REFERENCES users     (user_id)     ON DELETE RESTRICT,
+    sc_voice_agent_id       INTEGER
+                                REFERENCES voice_agents (voice_agent_id) ON DELETE SET NULL,
     sc_conversation_id      TEXT,
     sc_phone_number         TEXT NOT NULL,
     sc_status               TEXT NOT NULL DEFAULT 'initiated',

@@ -61,8 +61,13 @@ def initiate_call(
     project_id: int,
     campaign_id: int | None,
     caller_user_id: int,
+    agent_id: str | None = None,
 ) -> dict:
     """Place an outbound AI call via ElevenLabs. Returns dict on success.
+
+    agent_id (J-1) — per-call ElevenLabs agent override. When None, falls
+    back to the ELEVENLABS_AGENT_ID env var so callers that haven't yet
+    been wired to the voice_agents picker keep working.
 
     Returns:
         {
@@ -82,7 +87,8 @@ def initiate_call(
         ElevenLabsCallError on missing env config, SDK error, or response
         without a conversation_id.
     """
-    if not (_API_KEY and _AGENT_ID and _AGENT_PHONE_NUMBER_ID):
+    effective_agent_id = agent_id or _AGENT_ID
+    if not (_API_KEY and effective_agent_id and _AGENT_PHONE_NUMBER_ID):
         raise ElevenLabsCallError(
             "ElevenLabs not configured (ELEVENLABS_API_KEY / "
             "ELEVENLABS_AGENT_ID / ELEVENLABS_AGENT_PHONE_NUMBER_ID env vars)"
@@ -98,7 +104,7 @@ def initiate_call(
     client = ElevenLabs(api_key=_API_KEY, timeout=_TIMEOUT_S)
     try:
         response = client.conversational_ai.twilio.outbound_call(
-            agent_id=_AGENT_ID,
+            agent_id=effective_agent_id,
             agent_phone_number_id=_AGENT_PHONE_NUMBER_ID,
             to_number=to_phone_number,
             conversation_initiation_client_data={
