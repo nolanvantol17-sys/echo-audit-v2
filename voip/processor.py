@@ -784,7 +784,15 @@ def _process(voip_queue_id: int) -> None:
     # When the upstream supplied a transcript inline (ElevenLabs today via
     # webhook dynamic_variables), skip audio download + AAI transcription
     # and use the provided text + attribution columns directly.
-    has_provided_transcript = bool(queue_row.get("voip_queue_provided_transcript"))
+    # ElevenLabs is a transcript-only provider — it never sets
+    # voip_queue_recording_url, and silence-timeout calls (no STT ever ran)
+    # legitimately land here with provided_transcript = NULL. Always route
+    # the elevenlabs provider through the provided-transcript path; the
+    # empty-fast-path below handles the NULL/empty case as no_answer.
+    has_provided_transcript = (
+        bool(queue_row.get("voip_queue_provided_transcript"))
+        or queue_row.get("voip_queue_provider") == "elevenlabs"
+    )
     explicit_project_id     = queue_row.get("voip_queue_project_id")
 
     # ── Project resolution ────────────────────────────────────────
@@ -865,7 +873,7 @@ def _process(voip_queue_id: int) -> None:
 
     # ── Provided-transcript path: empty guard, classify, then grade ──
     if has_provided_transcript:
-        if not transcript.strip():
+        if not (transcript or "").strip():
             # Empty fast-path: skip the classifier Claude call entirely.
             _set_interaction_status(interaction_id, STATUS_NO_ANSWER)
             _set_queue_status(
