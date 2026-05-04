@@ -140,6 +140,14 @@ def get_active_jobs_for_user(company_id, user_id):
     if company_id is None or user_id is None:
         return []
 
+    # Inline stuck-job sweep — every dock poll generalizes the at-boot
+    # recovery so jobs whose daemon thread died (OOM, exception in a
+    # non-instrumented branch, etc.) flip to 'failed' instead of lingering
+    # in the dock indefinitely. Per-tenant scope; cheap (3 small UPDATEs
+    # filtered by partial index idx_grade_jobs_company_status).
+    from db import sweep_stuck_grade_jobs
+    sweep_stuck_grade_jobs(company_id=company_id)
+
     cutoff_iso = (
         datetime.now(timezone.utc) - timedelta(hours=ACTIVE_WINDOW_HOURS)
     ).isoformat()

@@ -715,37 +715,63 @@ def seed_company_defaults(company_id, conn=None):
 # ── Flask integration helper ────────────────────────────────────
 
 
-def _recover_stale_grade_jobs():
-    """Mark in-flight grade_jobs as failed at boot.
+# Per-phase stuck thresholds (minutes). queued/grading rarely take >5 min;
+# transcribing tolerates 10 because long uploads + AAI cold-start can land
+# legitimate jobs in the 5-10 min band. Tuple-of-tuples so the sweep emits
+# one UPDATE per phase with the right timestamp column.
+_GRADE_JOB_STUCK_THRESHOLDS = (
+    ("queued",       "gj_created_at",       5),
+    ("transcribing", "gj_phase_started_at", 10),
+    ("grading",      "gj_phase_started_at", 5),
+)
 
-    A queued/transcribing/grading job whose phase started >5 min ago is almost
-    certainly orphaned by a server restart — the daemon thread that owned it
-    no longer exists. We surface a clear error so the user can retry.
-    Skipped on SQLite (the queue is Postgres-only in production).
+
+def sweep_stuck_grade_jobs(company_id=None):
+    """Mark stuck in-flight grade_jobs as failed.
+
+    Called at boot (company_id=None → global sweep, recovers across all tenants
+    after a restart) and inline from get_active_jobs_for_user (company_id=<id>
+    → per-tenant sweep on every dock poll, catches orphaned daemon threads
+    between restarts). Skipped on SQLite (the queue is Postgres-only).
+
+    Per-phase thresholds via _GRADE_JOB_STUCK_THRESHOLDS — queued/grading at
+    5 min, transcribing at 10 min (tolerates long uploads + AAI cold-start).
+    Reuses gj_status='failed' (no schema change) and writes a phase-specific
+    gj_error so the dock surfaces the actual failure mode.
     """
     if not IS_POSTGRES:
         return
     conn = get_conn()
     try:
-        cur = conn.execute(
-            """UPDATE grade_jobs
-                  SET gj_status = 'failed',
-                      gj_error  = 'Server restarted before completion. Please retry.'
-                WHERE gj_status IN ('queued', 'transcribing', 'grading')
-                  AND COALESCE(gj_phase_started_at, gj_created_at) < NOW() - INTERVAL '5 minutes'
-                  AND gj_dismissed_at IS NULL"""
-        )
+        total = 0
+        for phase, ts_col, minutes in _GRADE_JOB_STUCK_THRESHOLDS:
+            params = []
+            sql = f"""UPDATE grade_jobs
+                         SET gj_status = 'failed',
+                             gj_error  = %s
+                       WHERE gj_status = %s
+                         AND COALESCE({ts_col}, gj_created_at)
+                             < NOW() - INTERVAL '{minutes} minutes'
+                         AND gj_dismissed_at IS NULL"""
+            err_msg = f"Job stuck in {phase} >{minutes} min — please retry."
+            params.extend([err_msg, phase])
+            if company_id is not None:
+                sql += " AND company_id = %s"
+                params.append(company_id)
+            cur = conn.execute(sql, tuple(params))
+            try:
+                n = cur.rowcount or 0
+            except Exception:
+                n = 0
+            total += n
         conn.commit()
-        try:
-            n = cur.rowcount
-        except Exception:
-            n = -1
-        if n > 0:
-            logger.info("Recovered %d stale grade_jobs at boot", n)
+        if total > 0:
+            scope = f"company_id={company_id}" if company_id is not None else "global"
+            logger.info("sweep_stuck_grade_jobs: marked %d stuck jobs failed (%s)", total, scope)
     except Exception:
         try: conn.rollback()
         except Exception: pass
-        logger.exception("recover_stale_grade_jobs failed (non-fatal)")
+        logger.exception("sweep_stuck_grade_jobs failed (non-fatal)")
     finally:
         conn.close()
 
@@ -755,5 +781,5 @@ def init_app(app):
     with app.app_context():
         setup_db()
         seed_defaults()
-        _recover_stale_grade_jobs()
+        sweep_stuck_grade_jobs()
         logger.info("Echo Audit V2 database ready (postgres=%s)", IS_POSTGRES)
