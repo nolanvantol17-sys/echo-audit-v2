@@ -42,6 +42,13 @@
     const d = data;
     const interactionId = d.interaction_id;
 
+    // Status=44 (no_answer) renders a slim variant — no rubric/strengths/
+    // weaknesses/overall/regrade panels. Those would otherwise show empty
+    // dashes ("—") that read as a broken graded call rather than the
+    // correct "no human ever spoke" state.
+    const STATUS_NO_ANSWER = 44;
+    const isNoAnswer = (d.status_id === STATUS_NO_ANSWER);
+
     const regradeBadge = (d.interaction_regrade_count > 0)
       ? ('<span class="regrade-badge" title="Original score: ' +
            EA.formatScore(d.interaction_original_score) + '">' +
@@ -101,6 +108,38 @@
         '<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">' +
           '<span class="status-pill ' + statusCls + '">' + EA.esc(statusName) + '</span>' +
           regradeBadge +
+          '<a class="btn btn-ghost btn-sm" ' +
+             'href="/api/interactions/' + interactionId + '/export" download>' +
+            '↓ Export ZIP' +
+          '</a>' +
+        '</div>' +
+      '</div>';
+
+    // No-answer variant: same .score-hero structure (no layout shift) but
+    // with literal "No Answer" in muted color in the value slot, no
+    // "Total score" label, no regrade badge.
+    const noAnswerHero =
+      '<div class="score-hero">' +
+        '<div class="score-hero-value" style="color:var(--muted);font-size:1.4rem;">' +
+          'No Answer' +
+        '</div>' +
+        '<div class="score-hero-meta">' +
+          '<span class="text-small muted">' +
+            [d.project_name, d.phone_routing_name, d.location_name]
+              .filter(Boolean).map(EA.esc).join(" · ") +
+          '</span>' +
+          '<span class="text-small muted">' +
+            EA.esc(EA.formatDate(d.interaction_date)) +
+            ' · Call time: ' + EA.esc(callTime) +
+            ' · Duration: ' + EA.esc(durLabel) +
+          '</span>' +
+          '<span class="text-small muted">' +
+            'Respondent: ' + EA.esc(d.respondent_name || "—") +
+            ' · Caller: ' + EA.esc(d.caller_name || "—") +
+          '</span>' +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">' +
+          '<span class="status-pill ' + statusCls + '">' + EA.esc(statusName) + '</span>' +
           '<a class="btn btn-ghost btn-sm" ' +
              'href="/api/interactions/' + interactionId + '/export" download>' +
             '↓ Export ZIP' +
@@ -172,10 +211,11 @@
         '</div>'
       : '';
 
-    host.innerHTML =
-      regradedBanner +
-      hero +
-      flagsHtml +
+    // No-answer rows skip the rubric / strengths / weaknesses / overall /
+    // context panels — those would otherwise render as empty dashes that
+    // read like a broken graded call. Transcript + audio + hard-delete
+    // still show when applicable; the slim hero replaces the score hero.
+    const gradedPanelsHtml = isNoAnswer ? '' : (
       '<div class="panel" style="margin-bottom:14px;">' +
         '<div class="panel-title">Rubric Scores</div>' +
         rubricHtml +
@@ -190,9 +230,16 @@
       '</div>' +
       '<div class="panel" style="margin-top:14px;">' +
         '<div class="panel-title">Overall Assessment</div>' + overallHtml +
-      '</div>' +
+      '</div>'
+    );
+
+    host.innerHTML =
+      regradedBanner +
+      (isNoAnswer ? noAnswerHero : hero) +
+      flagsHtml +
+      gradedPanelsHtml +
       cqHtml +
-      contextPanelHtml +
+      (isNoAnswer ? '' : contextPanelHtml) +
       (transcriptHtml ? '<div style="margin-top:14px;">' + transcriptHtml + '</div>' : '') +
       audioHtml +
       hardDeleteHtml;
