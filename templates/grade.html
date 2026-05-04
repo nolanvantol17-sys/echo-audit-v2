@@ -826,6 +826,12 @@
             Place an outbound AI call to this location. The call will be placed
             automatically and graded when complete.
           </p>
+          <div class="field" style="margin-bottom:14px;">
+            <label class="field-label" for="ai-shop-voice-agent">Voice Agent</label>
+            <select id="ai-shop-voice-agent" class="field-select">
+              <option value="">Loading…</option>
+            </select>
+          </div>
           <div class="panel-action-row">
             <button type="button" class="btn btn-primary" id="btn-ai-shop-trigger">
               Schedule AI Shop
@@ -1005,6 +1011,7 @@
       loadProjects(),
       loadCallers(),
       checkVoip(),
+      loadVoiceAgents(),
     ]);
     if ($("#gf-location").value) onLocationChange();  // re-fire if user picked during the race
 
@@ -1556,6 +1563,43 @@
         document.addEventListener("visibilitychange", onVoipVisibilityChange);
       }
     } catch (err) { /* VoIP not configured — tab stays hidden. */ }
+  }
+
+  // J-2: Populate the AI Shop voice-agent dropdown. Two parallel fetches —
+  // the active-agent list and the per-user sticky default. If the dropdown
+  // ends up empty (no active agents), disable the trigger and surface an
+  // inline message at submit time. The endpoint already filters inactive
+  // agents from the sticky-default response, so an inactive ID can't slip
+  // through.
+  async function loadVoiceAgents() {
+    const sel = document.getElementById("ai-shop-voice-agent");
+    if (!sel) return;
+    try {
+      const [agents, sticky] = await Promise.all([
+        EA.fetchJSON("/api/voice-agents"),
+        EA.fetchJSON("/api/voice-agents/sticky-default"),
+      ]);
+      state.voiceAgents = agents || [];
+      const defaultId = (sticky && sticky.voice_agent_id) || null;
+      if (!state.voiceAgents.length) {
+        sel.innerHTML = '<option value="">No agents configured</option>';
+        sel.disabled = true;
+        return;
+      }
+      sel.innerHTML = state.voiceAgents.map(function (a) {
+        const label = a.voice_agent_description
+          ? a.voice_agent_name + " — " + a.voice_agent_description
+          : a.voice_agent_name;
+        const sel_attr = (defaultId && Number(a.voice_agent_id) === Number(defaultId))
+          ? " selected" : "";
+        return '<option value="' + a.voice_agent_id + '"' + sel_attr + '>'
+               + EA.esc(label) + '</option>';
+      }).join("");
+      sel.disabled = false;
+    } catch (err) {
+      sel.innerHTML = '<option value="">Failed to load</option>';
+      sel.disabled = true;
+    }
   }
 
   function startVoipQueuePolling() {
@@ -2567,7 +2611,7 @@
   // (loaded by loadLocations) and formatted with the existing formatPhone()
   // helper.
 
-  function _aiShopConfirmBody(callerName, locationName, phoneDisplay) {
+  function _aiShopConfirmBody(callerName, locationName, phoneDisplay, voiceAgentLabel) {
     const wrap = document.createElement("div");
     const lead = document.createElement("p");
     lead.textContent = callerName + " will place a real outbound AI call to "
@@ -2580,6 +2624,14 @@
       phoneP.appendChild(strong);
       phoneP.appendChild(document.createTextNode(phoneDisplay));
       wrap.appendChild(phoneP);
+    }
+    if (voiceAgentLabel) {
+      const agentP = document.createElement("p");
+      const strong = document.createElement("strong");
+      strong.textContent = "Voice agent: ";
+      agentP.appendChild(strong);
+      agentP.appendChild(document.createTextNode(voiceAgentLabel));
+      wrap.appendChild(agentP);
     }
     const note = document.createElement("p");
     note.textContent = "The conversation will be graded automatically when complete.";
@@ -2611,6 +2663,21 @@
       return;
     }
 
+    // J-2: voice agent must be selected. Defensive — if loadVoiceAgents
+    // came up empty (no active agents seeded), the dropdown is disabled
+    // and value is empty; surface a clear error rather than silently
+    // falling through to the env-var fallback.
+    const voiceAgentSel = document.getElementById("ai-shop-voice-agent");
+    const voiceAgentId = voiceAgentSel && voiceAgentSel.value
+                          ? Number(voiceAgentSel.value) : null;
+    if (!voiceAgentId) {
+      $("#form-hint").textContent = "Pick a voice agent first.";
+      return;
+    }
+    const voiceAgentLabel = voiceAgentSel
+      ? voiceAgentSel.options[voiceAgentSel.selectedIndex].textContent.trim()
+      : "the configured agent";
+
     // Phone lookup from the cached locations list (loaded by loadLocations).
     const locObj = (state.allLocations || []).find(function (l) {
       return String(l.location_id) === String(locationId);
@@ -2634,7 +2701,7 @@
 
     const ok = await EA.confirmDialog({
       title:       "Call " + locationName + "?",
-      body:        _aiShopConfirmBody(callerName, locationName, phoneDisplay),
+      body:        _aiShopConfirmBody(callerName, locationName, phoneDisplay, voiceAgentLabel),
       okLabel:     "Place Call",
       cancelLabel: "Cancel",
       variant:     "primary",
@@ -2652,6 +2719,7 @@
           campaign_id:    (campaignId !== null && campaignId !== undefined)
                           ? Number(campaignId) : null,
           caller_user_id: Number(callerId),
+          voice_agent_id: voiceAgentId,
         }),
       });
       initiateResp = await r.json().catch(function () { return {}; });
