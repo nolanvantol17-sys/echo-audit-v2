@@ -548,6 +548,7 @@ CREATE TABLE interactions (
     interaction_call_duration_seconds INTEGER,
     interaction_uploaded_at           TIMESTAMPTZ,
     interaction_deleted_at            TIMESTAMPTZ,
+    interaction_is_test               BOOLEAN NOT NULL DEFAULT FALSE,
     interaction_created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     interaction_updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 

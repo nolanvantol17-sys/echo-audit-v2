@@ -485,6 +485,11 @@ _ADDITIVE_MIGRATIONS = [
     # the Phase 9 CREATE TABLE above; this adds the symmetric column to
     # scheduled_calls so AI shop terminal rows can be cleared from the dock.
     "ALTER TABLE scheduled_calls ADD COLUMN IF NOT EXISTS sc_dismissed_at TIMESTAMPTZ",
+
+    # I-F-1: test-call flag on interactions. Defaults FALSE on all existing
+    # rows, so aggregate filters added in this commit are inert until ops
+    # flip a row to TRUE (no UI to flip yet — that ships in I-F-2).
+    "ALTER TABLE interactions ADD COLUMN IF NOT EXISTS interaction_is_test BOOLEAN NOT NULL DEFAULT FALSE",
 ]
 
 

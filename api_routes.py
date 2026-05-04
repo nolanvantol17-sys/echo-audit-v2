@@ -396,6 +396,7 @@ def list_locations():
                   JOIN projects p ON p.project_id = i.project_id
                  WHERE p.company_id = ?
                    AND i.interaction_deleted_at IS NULL
+                   AND i.interaction_is_test = FALSE
                  GROUP BY i.interaction_location_id
             ) m ON m.location_id = l.location_id
             WHERE l.company_id = ? AND l.location_deleted_at IS NULL
@@ -460,6 +461,7 @@ def get_location(location_id):
                  WHERE p.company_id = ?
                    AND i.interaction_location_id = ?
                    AND i.interaction_deleted_at IS NULL
+                   AND i.interaction_is_test = FALSE
                  GROUP BY i.interaction_location_id
             ) m ON m.location_id = l.location_id
             WHERE l.location_id = ? AND l.company_id = ?
@@ -517,7 +519,7 @@ def list_location_calls(location_id):
                    i.interaction_call_start_time, i.interaction_uploaded_at,
                    i.interaction_call_duration_seconds,
                    i.status_id, i.interaction_overall_score,
-                   i.caller_user_id,
+                   i.caller_user_id, i.interaction_is_test,
                    NULLIF(TRIM(u.user_first_name || ' ' || u.user_last_name), '') AS caller_name,
                    COALESCE(
                        r.respondent_name,

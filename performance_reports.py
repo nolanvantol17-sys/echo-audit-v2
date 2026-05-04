@@ -214,6 +214,7 @@ def list_performance_reports():
                        WHERE p.company_id = ?
                          AND i.status_id = 44
                          AND i.interaction_deleted_at IS NULL
+                         AND i.interaction_is_test = FALSE
                          AND i.interaction_location_id IN ({placeholders})
                        GROUP BY i.interaction_location_id"""),
                 [company_id] + loc_ids,
@@ -295,6 +296,7 @@ def get_performance_report(performance_report_id):
                       FROM interactions
                       WHERE interaction_id IN ({placeholders})
                         AND interaction_deleted_at IS NULL
+                        AND interaction_is_test = FALSE
                       ORDER BY interaction_date DESC, interaction_id DESC"""),
                 ids,
             )
@@ -550,7 +552,8 @@ def update_performance_report(interaction_id, company_id,
                   FROM interactions
                   WHERE interaction_id IN ({placeholders})
                     AND interaction_overall_score IS NOT NULL
-                    AND interaction_deleted_at IS NULL"""),
+                    AND interaction_deleted_at IS NULL
+                    AND interaction_is_test = FALSE"""),
             new_ids,
         )
         avg_row = _row_to_dict(cur.fetchone()) or {}

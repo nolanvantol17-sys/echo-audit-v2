@@ -163,6 +163,7 @@ def export_preflight(location_id):
                   WHERE i.interaction_location_id = ?
                     AND i.project_id              = ?
                     AND i.interaction_deleted_at IS NULL
+                    AND i.interaction_is_test = FALSE
                     AND i.status_id IN ({placeholders})
                     {camp_where}"""),
             [location_id, project_id, *statuses, *camp_params],
@@ -322,6 +323,7 @@ def export_location_bulk(location_id):
                   WHERE i.interaction_location_id = ?
                     AND i.project_id              = ?
                     AND i.interaction_deleted_at IS NULL
+                    AND i.interaction_is_test = FALSE
                     AND i.status_id IN ({placeholders})
                     {camp_where}
                   ORDER BY i.interaction_date DESC, i.interaction_id DESC"""),

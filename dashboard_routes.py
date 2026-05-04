@@ -161,6 +161,7 @@ def get_dashboard():
                  JOIN projects p ON p.project_id = i.project_id
                  WHERE p.company_id = ?
                    AND i.interaction_deleted_at IS NULL
+                   AND i.interaction_is_test = FALSE
                    AND i.status_id <> ?
                    {extra_clause}"""),
             tuple([company_id, STATUS_NO_ANSWER, *extra_params]),
@@ -209,6 +210,7 @@ def get_dashboard():
                  JOIN respondents r ON r.respondent_id = i.respondent_id
                  WHERE p.company_id = ?
                    AND i.interaction_deleted_at IS NULL
+                   AND i.interaction_is_test = FALSE
                    AND i.status_id <> ?
                    AND i.interaction_overall_score IS NOT NULL
                    AND r.respondent_name IS NOT NULL
@@ -240,6 +242,7 @@ def get_dashboard():
                      LEFT JOIN locations l ON l.location_id = r.location_id
                      WHERE p.company_id = ?
                        AND i.interaction_deleted_at IS NULL
+                       AND i.interaction_is_test = FALSE
                        AND i.status_id <> ?
                        AND i.interaction_overall_score IS NOT NULL
                        AND i.respondent_id = ?
@@ -272,6 +275,7 @@ def get_dashboard():
                      JOIN projects    p ON p.project_id    = i.project_id
                      WHERE p.company_id = ?
                        AND i.interaction_deleted_at IS NULL
+                       AND i.interaction_is_test = FALSE
                        AND i.status_id <> ?
                        AND i.interaction_overall_score IS NOT NULL
                        AND i.interaction_date >= ?
@@ -323,6 +327,7 @@ def get_dashboard():
                  LEFT JOIN users       u   ON u.user_id         = i.respondent_user_id
                  LEFT JOIN respondents r   ON r.respondent_id   = i.respondent_id
                  WHERE p.company_id = ? AND i.interaction_deleted_at IS NULL
+                   AND i.interaction_is_test = FALSE
                  ORDER BY i.interaction_id DESC
                  LIMIT 5"""),
             (company_id,),
@@ -504,6 +509,7 @@ def get_chart():
     filters = [
         "p.company_id = ?",
         "i.interaction_deleted_at IS NULL",
+        "i.interaction_is_test = FALSE",
         "i.status_id <> ?",
         "i.interaction_overall_score IS NOT NULL",
     ]

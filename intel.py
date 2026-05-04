@@ -97,6 +97,7 @@ def compute_location_intel(location_id, company_id):
              WHERE i.interaction_location_id = ?
                AND p.company_id = ?
                AND i.interaction_deleted_at IS NULL
+               AND i.interaction_is_test = FALSE
              ORDER BY i.interaction_id DESC
         """), (location_id, company_id))
         rows = [_row_to_dict(r) for r in cur.fetchall()]
