@@ -129,14 +129,30 @@
           '</div></div>' +
         '</details>' : '';
 
-    const audioHtml = d.interaction_audio_url
-      ? '<div style="margin-top:14px;">' +
+    // Audio rendering — three states:
+    //  1. audio_url present → render player immediately (existing behavior)
+    //  2. audio_url missing AND status=graded → loading placeholder + start
+    //     a 30s poll for the audio to arrive (handles AI-shop audio_fetcher
+    //     race where the user clicks the dock row before the daemon thread
+    //     finishes pulling the recording from ElevenLabs)
+    //  3. audio_url missing AND status=no_answer → omit (correct: no audio)
+    const STATUS_GRADED = 43;
+    let audioHtml = "";
+    if (d.interaction_audio_url) {
+      audioHtml = '<div style="margin-top:14px;">' +
           EA.AudioPlayer.html({
             src: '/api/interactions/' + interactionId + '/audio',
             preload: 'none',
           }) +
-        '</div>'
-      : '';
+        '</div>';
+    } else if (d.status_id === STATUS_GRADED) {
+      audioHtml = '<div id="audio-pending-' + interactionId + '" ' +
+                  'style="margin-top:14px;padding:12px 14px;background:var(--surface-2);' +
+                  'border:1px solid var(--border);border-radius:6px;">' +
+                  '<span class="muted text-small">' +
+                    '⏳ Audio is being fetched — this can take a few seconds for new calls.' +
+                  '</span></div>';
+    }
 
     const contextPanelHtml = (!readOnly && canRegrade) ? renderContextPanel(d) : '';
 
@@ -182,6 +198,51 @@
       hardDeleteHtml;
 
     EA.AudioPlayer.attachAll(host);
+    pollForAudio(host, interactionId);
+  }
+
+  // Poll for audio that's still being fetched async (AI shop race).
+  // No-op when no #audio-pending-<id> placeholder exists in the host (i.e.
+  // audio is already present, or the call is no_answer with no audio
+  // expected). 10 attempts × 3s = 30s upper bound, then settles on
+  // "Audio unavailable" so the loading state can't linger forever. Auto-
+  // stops if the placeholder is removed from the DOM (PageRouter swap, etc).
+  function pollForAudio(host, interactionId) {
+    const placeholder = host.querySelector("#audio-pending-" + interactionId);
+    if (!placeholder) return;
+
+    const MAX_ATTEMPTS = 10;
+    const INTERVAL_MS  = 3000;
+    let attempts = 0;
+
+    const tick = async function () {
+      if (!document.body.contains(placeholder)) return;   // user navigated away
+      attempts += 1;
+      try {
+        const fresh = await EA.fetchJSON("/api/interactions/" + interactionId);
+        if (fresh && fresh.interaction_audio_url) {
+          placeholder.outerHTML =
+            '<div style="margin-top:14px;">' +
+              EA.AudioPlayer.html({
+                src: '/api/interactions/' + interactionId + '/audio',
+                preload: 'none',
+              }) +
+            '</div>';
+          EA.AudioPlayer.attachAll(host);
+          return;
+        }
+      } catch (_) { /* swallow; retry next tick */ }
+
+      if (attempts >= MAX_ATTEMPTS) {
+        placeholder.innerHTML =
+          '<span class="muted text-small">' +
+            '✕ Audio unavailable — recording was not captured for this call.' +
+          '</span>';
+        return;
+      }
+      setTimeout(tick, INTERVAL_MS);
+    };
+    setTimeout(tick, INTERVAL_MS);
   }
 
   function renderRubricRow(r) {
