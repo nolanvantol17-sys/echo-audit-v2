@@ -16,7 +16,10 @@ ElevenLabs endpoint:
     Returns raw audio bytes (MP3).
 
 Audio readiness can lag the post_call_transcription webhook by a few
-seconds. We do one 5-second-sleep retry on 404; otherwise log + give up.
+seconds (typical) or up to a couple of minutes (slow tail). We do up
+to 4 attempts on 404 with progressive backoff (5s, 30s, 120s between
+retries) before giving up. Non-404 errors bail immediately — no point
+retrying auth failures or 5xx.
 """
 
 import logging
@@ -37,7 +40,13 @@ _API_KEY  = os.getenv("ELEVENLABS_API_KEY") or ""
 _BASE_URL = "https://api.elevenlabs.io/v1/convai/conversations"
 _TIMEOUT_S = 30          # audio downloads can be larger/slower than the
                          # AI caller's POST — 30s headroom
-_RETRY_SLEEP_S = 5       # one retry on 404 (audio not ready yet)
+# Cumulative wait-before-retry: 0s, +5s, +35s, +155s. Daemon thread caps
+# its lifetime around 2.5min — covers the spectrum from race window
+# (sub-5s) through the genuinely slow ElevenLabs tail (up to ~2 min)
+# without holding worker resources indefinitely. Race-coordinated with
+# interaction_view's 30s frontend poll: fast cases land seamlessly;
+# slower cases land the audio in the DB anyway, visible on next visit.
+_RETRY_DELAYS_S = [5, 30, 120]   # delay BEFORE each retry attempt
 
 if not _API_KEY:
     logger.warning(
@@ -96,8 +105,11 @@ def fetch_and_store_audio(interaction_id, conversation_id):
 
 
 def _fetch_with_404_retry(url, headers, conversation_id):
-    """One attempt + one 5s-delayed retry on 404. Returns bytes or None."""
-    for attempt in (1, 2):
+    """Up to 4 attempts on 404: initial + 3 retries with progressive sleeps
+    from _RETRY_DELAYS_S. Returns bytes on first 2xx, None on any other
+    error or after exhausting retries. Non-404 errors bail immediately."""
+    max_attempts = len(_RETRY_DELAYS_S) + 1
+    for attempt in range(1, max_attempts + 1):
         try:
             resp = requests.get(url, headers=headers, timeout=_TIMEOUT_S)
         except requests.RequestException as exc:
@@ -110,19 +122,20 @@ def _fetch_with_404_retry(url, headers, conversation_id):
         if resp.status_code == 200:
             return resp.content
 
-        if resp.status_code == 404 and attempt == 1:
+        if resp.status_code == 404 and attempt < max_attempts:
+            sleep_s = _RETRY_DELAYS_S[attempt - 1]
             logger.info(
-                "[audio_fetcher] 404 on first attempt — audio likely not "
+                "[audio_fetcher] 404 on attempt %d/%d — audio likely not "
                 "ready, retrying in %ds (conv_id=%s)",
-                _RETRY_SLEEP_S, conversation_id,
+                attempt, max_attempts, sleep_s, conversation_id,
             )
-            time.sleep(_RETRY_SLEEP_S)
+            time.sleep(sleep_s)
             continue
 
         body_preview = (resp.text or "")[:300]
         logger.warning(
-            "[audio_fetcher] HTTP %d on attempt %d (conv_id=%s): %s",
-            resp.status_code, attempt, conversation_id, body_preview,
+            "[audio_fetcher] HTTP %d on attempt %d/%d (conv_id=%s): %s",
+            resp.status_code, attempt, max_attempts, conversation_id, body_preview,
         )
         return None
 
