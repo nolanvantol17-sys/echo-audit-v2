@@ -405,6 +405,343 @@ def export_interactions():
 
 
 # ═══════════════════════════════════════════════════════════════
+# POST /api/export/location-rollup  — Excel (.xlsx), one row per location
+# ═══════════════════════════════════════════════════════════════
+
+
+def _slugify_for_filename(s):
+    """Lowercase, alnum-only, underscore-separated. Empty input → 'unknown'."""
+    import re as _re
+    cleaned = _re.sub(r"[^a-z0-9]+", "_", (s or "").lower()).strip("_")
+    return cleaned or "unknown"
+
+
+@export_bp.route("/location-rollup", methods=["POST"])
+@login_required
+@role_required("admin", "super_admin")
+def export_location_rollup():
+    """NDJSON-streaming Excel export — one row per location for a (project, campaign).
+
+    Body: {"project_id": int, "campaign_id": int}
+
+    Response: application/x-ndjson, one JSON object per line:
+        {"type":"progress","current":N,"total":M,"label":"..."}
+        {"type":"done","filename":"...","xlsx_base64":"..."}
+        {"type":"error","message":"..."}
+
+    Pre-stream validation:
+      - project belongs to current company (else 400)
+      - campaign.project_id == requested project (else 400)
+      - aggregate query returns at least one location (else 400)
+
+    Per-location Haiku summaries are generated in parallel via a
+    ThreadPoolExecutor — Mayfair scale (~55 locations) reduces wall-clock
+    from ~1-3 min sequential down to ~10-15s.
+    """
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.formatting.rule import FormulaRule
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        return _err("openpyxl is not installed on the server", 500)
+
+    company_id, err = _require_company()
+    if err: return err
+
+    body = request.get_json(silent=True) or {}
+    try:
+        project_id  = int(body.get("project_id")  or 0)
+        campaign_id = int(body.get("campaign_id") or 0)
+    except (TypeError, ValueError):
+        return _err("project_id and campaign_id must be integers", 400)
+    if project_id <= 0 or campaign_id <= 0:
+        return _err("project_id and campaign_id are required", 400)
+
+    # ── Pre-stream validation ────────────────────────────────────
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            q("""SELECT project_id, project_name
+                   FROM projects
+                  WHERE project_id = ?
+                    AND company_id = ?
+                    AND project_deleted_at IS NULL"""),
+            (project_id, company_id),
+        )
+        project_row = _row_to_dict(cur.fetchone())
+        if not project_row:
+            return _err("Project not found in your company.", 400)
+
+        cur = conn.execute(
+            q("""SELECT campaign_id, campaign_name, project_id
+                   FROM campaigns
+                  WHERE campaign_id = ?
+                    AND project_id  = ?
+                    AND campaign_deleted_at IS NULL"""),
+            (campaign_id, project_id),
+        )
+        campaign_row = _row_to_dict(cur.fetchone())
+        if not campaign_row:
+            return _err("Campaign not found in this project.", 400)
+
+        # Aggregate per-location stats — single round-trip. HAVING COUNT(*) > 0
+        # excludes locations with no in-scope interactions; matches spec
+        # "only locations that had at least one interaction".
+        cur = conn.execute(
+            q("""SELECT l.location_id,
+                        l.location_name,
+                        COUNT(*)                                          AS total_calls,
+                        SUM(CASE WHEN i.status_id = 44 THEN 1 ELSE 0 END) AS no_answer_count,
+                        AVG(CASE WHEN i.status_id != 44
+                                  AND i.interaction_overall_score IS NOT NULL
+                                 THEN i.interaction_overall_score
+                                 ELSE NULL END)                           AS avg_score
+                   FROM interactions i
+                   JOIN locations  l ON l.location_id = i.interaction_location_id
+                  WHERE i.project_id          = ?
+                    AND i.campaign_id         = ?
+                    AND i.interaction_is_test = FALSE
+                    AND i.interaction_deleted_at IS NULL
+                    AND l.location_deleted_at  IS NULL
+                  GROUP BY l.location_id, l.location_name
+                 HAVING COUNT(*) > 0
+                  ORDER BY l.location_name"""),
+            (project_id, campaign_id),
+        )
+        location_rows = _rows(cur)
+        if not location_rows:
+            return _err("No interactions in this scope.", 400)
+
+        # Per-location call data for AI summaries — one round-trip keyed by
+        # interaction_location_id, ordered newest-first per location.
+        loc_ids = [r["location_id"] for r in location_rows]
+        placeholders = ",".join(["?"] * len(loc_ids))
+        cur = conn.execute(
+            q(f"""SELECT i.interaction_id,
+                         i.interaction_location_id,
+                         i.status_id,
+                         i.interaction_overall_score,
+                         i.interaction_transcript,
+                         i.interaction_submitted_at
+                    FROM interactions i
+                   WHERE i.project_id          = ?
+                     AND i.campaign_id         = ?
+                     AND i.interaction_is_test = FALSE
+                     AND i.interaction_deleted_at IS NULL
+                     AND i.interaction_location_id IN ({placeholders})
+                   ORDER BY i.interaction_submitted_at DESC, i.interaction_id DESC"""),
+            [project_id, campaign_id] + loc_ids,
+        )
+        all_interactions = _rows(cur)
+
+        # Per-interaction rubric scores keyed by interaction_id — one round-trip.
+        scores_by_iid = {}
+        if all_interactions:
+            iids = [r["interaction_id"] for r in all_interactions]
+            iid_placeholders = ",".join(["?"] * len(iids))
+            cur = conn.execute(
+                q(f"""SELECT interaction_id, irs_snapshot_name, irs_score_value
+                        FROM interaction_rubric_scores
+                       WHERE interaction_id IN ({iid_placeholders})"""),
+                iids,
+            )
+            for sr in cur.fetchall():
+                d = _row_to_dict(sr)
+                scores_by_iid.setdefault(d["interaction_id"], {})[
+                    d["irs_snapshot_name"]
+                ] = d["irs_score_value"]
+    finally:
+        conn.close()
+
+    # Bucket interactions per location for the parallel summary stage. Drop
+    # no_answer rows from the graded list — they get a deterministic label
+    # in the helper. no_answer_count is already on each location_row.
+    graded_by_loc = {lid: [] for lid in loc_ids}
+    for inter in all_interactions:
+        if inter["status_id"] == 44:
+            continue
+        graded_by_loc[inter["interaction_location_id"]].append({
+            "transcript":           inter["interaction_transcript"],
+            "scores_per_criterion": scores_by_iid.get(inter["interaction_id"], {}),
+            "total_score":          inter["interaction_overall_score"],
+        })
+
+    actor_user_id = current_user.user_id
+    project_name  = project_row["project_name"]
+    campaign_name = campaign_row["campaign_name"]
+
+    def _generate():
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from grader import summarize_location_for_export
+
+        try:
+            total = len(location_rows)
+            summaries = {}
+
+            # Parallel Haiku summaries — ~10-15s wall-clock at Mayfair scale
+            # vs 1-3 min sequential. as_completed lets us stream progress
+            # events in completion order even though final Excel is built in
+            # alphabetical-by-location-name order.
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                future_to_lid = {
+                    executor.submit(
+                        summarize_location_for_export,
+                        loc["location_name"],
+                        graded_by_loc[loc["location_id"]],
+                        int(loc["no_answer_count"] or 0),
+                        float(loc["avg_score"]) if loc["avg_score"] is not None else None,
+                    ): loc["location_id"]
+                    for loc in location_rows
+                }
+
+                for idx, future in enumerate(as_completed(future_to_lid), start=1):
+                    lid = future_to_lid[future]
+                    try:
+                        summaries[lid] = future.result()
+                    except Exception:
+                        logger.exception("summarize_location task failed (loc=%s)", lid)
+                        summaries[lid] = "(summary unavailable)"
+                    loc_name = next(
+                        (l["location_name"] for l in location_rows
+                         if l["location_id"] == lid),
+                        "Unknown",
+                    )
+                    yield json.dumps({
+                        "type":    "progress",
+                        "current": idx,
+                        "total":   total,
+                        "label":   f"Summarizing {idx}/{total} — {loc_name}",
+                    }) + "\n"
+
+            # ── Build workbook ───────────────────────────────────
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Location Rollup"
+            header = ["Location", "Average Score", "Total Calls",
+                      "No Answers", "AI Summary"]
+            ws.append(header)
+
+            CENTER = Alignment(horizontal="center", vertical="center")
+            WRAP   = Alignment(wrap_text=True, vertical="top")
+            BOLD   = Font(bold=True)
+            # Score column is 2; numeric centered cols are 2/3/4.
+            score_cols   = [2]
+            numeric_cols = [2, 3, 4]
+            for col in range(1, ws.max_column + 1):
+                ws.cell(row=1, column=col).font = BOLD
+            for col in numeric_cols:
+                ws.cell(row=1, column=col).alignment = CENTER
+            ws.freeze_panes = "A2"
+
+            def _row_height_for_summary(summary, cpl=75, line_h=15, min_h=15):
+                if not isinstance(summary, str) or not summary:
+                    return min_h
+                lines = max(1, (len(summary) + cpl - 1) // cpl)
+                return max(min_h, lines * line_h)
+
+            for loc in location_rows:
+                avg = loc["avg_score"]
+                total_calls = int(loc["total_calls"] or 0)
+                no_answers  = int(loc["no_answer_count"] or 0)
+                # Locations with avg_score IS NULL only contained no_answer
+                # interactions in scope — render "No answer" string to match
+                # per-call export convention.
+                if avg is None:
+                    avg_value = "No answer"
+                else:
+                    avg_value = round(float(avg), 1)
+                summary = summaries.get(loc["location_id"], "(summary unavailable)")
+
+                row = [
+                    loc["location_name"] or "",
+                    avg_value,
+                    total_calls,
+                    no_answers,
+                    summary,
+                ]
+                ws.append(row)
+                for col in numeric_cols:
+                    ws.cell(row=ws.max_row, column=col).alignment = CENTER
+                # Bold the Average Score column on each data row — at-a-glance
+                # focus column, matches /interactions Total Score pattern.
+                ws.cell(row=ws.max_row, column=2).font = BOLD
+                # Wrap-text + top-align on the AI Summary cell (column 5).
+                ws.cell(row=ws.max_row, column=5).alignment = WRAP
+                ws.row_dimensions[ws.max_row].height = _row_height_for_summary(summary)
+
+            # Auto-fit column widths from longest visible value. AI Summary
+            # is capped at 80 — wrap-text on data cells handles overflow.
+            CS_COL = ws.max_column
+            for col_idx in range(1, ws.max_column + 1):
+                max_len = max(
+                    (len(str(ws.cell(row=r, column=col_idx).value))
+                     for r in range(1, ws.max_row + 1)
+                     if ws.cell(row=r, column=col_idx).value is not None),
+                    default=10,
+                )
+                width = min(max_len + 2, 80) if col_idx == CS_COL else max_len + 2
+                ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+            # Conditional formatting on score column (data range only).
+            # ISNUMBER guard skips the "No answer" string cells.
+            GREEN  = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+            YELLOW = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+            RED    = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+            if ws.max_row >= 2:
+                for col_idx in score_cols:
+                    cl  = get_column_letter(col_idx)
+                    rng = f"{cl}2:{cl}{ws.max_row}"
+                    top = f"{cl}2"
+                    ws.conditional_formatting.add(rng, FormulaRule(
+                        formula=[f"AND(ISNUMBER({top}),{top}<5)"], fill=RED))
+                    ws.conditional_formatting.add(rng, FormulaRule(
+                        formula=[f"AND(ISNUMBER({top}),{top}>=5,{top}<7)"], fill=YELLOW))
+                    ws.conditional_formatting.add(rng, FormulaRule(
+                        formula=[f"AND(ISNUMBER({top}),{top}>=7)"], fill=GREEN))
+
+            buf = io.BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+            xlsx_b64 = base64.b64encode(buf.read()).decode("ascii")
+
+            filename = (
+                f"location_rollup_{_slugify_for_filename(project_name)}_"
+                f"{_slugify_for_filename(campaign_name)}_"
+                f"{date.today().isoformat()}.xlsx"
+            )
+
+            try:
+                write_audit_log(
+                    actor_user_id, ACTION_EXPORTED, ENTITY_COMPANY, company_id,
+                    metadata={"action":      "export_location_rollup",
+                              "project_id":  project_id,
+                              "campaign_id": campaign_id,
+                              "row_count":   total},
+                )
+            except Exception:
+                logger.exception("export_location_rollup audit write failed")
+
+            yield json.dumps({
+                "type":        "done",
+                "filename":    filename,
+                "xlsx_base64": xlsx_b64,
+            }) + "\n"
+        except Exception as exc:
+            logger.exception("export_location_rollup stream failed")
+            yield json.dumps({"type": "error", "message": str(exc)}) + "\n"
+
+    return Response(
+        stream_with_context(_generate()),
+        mimetype="application/x-ndjson",
+        headers={
+            "Cache-Control":     "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ═══════════════════════════════════════════════════════════════
 # POST /api/export/call-package  — Unified ZIP (PDF + transcript + audio)
 # ═══════════════════════════════════════════════════════════════
 

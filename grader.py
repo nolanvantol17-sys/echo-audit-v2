@@ -381,6 +381,104 @@ def summarize_no_answer_for_export(transcript: str) -> str:
     return "No answer"
 
 
+# ── Export-time location-rollup summary (Haiku) ───────────────
+
+
+_LOC_PROMPT_CALL_CAP = 10
+
+
+def summarize_location_for_export(
+    location_name: str,
+    graded_calls: list,
+    no_answer_count: int,
+    aggregate_avg: float | None,
+) -> str:
+    """1-2 sentence Haiku summary of a location's aggregate performance.
+
+    graded_calls: list of dicts each carrying {transcript, scores_per_criterion,
+                  total_score}. Already filtered to graded conversations
+                  (status_id != 44). May be empty.
+    no_answer_count: how many calls in scope ended as no_answer (status_id=44).
+    aggregate_avg: weighted average across graded_calls (None if no graded).
+
+    Deterministic short-circuit when graded_calls is empty: skip the Haiku
+    call and return a deterministic string describing the no-answer cohort.
+    Mirrors summarize_call_for_export's failure semantics: returns the literal
+    "(summary unavailable)" on any Haiku exception so the caller can render
+    the row without losing the export.
+    """
+    if not graded_calls:
+        # Pure no-answer cohort — no real conversations to summarize. Deterministic
+        # string keeps token spend off pure no_answer locations and gives the
+        # spreadsheet reader a clear, non-confusing cell.
+        n = no_answer_count or 0
+        plural = "s" if n != 1 else ""
+        return f"{n} attempted call{plural}; no answer reached on any."
+
+    # Cap context — most-recent calls are most actionable for a summary. Caller
+    # is expected to pre-sort newest-first; we re-sort defensively if a date
+    # field is present, otherwise trust caller order.
+    recent = graded_calls[:_LOC_PROMPT_CALL_CAP]
+
+    avg_str = f"{aggregate_avg:.1f}" if aggregate_avg is not None else "n/a"
+    total_graded = len(graded_calls)
+
+    history_lines = []
+    for c in recent:
+        score = c.get("total_score")
+        score_str = f"{float(score):.1f}" if score is not None else "n/a"
+        scores = c.get("scores_per_criterion") or {}
+        score_bits = [f"{name}={value}" for name, value in scores.items()
+                      if value is not None]
+        scores_block = "; ".join(score_bits) if score_bits else "(no rubric scores)"
+        # Cap individual transcripts so a single long call doesn't crowd the prompt.
+        tx = (c.get("transcript") or "")[:1500]
+        history_lines.append(
+            f"Call score {score_str}/10 | {scores_block}\nTranscript excerpt:\n{tx}"
+        )
+    history_block = "\n\n".join(history_lines)
+
+    prompt = (
+        "You are summarizing a single location's customer-service performance "
+        "for a spreadsheet export. The summary will appear in a single cell "
+        "next to the location name + aggregate score.\n\n"
+        "GROUNDING RULES (critical):\n"
+        "- Describe only what the call data shows. Do NOT speculate about "
+        "causes (e.g. 'staff turnover', 'busy season') unless the calls "
+        "themselves state it.\n"
+        "- Do NOT extrapolate beyond the included calls.\n"
+        "- If the data is sparse or mixed, say so plainly rather than "
+        "inventing narrative.\n\n"
+        "REQUIREMENTS:\n"
+        "- Exactly ONE OR TWO sentences. No preamble, no bullets, no markdown.\n"
+        "- Reference the aggregate (avg score / call volume) in context.\n"
+        "- Highlight the single most notable strength OR shortcoming across "
+        "the calls — whichever stands out most.\n"
+        "- Readable inside a single spreadsheet cell.\n\n"
+        f"LOCATION: {location_name}\n"
+        f"AGGREGATE: {total_graded} graded call(s), avg score {avg_str}/10, "
+        f"{no_answer_count} no-answer attempt(s).\n\n"
+        f"GRADED CALLS (most recent {len(recent)} of {total_graded}):\n\n"
+        f"{history_block}\n\n"
+        "Respond with the 1-2 sentence summary only — no preamble, no quotes."
+    )
+
+    try:
+        response = _claude.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=200,
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}],
+            timeout=60.0,
+        )
+        text = (response.content[0].text or "").strip()
+        return text or "(summary unavailable)"
+    except Exception:
+        logger.exception("summarize_location_for_export failed (location=%s)",
+                         location_name)
+        return "(summary unavailable)"
+
+
 # ── Flags + totals ─────────────────────────────────────────────
 
 
