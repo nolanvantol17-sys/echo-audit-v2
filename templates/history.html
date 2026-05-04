@@ -138,6 +138,13 @@
         <option value="40">Transcribing</option>
       </select>
     </div>
+    <div class="field" style="display:flex;flex-direction:column;justify-content:flex-end;">
+      <label class="field-label" style="visibility:hidden;">Test</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.875rem;color:var(--muted);">
+        <input id="f-include-test" type="checkbox">
+        Show test calls
+      </label>
+    </div>
   </div>
 
   <div class="filters-actions">
@@ -173,6 +180,10 @@
   </span>
   <div>
     <button type="button" class="btn btn-ghost btn-sm"   id="hist-action-clear">Clear</button>
+    {% if user_role in ('admin','super_admin') %}
+    <button type="button" class="btn btn-ghost btn-sm"   id="hist-action-mark-test">🧪 Mark as test</button>
+    <button type="button" class="btn btn-ghost btn-sm"   id="hist-action-unmark-test">Unmark as test</button>
+    {% endif %}
     <button type="button" class="btn btn-ghost btn-sm"   id="hist-action-export">↓ Download Call Package</button>
     <button type="button" class="btn btn-danger btn-sm"  id="hist-action-delete">🗑 Delete Selected</button>
   </div>
@@ -195,6 +206,7 @@
     shown: 0,      // number of rows currently rendered
     userRole: "{{ user_role or '' }}",
     canDelete: {{ 'true' if user_role in ('admin','super_admin') else 'false' }},
+    canEditTestFlag: {{ 'true' if user_role in ('admin','super_admin') else 'false' }},
     debounceId: null,
   };
 
@@ -279,9 +291,10 @@
   function wireFilters() {
     $("#f-search").addEventListener("input", debouncedLoad);
 
-    ["#f-location","#f-project","#f-from","#f-to","#f-score-max","#f-status","#f-respondent"]
+    ["#f-location","#f-project","#f-from","#f-to","#f-score-max","#f-status","#f-respondent","#f-include-test"]
       .forEach(function (sel) {
-        $(sel).addEventListener("change", loadHistory);
+        const el = document.querySelector(sel);
+        if (el) el.addEventListener("change", loadHistory);
       });
 
     $("#btn-clear-filters").addEventListener("click", function () {
@@ -315,6 +328,8 @@
     if ($("#f-status").value)   qs.set("status_id", $("#f-status").value);
     if ($("#f-respondent").value) qs.set("respondent_user_id", $("#f-respondent").value);
     if ($("#f-score-max").value !== "") qs.set("score_max", $("#f-score-max").value);
+    const incTest = document.getElementById("f-include-test");
+    if (incTest && incTest.checked) qs.set("include_test", "1");
     return qs;
   }
 
@@ -460,7 +475,12 @@
         '<td>' + EA.esc(r.respondent_name || "—") + '</td>' +
         '<td>' + EA.esc(r.caller_name || "—") + '</td>' +
         '<td>' + score + '</td>' +
-        '<td><span class="status-pill ' + statusCls + '">' + EA.esc(statusName) + '</span></td>' +
+        '<td>' +
+          '<span class="status-pill ' + statusCls + '">' + EA.esc(statusName) + '</span>' +
+          (r.interaction_is_test
+            ? ' <span class="status-pill status-test" title="Test call — excluded from dashboards & reports">🧪 TEST</span>'
+            : '') +
+        '</td>' +
         '<td style="text-align:right; white-space:nowrap;">' + actions + '</td>' +
       '</tr>'
     );
@@ -618,9 +638,50 @@
     const clearBtn  = document.getElementById("hist-action-clear");
     const exportBtn = document.getElementById("hist-action-export");
     const deleteBtn = document.getElementById("hist-action-delete");
+    const markTestBtn   = document.getElementById("hist-action-mark-test");
+    const unmarkTestBtn = document.getElementById("hist-action-unmark-test");
     if (clearBtn)  clearBtn.addEventListener("click", clearSelection);
     if (exportBtn) exportBtn.addEventListener("click", onExportSelected);
     if (deleteBtn) deleteBtn.addEventListener("click", onDeleteSelected);
+    if (markTestBtn)   markTestBtn.addEventListener("click",   function () { onBulkTestFlag(true);  });
+    if (unmarkTestBtn) unmarkTestBtn.addEventListener("click", function () { onBulkTestFlag(false); });
+  }
+
+  // Bulk test-flag flip. POSTs the unified endpoint, refreshes the list,
+  // clears selection. Marked rows vanish from the default view because the
+  // "Show test calls" toggle is off by default — toggle it on to see them.
+  let _bulkTestFlagInFlight = false;
+  async function onBulkTestFlag(isTest) {
+    if (_bulkTestFlagInFlight) return;
+    if (!state.canEditTestFlag) return;   // defensive — server also gates
+    const ids = Array.from(selectedIds);
+    if (!ids.length) { EA.toast("Nothing selected.", "error"); return; }
+    if (ids.length > ZIP_EXPORT_CAP) {
+      EA.toast("Maximum " + ZIP_EXPORT_CAP + " interactions per bulk action.", "error");
+      return;
+    }
+    _bulkTestFlagInFlight = true;
+    const markBtn   = document.getElementById("hist-action-mark-test");
+    const unmarkBtn = document.getElementById("hist-action-unmark-test");
+    if (markBtn)   markBtn.disabled   = true;
+    if (unmarkBtn) unmarkBtn.disabled = true;
+    try {
+      const res = await EA.fetchJSON("/api/interactions/bulk-test-flag", {
+        method: "POST",
+        body: { interaction_ids: ids, is_test: !!isTest },
+      });
+      const verb = isTest ? "Marked" : "Unmarked";
+      EA.toast(verb + " " + (res.updated || 0) + " call" +
+               ((res.updated === 1) ? "" : "s") + " as test.", "success");
+      selectedIds.clear();
+      await loadHistory();
+    } catch (err) {
+      EA.toast(err.message || "Bulk update failed.", "error");
+    } finally {
+      _bulkTestFlagInFlight = false;
+      if (markBtn)   markBtn.disabled   = false;
+      if (unmarkBtn) unmarkBtn.disabled = false;
+    }
   }
 
   function updateActionBar() {

@@ -727,6 +727,24 @@
       {# RIGHT: audio source surface (record / upload / voip + source links + intel + hint). #}
       <div class="grade-audio-col">
 
+        {# Pre-grade test-call flag. Single shared checkbox above the tab
+           panels so it's visible across record/upload/voip. _buildGradeFormData
+           reads #gf-is-test directly. AI Shop and Log-Unanswered paths don't
+           wire this today (separate code paths; would need backend extension). #}
+        {% if user_role in ('admin','super_admin','manager','caller') %}
+        <div style="margin:0 0 12px 0; padding:10px 14px; background:var(--accent-soft); border-radius:6px; font-size:0.875rem;">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;">
+            <input id="gf-is-test" type="checkbox">
+            <span>
+              <strong>🧪 This is a test call</strong>
+              <span class="muted text-small" style="display:block;">
+                Excluded from dashboards &amp; reports.
+              </span>
+            </span>
+          </label>
+        </div>
+        {% endif %}
+
         {# Primary audio surface: Record Live (when MediaRecorder available)
            — Upload + VoIP demoted to text links below. #}
         <div id="panel-record" hidden>
@@ -2097,6 +2115,10 @@
       const campaignId = state.campaignCombo ? state.campaignCombo.getValue() : null;
       if (campaignId !== null && campaignId !== undefined) {
         fd.append("campaign_id", String(campaignId));
+      }
+      const testCb = document.getElementById("gf-is-test");
+      if (testCb && testCb.checked) {
+        fd.append("is_test", "true");
       }
       return fd;
     }

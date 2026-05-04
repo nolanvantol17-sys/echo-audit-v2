@@ -39,6 +39,7 @@
     const readOnly = !!opts.readOnly;
     const canRegrade = !!opts.canRegrade;
     const canHardDelete = !!opts.canHardDelete;
+    const canEditTestFlag = !!opts.canEditTestFlag;
     const d = data;
     const interactionId = d.interaction_id;
 
@@ -107,11 +108,22 @@
         '</div>' +
         '<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">' +
           '<span class="status-pill ' + statusCls + '">' + EA.esc(statusName) + '</span>' +
+          (d.interaction_is_test
+            ? '<span class="status-pill status-test" title="Test call — excluded from dashboards & reports">🧪 TEST</span>'
+            : '') +
           regradeBadge +
           '<a class="btn btn-ghost btn-sm" ' +
              'href="/api/interactions/' + interactionId + '/export" download>' +
             '↓ Export ZIP' +
           '</a>' +
+          (canEditTestFlag
+            ? '<button type="button" class="btn btn-ghost btn-sm" ' +
+                 'data-role="toggle-test-flag" ' +
+                 'data-interaction-id="' + EA.esc(String(interactionId)) + '" ' +
+                 'data-is-test="' + (d.interaction_is_test ? 'true' : 'false') + '">' +
+                 (d.interaction_is_test ? 'Unmark as test' : '🧪 Mark as test') +
+               '</button>'
+            : '') +
         '</div>' +
       '</div>';
 
@@ -140,10 +152,21 @@
         '</div>' +
         '<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">' +
           '<span class="status-pill ' + statusCls + '">' + EA.esc(statusName) + '</span>' +
+          (d.interaction_is_test
+            ? '<span class="status-pill status-test" title="Test call — excluded from dashboards & reports">🧪 TEST</span>'
+            : '') +
           '<a class="btn btn-ghost btn-sm" ' +
              'href="/api/interactions/' + interactionId + '/export" download>' +
             '↓ Export ZIP' +
           '</a>' +
+          (canEditTestFlag
+            ? '<button type="button" class="btn btn-ghost btn-sm" ' +
+                 'data-role="toggle-test-flag" ' +
+                 'data-interaction-id="' + EA.esc(String(interactionId)) + '" ' +
+                 'data-is-test="' + (d.interaction_is_test ? 'true' : 'false') + '">' +
+                 (d.interaction_is_test ? 'Unmark as test' : '🧪 Mark as test') +
+               '</button>'
+            : '') +
         '</div>' +
       '</div>';
 

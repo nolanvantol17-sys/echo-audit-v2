@@ -35,6 +35,7 @@
   const INTERACTION_ID = {{ interaction_id|int }};
   const CAN_REGRADE = {{ 'true' if user_role in ('manager','admin','super_admin') else 'false' }};
   const CAN_HARD_DELETE = {{ 'true' if user_role in ('admin','super_admin') else 'false' }};
+  const CAN_EDIT_TEST_FLAG = {{ 'true' if user_role in ('admin','super_admin') else 'false' }};
 
   const $ = function (s) { return document.querySelector(s); };
 
@@ -60,7 +61,8 @@
       const data = await EA.fetchJSON("/api/interactions/" + INTERACTION_ID);
       current = data;
       EA.InteractionView.render($("#detail-wrap"), current, {
-        readOnly: false, canRegrade: CAN_REGRADE, canHardDelete: CAN_HARD_DELETE,
+        readOnly: false, canRegrade: CAN_REGRADE,
+        canHardDelete: CAN_HARD_DELETE, canEditTestFlag: CAN_EDIT_TEST_FLAG,
       });
       $("#detail-actions").hidden = false;
       wireActions();
@@ -94,6 +96,32 @@
         },
       });
     });
+
+    // Test-flag toggle. Same data-role + re-bind-every-render pattern as
+    // the hard-delete button above. POSTs the single-row endpoint and
+    // re-renders the view so the badge + button label update.
+    const btnTestFlag = $('[data-role="toggle-test-flag"]');
+    if (btnTestFlag) btnTestFlag.addEventListener("click", async function () {
+      const newValue = btnTestFlag.dataset.isTest !== "true";
+      btnTestFlag.disabled = true;
+      try {
+        await EA.fetchJSON("/api/interactions/" + INTERACTION_ID + "/test-flag", {
+          method: "POST",
+          body: { is_test: newValue },
+        });
+        const refreshed = await EA.fetchJSON("/api/interactions/" + INTERACTION_ID);
+        current = refreshed;
+        EA.InteractionView.render($("#detail-wrap"), current, {
+          readOnly: false, canRegrade: CAN_REGRADE,
+          canHardDelete: CAN_HARD_DELETE, canEditTestFlag: CAN_EDIT_TEST_FLAG,
+        });
+        wireActions();
+        EA.toast(newValue ? "Marked as test" : "Unmarked as test", "success");
+      } catch (err) {
+        EA.toast(err.message || "Failed to update test flag.", "error");
+        btnTestFlag.disabled = false;
+      }
+    });
   }
 
   async function onContextRegrade() {
@@ -117,7 +145,8 @@
       const refreshed = await EA.fetchJSON("/api/interactions/" + INTERACTION_ID);
       current = refreshed;
       EA.InteractionView.render($("#detail-wrap"), current, {
-        readOnly: false, canRegrade: CAN_REGRADE, canHardDelete: CAN_HARD_DELETE,
+        readOnly: false, canRegrade: CAN_REGRADE,
+        canHardDelete: CAN_HARD_DELETE, canEditTestFlag: CAN_EDIT_TEST_FLAG,
       });
       wireActions();
 

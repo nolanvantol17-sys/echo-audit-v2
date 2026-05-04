@@ -1003,6 +1003,8 @@ details.collapsible > summary::-webkit-details-marker { display: none; }
 .status-pill.status-no-answer { background: var(--warning-bg); color: var(--warning); }
 .status-pill.status-awaiting_clarification,
 .status-pill.status-awaiting-clarification { background: var(--warning-bg); color: var(--warning); }
+/* Test-call flag pill — purple/violet, distinct from status semantic colors. */
+.status-pill.status-test { background: rgba(167,139,250,0.16); color: #c4b5fd; }
 
 /* Score pill extension — gray variant for no-answer rows */
 .score-pill.gray { background: var(--surface-3); color: var(--muted); }
