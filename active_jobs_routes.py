@@ -120,7 +120,7 @@ def _display_title(source, location_name):
         # neutral label. Add a gj_source column if/when Mayfair asks
         # for the distinction (see followup_grade_jobs_source_column).
         return f"Submission at {loc}"
-    return f"AI Shop at {loc}"
+    return f"AI Caller at {loc}"
 
 
 # ── Core query (also called from app.py context processor for first-paint) ──

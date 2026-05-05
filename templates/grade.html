@@ -313,21 +313,6 @@
     50%      { opacity: 1;    transform: scale(1.15); }
   }
 
-  /* Audio-source secondary links ("Or: ... · ...") */
-  .source-links {
-    text-align: center;
-    color: var(--muted);
-    font-size: 0.88rem;
-    margin-top: 12px;
-  }
-  .source-links a {
-    color: var(--accent, #4f9cff);
-    text-decoration: none;
-    cursor: pointer;
-  }
-  .source-links a:hover { text-decoration: underline; }
-  .source-link-sep { margin: 0 6px; opacity: 0.6; }
-
   /* Record panel: Start + Log Unanswered side-by-side */
   #record-idle .record-action-row {
     display: flex;
@@ -618,7 +603,7 @@
 <div class="page-header">
   <div>
     <div class="page-title">Grade a Call</div>
-    <div class="page-subtitle">Upload audio, record live, or pull from the VoIP queue.</div>
+    <div class="page-subtitle">Record a call, upload an audio file, or place an AI Caller outbound call.</div>
   </div>
 </div>
 
@@ -745,103 +730,96 @@
         </div>
         {% endif %}
 
-        {# Primary audio surface: Record Live (when MediaRecorder available)
-           — Upload + VoIP demoted to text links below. #}
-        <div id="panel-record" hidden>
-          <div class="record-wrap" id="record-wrap">
-            <div id="record-permission-error" class="section-error" hidden></div>
+        {# Audio-source tab strip. Three mutually-exclusive panels — Record /
+           Upload / AI Caller. EA.Tabs wires the .active class + panel hidden;
+           switchTab() in JS handles per-panel side effects (cleanup, state). #}
+        <div id="grade-audio-source-tabs" data-tabs>
+          <div class="tabs">
+            <button type="button" class="tab-btn" data-tab="record">Record Live</button>
+            <button type="button" class="tab-btn" data-tab="upload">Upload File</button>
+            <button type="button" class="tab-btn" data-tab="ai-shop">AI Caller</button>
+          </div>
 
-            <div id="record-idle" class="record-panel">
-              <div class="record-action-row">
-                <button type="button" id="btn-record-start" class="btn btn-danger record-btn">
-                  <span class="record-icon"></span>
-                  Start Recording
-                </button>
-                <button type="button" class="btn btn-ghost" id="btn-no-answer-record">Log Unanswered Call</button>
+          <section id="panel-record" class="tab-panel" data-tab-panel="record" hidden>
+            <div class="record-wrap" id="record-wrap">
+              <div id="record-permission-error" class="section-error" hidden></div>
+
+              <div id="record-idle" class="record-panel">
+                <div class="record-action-row">
+                  <button type="button" id="btn-record-start" class="btn btn-danger record-btn">
+                    <span class="record-icon"></span>
+                    Start Recording
+                  </button>
+                  <button type="button" class="btn btn-ghost" id="btn-no-answer-record">Log Unanswered Call</button>
+                </div>
+                <div class="muted text-small" style="margin-top:10px; text-align:center;">
+                  Records from your device microphone. You'll be asked to grant permission.
+                </div>
               </div>
-              <div class="muted text-small" style="margin-top:10px; text-align:center;">
-                Records from your device microphone. You'll be asked to grant permission.
+
+              <div id="record-active" class="record-panel" hidden>
+                <div class="record-indicator">
+                  <span class="record-pulse"></span>
+                  Recording
+                </div>
+                <div id="record-timer" class="record-timer">0:00</div>
+                <button type="button" id="btn-record-stop" class="btn btn-primary record-btn">
+                  Stop Recording
+                </button>
+              </div>
+
+              <div id="record-preview" class="record-panel" hidden style="width:100%;max-width:420px;">
+                <audio id="record-audio" class="app-audio" controls></audio>
+                <div id="record-duration" class="muted text-small" style="margin-top:6px;text-align:center;"></div>
+                <div class="hstack-wrap" style="margin-top:12px;justify-content:center;">
+                  <button type="button" class="btn btn-ghost btn-sm" id="btn-record-redo">Re-record</button>
+                  <button type="button" class="btn btn-ghost btn-sm btn-record-use" id="btn-record-use">Use This Recording</button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btn-no-answer-record-preview">Log Unanswered Call</button>
+                </div>
               </div>
             </div>
+          </section>
 
-            <div id="record-active" class="record-panel" hidden>
-              <div class="record-indicator">
-                <span class="record-pulse"></span>
-                Recording
+          <section id="panel-upload" class="tab-panel" data-tab-panel="upload" hidden>
+            <label class="dropzone" id="dropzone" for="audio-file">
+              <div id="dropzone-placeholder">
+                <div>Drop an audio file here or click to browse.</div>
+                <div class="dropzone-meta">
+                  Accepts .mp3, .mp4, .m4a, .wav, .aac, .ogg, .flac, .webm
+                </div>
               </div>
-              <div id="record-timer" class="record-timer">0:00</div>
-              <button type="button" id="btn-record-stop" class="btn btn-primary record-btn">
-                Stop Recording
+              <div id="dropzone-filled" hidden>
+                <div class="dropzone-filename" id="dz-filename"></div>
+                <div class="dropzone-meta" id="dz-meta"></div>
+                <button type="button" class="btn btn-ghost btn-sm" id="dz-clear" style="margin-top:8px;">Remove</button>
+              </div>
+            </label>
+            <input id="audio-file" name="audio" type="file"
+                   accept=".mp3,.mp4,.m4a,.wav,.aac,.ogg,.flac,.webm" hidden>
+            <div class="panel-action-row">
+              <button type="button" class="btn btn-primary" id="btn-upload-submit" hidden>Submit for grading</button>
+              <button type="button" class="btn btn-ghost" id="btn-no-answer-upload">Log Unanswered Call</button>
+            </div>
+          </section>
+
+          <section id="panel-ai-shop" class="tab-panel" data-tab-panel="ai-shop" hidden>
+            <p>
+              Place an outbound AI call to this location. The call will be placed
+              automatically and graded when complete.
+            </p>
+            <div class="field" style="margin-bottom:14px;">
+              <label class="field-label" for="ai-shop-voice-agent">Voice Agent</label>
+              <select id="ai-shop-voice-agent" class="field-select">
+                <option value="">Loading…</option>
+              </select>
+            </div>
+            <div class="panel-action-row">
+              <button type="button" class="btn btn-primary" id="btn-ai-shop-trigger">
+                Place AI Caller Call
               </button>
             </div>
-
-            <div id="record-preview" class="record-panel" hidden style="width:100%;max-width:420px;">
-              <audio id="record-audio" class="app-audio" controls></audio>
-              <div id="record-duration" class="muted text-small" style="margin-top:6px;text-align:center;"></div>
-              <div class="hstack-wrap" style="margin-top:12px;justify-content:center;">
-                <button type="button" class="btn btn-ghost btn-sm" id="btn-record-redo">Re-record</button>
-                <button type="button" class="btn btn-ghost btn-sm btn-record-use" id="btn-record-use">Use This Recording</button>
-                <button type="button" class="btn btn-ghost btn-sm" id="btn-no-answer-record-preview">Log Unanswered Call</button>
-              </div>
-            </div>
-          </div>
+          </section>
         </div>
-
-        <div id="panel-upload" hidden>
-          <label class="dropzone" id="dropzone" for="audio-file">
-            <div id="dropzone-placeholder">
-              <div>Drop an audio file here or click to browse.</div>
-              <div class="dropzone-meta">
-                Accepts .mp3, .mp4, .m4a, .wav, .aac, .ogg, .flac, .webm
-              </div>
-            </div>
-            <div id="dropzone-filled" hidden>
-              <div class="dropzone-filename" id="dz-filename"></div>
-              <div class="dropzone-meta" id="dz-meta"></div>
-              <button type="button" class="btn btn-ghost btn-sm" id="dz-clear" style="margin-top:8px;">Remove</button>
-            </div>
-          </label>
-          <input id="audio-file" name="audio" type="file"
-                 accept=".mp3,.mp4,.m4a,.wav,.aac,.ogg,.flac,.webm" hidden>
-          <div class="panel-action-row">
-            <button type="button" class="btn btn-primary" id="btn-upload-submit" hidden>Submit for grading</button>
-            <button type="button" class="btn btn-ghost" id="btn-no-answer-upload">Log Unanswered Call</button>
-          </div>
-        </div>
-
-        <div id="panel-voip" hidden>
-          <div id="voip-queue-wrap">
-            <div class="skeleton" style="height:16px;margin:10px 0;"></div>
-            <div class="skeleton" style="height:16px;margin:10px 0;"></div>
-            <div class="skeleton" style="height:16px;margin:10px 0;"></div>
-          </div>
-          <input type="hidden" id="voip-queue-id">
-          <div class="panel-action-row">
-            <button type="button" class="btn btn-primary" id="btn-voip-submit" hidden>Submit for grading</button>
-          </div>
-        </div>
-
-        <div id="panel-ai-shop" hidden>
-          <p>
-            Place an outbound AI call to this location. The call will be placed
-            automatically and graded when complete.
-          </p>
-          <div class="field" style="margin-bottom:14px;">
-            <label class="field-label" for="ai-shop-voice-agent">Voice Agent</label>
-            <select id="ai-shop-voice-agent" class="field-select">
-              <option value="">Loading…</option>
-            </select>
-          </div>
-          <div class="panel-action-row">
-            <button type="button" class="btn btn-primary" id="btn-ai-shop-trigger">
-              Schedule AI Shop
-            </button>
-          </div>
-        </div>
-
-        {# Secondary audio source links — built dynamically by renderSourceLinks().
-           Shows "Or: <other source> · <other source>". Active source is omitted. #}
-        <div id="source-links" class="source-links" hidden></div>
 
         {# Property intel card — compact-by-default. Empty / loading states
            collapse to a single muted line; the full card expands when data exists. #}
@@ -867,6 +845,7 @@
 {% block extra_js %}
 <script defer src="{{ url_for('static', filename='audio_player.js') }}?v={{ static_v('audio_player.js') }}"></script>
 <script defer src="{{ url_for('static', filename='combobox.js') }}?v={{ static_v('combobox.js') }}"></script>
+<script defer src="{{ url_for('static', filename='tabs.js') }}?v={{ static_v('tabs.js') }}"></script>
 <script defer src="{{ url_for('static', filename='interaction_view.js') }}?v={{ static_v('interaction_view.js') }}"></script>
 <script defer src="{{ url_for('static', filename='interaction_panel.js') }}?v={{ static_v('interaction_panel.js') }}"></script>
 <script>
@@ -877,9 +856,7 @@
   // ── State ────────────────────────────────────────────
   const state = {
     audioFile:         null,
-    selectedQueueId:   null,
     projectRubricCache: {},
-    voipConfigured:    false,
     currentInteraction: null,
     currentCriteria:   null,
     callerNameDisplay: "",     // captured at submit time so the result panel can show it
@@ -1004,13 +981,12 @@
     wireForm();  // attach handlers BEFORE awaiting loaders so a fast user's first click lands
 
     // Default audio source: Record Live when supported, otherwise Upload.
-    switchTab(window.MediaRecorder ? "record" : "upload");
+    initTabs(window.MediaRecorder ? "record" : "upload");
 
     await Promise.all([
       loadLocations(),
       loadProjects(),
       loadCallers(),
-      checkVoip(),
       loadVoiceAgents(),
     ]);
     if ($("#gf-location").value) onLocationChange();  // re-fire if user picked during the race
@@ -1549,22 +1525,6 @@
     }
   }
 
-  const VOIP_QUEUE_POLL_MS = 30000;
-  let voipQueueTimer = null;
-
-  async function checkVoip() {
-    try {
-      const cfg = await EA.fetchJSON("/api/voip/config");
-      if (cfg && cfg.credentials_configured && cfg.voip_config_is_active) {
-        state.voipConfigured = true;
-        renderSourceLinks();  // VoIP link wasn't shown before — surface it now
-        await loadVoipQueue();
-        startVoipQueuePolling();
-        document.addEventListener("visibilitychange", onVoipVisibilityChange);
-      }
-    } catch (err) { /* VoIP not configured — tab stays hidden. */ }
-  }
-
   // J-2: Populate the AI Shop voice-agent dropdown. Two parallel fetches —
   // the active-agent list and the per-user sticky default. If the dropdown
   // ends up empty (no active agents), disable the trigger and surface an
@@ -1599,106 +1559,6 @@
     } catch (err) {
       sel.innerHTML = '<option value="">Failed to load</option>';
       sel.disabled = true;
-    }
-  }
-
-  function startVoipQueuePolling() {
-    stopVoipQueuePolling();
-    if (!state.voipConfigured) return;
-    voipQueueTimer = setInterval(loadVoipQueue, VOIP_QUEUE_POLL_MS);
-  }
-
-  function stopVoipQueuePolling() {
-    if (voipQueueTimer) {
-      clearInterval(voipQueueTimer);
-      voipQueueTimer = null;
-    }
-  }
-
-  function onVoipVisibilityChange() {
-    // Pause polling while the tab isn't visible — saves bandwidth and avoids
-    // a backlog of fetches firing all at once when the user returns. On
-    // resume, do an immediate fetch so the queue feels live.
-    if (!state.voipConfigured) return;
-    if (document.hidden) {
-      stopVoipQueuePolling();
-    } else {
-      loadVoipQueue();
-      startVoipQueuePolling();
-    }
-  }
-
-  async function loadVoipQueue() {
-    const box = $("#voip-queue-wrap");
-    // Snapshot the user's selection before tearing down the table so we can
-    // re-highlight the same row after re-render. If the selected call has
-    // since been graded by someone else (so it dropped off ?status=pending),
-    // we clear the hidden input and the form falls back to manual entry.
-    const previouslySelected = state.selectedQueueId;
-    try {
-      const items = await EA.fetchJSON("/api/voip/queue?status=pending");
-      if (!items || !items.length) {
-        box.innerHTML = '<div class="empty-state">No pending calls in the VoIP queue.</div>';
-        if (previouslySelected) {
-          state.selectedQueueId = null;
-          const hidden = $("#voip-queue-id");
-          if (hidden) hidden.value = "";
-          EA.toast("The selected queued call is no longer pending.", "info");
-        }
-        setVoipSubmitVisible(false);
-        return;
-      }
-      const head =
-        '<table class="history-table">' +
-          '<thead><tr>' +
-            '<th>Date</th><th>Caller #</th><th>Called #</th>' +
-            '<th>Duration</th><th>Provider</th>' +
-          '</tr></thead><tbody>';
-      const body = items.map(function (r) {
-        const dur = r.voip_queue_duration_seconds
-          ? Math.round(r.voip_queue_duration_seconds) + "s" : "—";
-        return (
-          '<tr data-queue-id="' + r.voip_queue_id + '" data-date="' +
-              EA.esc(r.voip_queue_call_date || "") + '">' +
-            '<td>' + EA.esc(EA.formatDate(r.voip_queue_call_date) || "—") + '</td>' +
-            '<td>' + EA.esc(r.voip_queue_caller_number || "—") + '</td>' +
-            '<td>' + EA.esc(r.voip_queue_called_number || "—") + '</td>' +
-            '<td>' + dur + '</td>' +
-            '<td>' + EA.esc(r.voip_queue_provider || "—") + '</td>' +
-          '</tr>'
-        );
-      }).join("");
-      box.innerHTML = head + body + "</tbody></table>";
-      box.querySelectorAll("tr[data-queue-id]").forEach(function (tr) {
-        tr.addEventListener("click", function () {
-          box.querySelectorAll("tr").forEach(function (x) { x.style.background = ""; });
-          tr.style.background = "var(--accent-soft)";
-          state.selectedQueueId = tr.dataset.queueId;
-          $("#voip-queue-id").value = tr.dataset.queueId;
-          if (tr.dataset.date) $("#gf-date").value = tr.dataset.date.slice(0,10);
-          setVoipSubmitVisible(true);
-        });
-      });
-      if (previouslySelected) {
-        const tr = box.querySelector('tr[data-queue-id="' +
-                                     CSS.escape(String(previouslySelected)) + '"]');
-        if (tr) {
-          tr.style.background = "var(--accent-soft)";
-          setVoipSubmitVisible(true);
-        } else {
-          // Selected call no longer pending — drop the stale selection so
-          // the user doesn't accidentally submit against a missing queue id.
-          state.selectedQueueId = null;
-          const hidden = $("#voip-queue-id");
-          if (hidden) hidden.value = "";
-          setVoipSubmitVisible(false);
-          EA.toast("The selected queued call is no longer pending.", "info");
-        }
-      } else {
-        setVoipSubmitVisible(false);
-      }
-    } catch (err) {
-      box.innerHTML = '<div class="section-error">' + EA.esc(err.message) + '</div>';
     }
   }
 
@@ -1757,9 +1617,7 @@
     // through requestSubmit() so the form's onSubmit handler is the single
     // source of truth for validation + dispatch.
     const upBtn  = document.getElementById("btn-upload-submit");
-    const voBtn  = document.getElementById("btn-voip-submit");
     if (upBtn) upBtn.addEventListener("click", function () { $("#grade-form").requestSubmit(); });
-    if (voBtn) voBtn.addEventListener("click", function () { $("#grade-form").requestSubmit(); });
     const aiShopBtn = document.getElementById("btn-ai-shop-trigger");
     if (aiShopBtn) aiShopBtn.addEventListener("click", scheduleAIShopFlow);
 
@@ -1767,8 +1625,6 @@
     $("#grade-form").addEventListener("submit", onSubmit);
     // Three copies of "Log Unanswered Call" — Record idle, Record preview
     // (after Stop), Upload. Whichever panel/state is visible exposes a button.
-    // VoIP panel intentionally has no copy (queue rows already represent
-    // completed call events; logging "unanswered" doesn't apply).
     // The preview-state button shares onLogNoAnswer with the others; the
     // handler detects audio-present and swaps the dialog to a danger-styled
     // discard confirm.
@@ -1780,57 +1636,45 @@
     if (naRP)  naRP .addEventListener("click", onLogNoAnswer);
   }
 
-  function switchTab(which) {
-    dbg("switchTab", { which: which });
-    state.activePanel = which;
-    $("#panel-upload").hidden = which !== "upload";
-    $("#panel-record").hidden = which !== "record";
-    $("#panel-voip")  .hidden = which !== "voip";
-    $("#panel-ai-shop").hidden = which !== "ai-shop";
+  // EA.Tabs handle for the audio-source tab strip. Initialized once at boot
+  // by initTabs(); subsequent switchTab() calls route through tabsHandle so
+  // button .active + panel hidden stay in sync. onActivate fires the
+  // per-panel side effects (cleanup, state.activePanel update).
+  let tabsHandle = null;
 
-    // Panels are mutually exclusive — switching clears the OTHER sources.
-    if (which !== "record") { cleanupLiveRecording(/*reset*/ true); }
-    if (which !== "voip")   {
-      state.selectedQueueId = null;
-      const vq = $("#voip-queue-id"); if (vq) vq.value = "";
-      setVoipSubmitVisible(false);
+  function initTabs(defaultTab) {
+    const container = document.getElementById("grade-audio-source-tabs");
+    if (!container || !window.EA || !EA.Tabs) return;
+    // Hide the Record tab when MediaRecorder isn't available (legacy iOS,
+    // private modes that block getUserMedia, etc.). Default tab is forced
+    // to Upload in that case so we never activate a hidden tab.
+    if (!window.MediaRecorder) {
+      const recBtn = container.querySelector('.tab-btn[data-tab="record"]');
+      if (recBtn) recBtn.hidden = true;
+      if (defaultTab === "record") defaultTab = "upload";
     }
-    if (which !== "upload") { clearAudioFile(); }
-
-    renderSourceLinks();
+    tabsHandle = EA.Tabs.init({
+      container:  container,
+      defaultTab: defaultTab,
+      onActivate: onTabActivate,
+    });
   }
 
-  // Build the "Or: <other source> · <other source>" link row beneath the
-  // active panel. Omits the link for the currently active panel; omits VoIP
-  // entirely when not configured; omits Record when MediaRecorder is missing.
-  function renderSourceLinks() {
-    const wrap = document.getElementById("source-links");
-    if (!wrap) return;
-    const active = state.activePanel || "upload";
-    const links = [];
-    if (window.MediaRecorder && active !== "record") {
-      links.push('<a href="#" data-tab="record">record live</a>');
+  function onTabActivate(which) {
+    dbg("switchTab", { which: which });
+    state.activePanel = which;
+    // Panels are mutually exclusive — switching clears the OTHER sources.
+    if (which !== "record") { cleanupLiveRecording(/*reset*/ true); }
+    if (which !== "upload") { clearAudioFile(); }
+  }
+
+  function switchTab(which) {
+    if (tabsHandle) {
+      tabsHandle.activate(which);
+    } else {
+      // Pre-init fallback (e.g. resetForm called before initTabs ran).
+      onTabActivate(which);
     }
-    if (active !== "upload") {
-      links.push('<a href="#" data-tab="upload">upload a file</a>');
-    }
-    if (state.voipConfigured && active !== "voip") {
-      links.push('<a href="#" data-tab="voip">pull from VoIP queue</a>');
-      links.push('<a href="#" data-tab="ai-shop">schedule AI shop</a>');
-    }
-    if (!links.length) {
-      wrap.hidden = true;
-      wrap.innerHTML = "";
-      return;
-    }
-    wrap.hidden = false;
-    wrap.innerHTML = "Or: " + links.join(' <span class="source-link-sep">·</span> ');
-    wrap.querySelectorAll('a[data-tab]').forEach(function (a) {
-      a.addEventListener("click", function (e) {
-        e.preventDefault();
-        switchTab(a.dataset.tab);
-      });
-    });
   }
 
   function setAudioFile(file) {
@@ -1856,12 +1700,6 @@
     if (upBtn) upBtn.hidden = true;
   }
 
-  // VoIP queue: the contextual submit button is bound to whether a row is
-  // selected. Called after every state.selectedQueueId mutation.
-  function setVoipSubmitVisible(v) {
-    const btn = document.getElementById("btn-voip-submit");
-    if (btn) btn.hidden = !v;
-  }
   function humanSize(bytes) {
     if (bytes < 1024) return bytes + " B";
     if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + " KB";
@@ -2105,10 +1943,6 @@
       $("#form-hint").textContent = "Finish your live recording first — click Use This Recording.";
       return;
     }
-    if (activeTab === "voip" && !state.selectedQueueId) {
-      $("#form-hint").textContent = "Pick a queued call.";
-      return;
-    }
     if (activeTab === "ai-shop") {
       // AI shop has its own trigger flow (#btn-ai-shop-trigger →
       // scheduleAIShopFlow). The form submit path doesn't apply — no audio
@@ -2131,7 +1965,6 @@
     // matches the active tab.
     const submitBtnId =
       activeTab === "record" ? "btn-record-use" :
-      activeTab === "voip"   ? "btn-voip-submit" :
                                "btn-upload-submit";
     const submitBtn = document.getElementById(submitBtnId);
     if (submitBtn && submitBtn.disabled) return;   // already in flight
@@ -2165,27 +1998,6 @@
         fd.append("is_test", "true");
       }
       return fd;
-    }
-
-    // VoIP tab uses its own queue and is unaffected by the split-pane toggle.
-    // Both modes show the same overlay + toast + reset.
-    if (activeTab === "voip") {
-      const vOverlay = EA.showOverlay("Queuing VoIP grade…");
-      try {
-        await EA.fetchJSON(
-          "/api/voip/queue/" + encodeURIComponent(state.selectedQueueId) + "/grade",
-          { method: "POST" }
-        );
-        vOverlay.close();
-        EA.toast("Grading started — check Past Grades in a moment.", "info");
-        resetFormPreserveContext();
-      } catch (err) {
-        vOverlay.close();
-        EA.toast(err.message || "Could not start VoIP grade.", "error");
-      } finally {
-        if (submitBtn) submitBtn.disabled = false;
-      }
-      return;
     }
 
     // ── Split-pane mode: POST to /api/grade-jobs (async, non-blocking) ──
@@ -2738,7 +2550,7 @@
       return;
     }
 
-    EA.toast("AI Shop scheduled at " + locationName + ".", "success");
+    EA.toast("AI Caller call scheduled at " + locationName + ".", "success");
     if (window.__refreshDock) window.__refreshDock();
   }
 
@@ -2859,9 +2671,6 @@
     // Audio: clear both source buffers so the next call starts fresh.
     clearAudioFile();
     cleanupLiveRecording(true);
-    // VoIP: clear queue selection so the next submit doesn't re-fire on
-    // the same queued call.
-    state.selectedQueueId = null;
     // Caller field: fully preserved across submits — same caller usually
     // does back-to-back calls regardless of role.
     // Date: re-stamp today so back-to-back calls don't carry yesterday.
@@ -2886,8 +2695,6 @@
     $("#grade-form").reset();
     clearAudioFile();
     cleanupLiveRecording(true);
-    state.selectedQueueId = null;
-    setVoipSubmitVisible(false);
     state.currentInteraction = null;
     state.callerNameDisplay = "";
     state.locationNameDisplay = "";
@@ -2984,7 +2791,6 @@
 
   window.addEventListener("beforeunload", function () {
     cleanupLiveRecording(true);
-    stopVoipQueuePolling();
     const h = document.getElementById("overlay-host");
     if (h) h.remove();
   });
