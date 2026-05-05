@@ -1530,17 +1530,15 @@
   async function loadCallers() {
     const sel = $("#gf-caller");
     try {
-      // M-C-1: /api/callers returns the company's caller-pickable users
-      // PLUS all platform super_admins (who legitimately cross-cut tenants).
-      // Endpoint pre-filters to the right shape — no client-side role filter.
-      const team = await EA.fetchJSON("/api/callers");
+      const team = await EA.fetchJSON("/api/team");
+      const callers = team.filter(function (u) {
+        return (u.role_name === "caller" || !u.role_name);
+      });
       sel.innerHTML = '<option value="">—</option>';
-      team.forEach(function (u) {
+      callers.forEach(function (u) {
         const o = document.createElement("option");
         o.value = u.user_id;
-        const baseName = (u.user_first_name || "") + " " + (u.user_last_name || "");
-        const suffix   = (u.role_name === "super_admin") ? " (Platform)" : "";
-        o.textContent  = baseName + suffix;
+        o.textContent = (u.user_first_name || "") + " " + (u.user_last_name || "");
         sel.appendChild(o);
       });
       if (window.__USER_ROLE === "caller" && window.__USER_ID) {
