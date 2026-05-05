@@ -196,6 +196,7 @@
     try {
       resp = await fetch(u.href, {
         credentials: "same-origin",
+        cache: "no-store",
         headers: { "HX-Request": "true", "Accept": "text/html" },
       });
     } catch (err) {

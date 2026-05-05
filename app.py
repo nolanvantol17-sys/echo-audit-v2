@@ -171,6 +171,11 @@ def create_app():
     def _set_static_cache_headers(resp):
         if request.path.startswith("/static/"):
             resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif request.path.startswith("/app/"):
+            # Page HTML must always re-validate so a deploy lands immediately on
+            # the user's next nav. Without this, browsers heuristic-cache HTML
+            # and serve pre-deploy markup until hard-refresh.
+            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         return resp
 
     return app
