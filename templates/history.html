@@ -109,6 +109,12 @@
       </select>
     </div>
     <div class="field">
+      <label class="field-label" for="f-campaign">Campaign</label>
+      <select id="f-campaign" class="field-select" disabled>
+        <option value="">All campaigns</option>
+      </select>
+    </div>
+    <div class="field">
       <label class="field-label" for="f-respondent">Respondent</label>
       <select id="f-respondent" class="field-select">
         <option value="">All</option>
@@ -283,15 +289,62 @@
           document.getElementById("project-filter-banner-name").textContent = p.project_name;
           banner.hidden = false;
         }
+        // Populate the campaign cascade for the deep-linked project so the
+        // user lands with both filters interactable, not just project.
+        // loadHistory() is fired once at the end of init() — onProjectChange
+        // also calls loadHistory but the second is harmless, just one extra
+        // /api/interactions request on deep-link arrival.
+        await onProjectChange();
       }
     } catch (_) { /* non-fatal */ }
+  }
+
+  // Cascading campaign loader. Fires when #f-project changes (or on
+  // deep-link arrival). Repopulates #f-campaign from
+  // /api/projects/<id>/campaigns; resets to "All campaigns" disabled when
+  // no project is picked. Always finishes by triggering loadHistory so the
+  // result set reflects the new (possibly cleared) campaign filter.
+  async function onProjectChange() {
+    const projectId   = $("#f-project").value;
+    const campaignSel = $("#f-campaign");
+    if (!projectId) {
+      campaignSel.innerHTML = '<option value="">All campaigns</option>';
+      campaignSel.disabled  = true;
+      loadHistory();
+      return;
+    }
+    campaignSel.innerHTML = '<option value="">Loading…</option>';
+    campaignSel.disabled  = true;
+    try {
+      const camps = await EA.fetchJSON(
+        "/api/projects/" + encodeURIComponent(projectId) + "/campaigns"
+      );
+      if (!camps || !camps.length) {
+        campaignSel.innerHTML = '<option value="">(no campaigns)</option>';
+        campaignSel.disabled  = true;
+      } else {
+        campaignSel.innerHTML = '<option value="">All campaigns</option>' +
+          camps.map(function (c) {
+            return '<option value="' + c.campaign_id + '">' +
+                   EA.esc(c.campaign_name) + '</option>';
+          }).join("");
+        campaignSel.disabled = false;
+      }
+    } catch (_) {
+      campaignSel.innerHTML = '<option value="">Failed to load</option>';
+      campaignSel.disabled  = true;
+    }
+    loadHistory();
   }
 
   // ── Filters ──────────────────────────────────────────
   function wireFilters() {
     $("#f-search").addEventListener("input", debouncedLoad);
 
-    ["#f-location","#f-project","#f-from","#f-to","#f-score-max","#f-status","#f-respondent","#f-include-test"]
+    // Project gets a dedicated handler (cascades into Campaign before
+    // re-fetching). Everything else uses the shared change → loadHistory.
+    $("#f-project").addEventListener("change", onProjectChange);
+    ["#f-location","#f-from","#f-to","#f-score-max","#f-status","#f-respondent","#f-include-test","#f-campaign"]
       .forEach(function (sel) {
         const el = document.querySelector(sel);
         if (el) el.addEventListener("change", loadHistory);
@@ -299,7 +352,12 @@
 
     $("#btn-clear-filters").addEventListener("click", function () {
       ["#f-search","#f-from","#f-to","#f-score-max"].forEach(function (s) { $(s).value = ""; });
-      ["#f-location","#f-project","#f-status","#f-respondent"].forEach(function (s) { $(s).value = ""; });
+      ["#f-location","#f-project","#f-status","#f-respondent","#f-campaign"].forEach(function (s) { $(s).value = ""; });
+      // Clearing project also resets the campaign dropdown back to its
+      // "(pick a project first)" disabled state.
+      const camp = $("#f-campaign");
+      camp.innerHTML = '<option value="">All campaigns</option>';
+      camp.disabled  = true;
       loadHistory();
     });
 
@@ -323,6 +381,7 @@
     if (search)                 qs.set("q", search);
     if ($("#f-location").value) qs.set("location_id", $("#f-location").value);
     if ($("#f-project").value)  qs.set("project_id", $("#f-project").value);
+    if ($("#f-campaign").value) qs.set("campaign_id", $("#f-campaign").value);
     if ($("#f-from").value)     qs.set("from_date", $("#f-from").value);
     if ($("#f-to").value)       qs.set("to_date", $("#f-to").value);
     if ($("#f-status").value)   qs.set("status_id", $("#f-status").value);

@@ -1189,6 +1189,9 @@ def list_interactions():
     if args.get("project_id"):
         filters.append("i.project_id = ?")
         params.append(args["project_id"])
+    if args.get("campaign_id"):
+        filters.append("i.campaign_id = ?")
+        params.append(args["campaign_id"])
     if args.get("caller_user_id"):
         filters.append("i.caller_user_id = ?")
         params.append(args["caller_user_id"])
