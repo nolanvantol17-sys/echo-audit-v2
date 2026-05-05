@@ -22,7 +22,7 @@ from flask_login import login_required
 from dashboard_helpers import (
     _report_url_for, _roll_up_locations, _trend_for_calls,
 )
-from db import IS_POSTGRES, get_conn, q
+from db import get_conn, q
 from helpers import get_effective_company_id
 
 dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/api")

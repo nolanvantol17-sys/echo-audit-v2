@@ -709,12 +709,12 @@
         </div>
       </section>
 
-      {# RIGHT: audio source surface (record / upload / voip + source links + intel + hint). #}
+      {# RIGHT: audio source surface (record / upload / AI Caller + intel + hint). #}
       <div class="grade-audio-col">
 
         {# Pre-grade test-call flag. Single shared checkbox above the tab
-           panels so it's visible across record/upload/voip. _buildGradeFormData
-           reads #gf-is-test directly. AI Shop and Log-Unanswered paths don't
+           panels so it's visible across record/upload. _buildGradeFormData
+           reads #gf-is-test directly. AI Caller and Log-Unanswered paths don't
            wire this today (separate code paths; would need backend extension). #}
         {% if user_role in ('admin','super_admin','manager','caller') %}
         <div style="margin:0 0 12px 0; padding:10px 14px; background:var(--accent-soft); border-radius:6px; font-size:0.875rem;">
@@ -834,9 +834,6 @@
   </form>
 </section>
 
-{# ── Grade result panel (hidden until a successful grade) ── #}
-<section id="grade-result-section" hidden></section>
-
   </div>{# /.grade-right #}
 </div>{# /.grade-split #}
 
@@ -899,7 +896,7 @@
   // ── Campaign-state diagnostic ring buffer ─────────────
   // Persistent across grades / panel closes / soft-nav (sessionStorage),
   // capped at 200 entries. Always-on — cheap, removable in a followup.
-  // If the campaign-disabled bug recurs after the resetForm fix below,
+  // If the campaign-disabled bug recurs after the resetFormPreserveContext fix below,
   // dump the trace from DevTools console with:
   //   copy(JSON.stringify(JSON.parse(sessionStorage.getItem("ea.dbg.campaign")), null, 2))
   // and paste into the bug report.
@@ -944,9 +941,6 @@
   // overlay is visible mid-submit.
   window.gradeComplete = false;
   window.formIsDirty = function () {
-    // A completed grade showing the result panel is NOT dirty.
-    const resultVisible = !$("#grade-result-section").hidden;
-    if (resultVisible && window.gradeComplete) return false;
     // Treat the form as dirty ONLY when the user has work that could be lost:
     //   - grade POST in flight (overlay visible)
     //   - uploaded file selected but not yet submitted
@@ -1672,7 +1666,7 @@
     if (tabsHandle) {
       tabsHandle.activate(which);
     } else {
-      // Pre-init fallback (e.g. resetForm called before initTabs ran).
+      // Pre-init fallback (e.g. resetFormPreserveContext called before initTabs ran).
       onTabActivate(which);
     }
   }
@@ -2101,16 +2095,6 @@
     }
   }
 
-  // ── Result panel rendering ─────────────────────────
-  function normalizeRespondent(name) {
-    if (name === null || name === undefined) return "Not detected";
-    const s = String(name).trim();
-    if (!s) return "Not detected";
-    const lower = s.toLowerCase();
-    if (lower === "unknown" || lower === "name not provided") return "Not detected";
-    return s;
-  }
-
   // Phase 2c: grade success lands in EA.InteractionPanel. We hide the form,
   // open the panel, and arm an onClose hook that preserves location/project/
   // campaign/caller so the user lands on a ready-to-go form when they
@@ -2128,287 +2112,6 @@
         resetFormPreserveContext();
       },
     });
-  }
-
-  function renderGradeResult(result, opts) {
-    opts = opts || {};
-    const interactionId = result.interaction_id;
-    const section = $("#grade-result-section");
-    const hero = scoreHero(result.total_score);
-    const flagsHtml = (result.flags || "")
-      ? '<div class="flag-banner">' + EA.esc(result.flags) + '</div>' : "";
-
-    // ── Caller + Respondent (detected) info block ──
-    // The API historically returns `responder_name`; prefer `respondent_name`
-    // if present for forward compatibility.
-    const respRaw = (result.respondent_name != null)
-                      ? result.respondent_name : result.responder_name;
-    const respDisplay = normalizeRespondent(respRaw);
-    const respIsDetected = (respDisplay !== "Not detected");
-    const callerDisplay = (state.callerNameDisplay && state.callerNameDisplay !== "—")
-                          ? state.callerNameDisplay : "—";
-    const locDisplay = (state.locationNameDisplay || "").trim() || "—";
-
-    // Respondent is editable: the name Claude detected may be wrong or missing,
-    // and a reviewer needs to be able to correct it so leaderboards/reports
-    // attribute the call to the right person.
-    const respValueHtml =
-      '<div class="resp-view" id="resp-view">' +
-        '<span id="resp-text" class="' + (respIsDetected ? "" : "muted") + '">' +
-          EA.esc(respDisplay) +
-        '</span>' +
-        '<button type="button" class="resp-edit-btn" id="resp-edit-btn" ' +
-                'title="Edit respondent name">' +
-          '<span class="resp-edit-icon">✎</span>Edit' +
-        '</button>' +
-        '<span class="resp-saved" id="resp-saved" hidden>Saved ✓</span>' +
-      '</div>';
-
-    const infoHtml =
-      '<div class="result-info">' +
-        '<div class="result-info-item">' +
-          '<div class="result-info-label">{{ location_label or "Location" }}</div>' +
-          '<div class="result-info-value' + (locDisplay === "—" ? " muted" : "") + '">' +
-            EA.esc(locDisplay) +
-          '</div>' +
-        '</div>' +
-        '<div class="result-info-item">' +
-          '<div class="result-info-label">Caller</div>' +
-          '<div class="result-info-value' + (callerDisplay === "—" ? " muted" : "") + '">' +
-            EA.esc(callerDisplay) +
-          '</div>' +
-        '</div>' +
-        '<div class="result-info-item">' +
-          '<div class="result-info-label">Respondent (detected)</div>' +
-          '<div class="result-info-value" id="resp-info-value">' +
-            respValueHtml +
-          '</div>' +
-        '</div>' +
-      '</div>';
-
-    const rubricHtml = renderRubricRows(result);
-    const strengthsHtml = bulletize(result.strengths, "strengths-list");
-    const weaknessesHtml = bulletize(result.weaknesses, "weaknesses-list");
-
-    const overallHtml = result.overall_assessment
-      ? '<p style="margin-top:10px;line-height:1.55;">' +
-          EA.esc(result.overall_assessment) + '</p>' : '';
-
-    // Clarifying questions are now a pre-grade screen, not embedded in the
-    // result panel. Leaving the slot empty keeps the layout below consistent.
-    const cqHtml = "";
-
-    const transcriptHtml = result.transcript
-      ? '<details class="collapsible" id="transcript-panel">' +
-          '<summary>Transcript</summary>' +
-          '<div class="collapsible-body"><div class="transcript-body">' +
-            EA.esc(result.transcript) +
-          '</div></div>' +
-        '</details>' : '';
-
-    const audioHtml = (
-      '<div style="margin-top:14px;">' +
-        EA.AudioPlayer.html({
-          src: '/api/interactions/' + interactionId + '/audio',
-          preload: 'none',
-        }) +
-      '</div>'
-    );
-
-    section.innerHTML =
-      hero +
-      flagsHtml +
-      infoHtml +
-      '<div class="panel" style="margin-bottom:14px;">' +
-        '<div class="panel-title">Rubric Scores</div>' +
-        rubricHtml +
-      '</div>' +
-      '<div class="dash-grid">' +
-        '<div class="panel">' +
-          '<div class="panel-title">Strengths</div>' + strengthsHtml +
-        '</div>' +
-        '<div class="panel">' +
-          '<div class="panel-title">Weaknesses</div>' + weaknessesHtml +
-        '</div>' +
-      '</div>' +
-      (overallHtml ? '<div class="panel" style="margin-top:14px;">' +
-         '<div class="panel-title">Overall Assessment</div>' + overallHtml +
-       '</div>' : '') +
-      cqHtml +
-      (transcriptHtml ? '<div style="margin-top:14px;">' + transcriptHtml + '</div>' : '') +
-      audioHtml +
-      '<div class="hstack-wrap" style="margin-top:22px;">' +
-        '<button type="button" class="btn btn-primary" id="btn-grade-another">Grade another call</button>' +
-        '<a href="/app/history/' + interactionId + '" class="btn btn-ghost">View in History</a>' +
-        '<button type="button" class="btn btn-ghost" id="btn-grade-reset">Reset all</button>' +
-      '</div>';
-
-    section.hidden = false;
-    $("#grade-form-section").hidden = true;
-    EA.AudioPlayer.attachAll(section);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-
-    window.gradeComplete = true;
-    if (!opts.silent) EA.toast("Grade complete — score saved.", "success");
-
-    wireResultPanel(interactionId);
-  }
-
-  function scoreHero(total) {
-    const cls = EA.scoreClass(total);
-    return (
-      '<div class="score-hero">' +
-        '<div class="score-hero-value" style="color:' + EA.scoreColor(total) + ';">' +
-          EA.formatScore(total) +
-        '</div>' +
-        '<div class="score-hero-meta">' +
-          '<span class="score-hero-label">Total score</span>' +
-          '<span class="muted text-small">out of 9.9</span>' +
-        '</div>' +
-        '<span class="score-pill ' + cls + '">' +
-          (cls === "good" ? "Strong" : cls === "warn" ? "OK" : cls === "bad" ? "Needs work" : "Pending") +
-        '</span>' +
-      '</div>'
-    );
-  }
-
-  function renderRubricRows(result) {
-    const scores = result.scores || {};
-    const expl   = result.explanations || {};
-    const names  = Object.keys(scores);
-    if (!names.length) return '<div class="empty-state">No rubric scores.</div>';
-    return names.map(function (name) {
-      const val = scores[name];
-      const scoreText = (val === "Yes" || val === "No" || val === "Pending")
-        ? val : EA.formatScore(val);
-      const scoreCls = val === "Yes" ? "yes" : val === "No" ? "no" : "";
-      const e = expl[name] || "";
-      return (
-        '<div class="rubric-row">' +
-          '<div class="rubric-name">' + EA.esc(name) + '</div>' +
-          '<div class="rubric-score ' + scoreCls + '">' + EA.esc(scoreText) + '</div>' +
-          (e ? '<div class="rubric-explanation">' + EA.esc(e) + '</div>' : '') +
-        '</div>'
-      );
-    }).join("");
-  }
-
-  function bulletize(text, className) {
-    if (!text) return '<div class="muted text-small">—</div>';
-    const items = String(text).split(/\n+/)
-      .map(function (s) { return s.replace(/^\s*[•\-*]\s*/, "").trim(); })
-      .filter(Boolean);
-    if (!items.length) return '<div class="muted text-small">—</div>';
-    return '<ul class="bullet-list ' + className + '">' +
-      items.map(function (s) { return '<li>' + EA.esc(s) + '</li>'; }).join("") +
-      '</ul>';
-  }
-
-  // ── Respondent inline edit ─────────────────────────
-  //
-  // The detected respondent name may be wrong (mis-transcription) or missing
-  // ("Not detected"). Reviewers edit inline, we PUT to the respondent route,
-  // and the server upserts + re-links. On success we show a brief "Saved ✓"
-  // indicator and return to read-only view.
-  function wireRespondentEdit(interactionId) {
-    const editBtn = document.getElementById("resp-edit-btn");
-    if (!editBtn) return;
-    editBtn.addEventListener("click", function () {
-      const textEl = document.getElementById("resp-text");
-      const currentText = textEl ? textEl.textContent : "";
-      const initialValue = (currentText && currentText !== "Not detected") ? currentText : "";
-      enterRespondentEditMode(interactionId, initialValue);
-    });
-  }
-
-  function enterRespondentEditMode(interactionId, initialValue) {
-    const container = document.getElementById("resp-info-value");
-    if (!container) return;
-    const val = EA.esc(initialValue || "");
-    container.innerHTML =
-      '<div class="resp-editing">' +
-        '<input type="text" class="field-input" id="resp-edit-input" ' +
-               'value="' + val + '" placeholder="Respondent name" maxlength="120" />' +
-        '<button type="button" class="btn btn-primary" id="resp-save-btn">Save</button>' +
-        '<button type="button" class="btn btn-ghost"   id="resp-cancel-btn">Cancel</button>' +
-      '</div>';
-    const input = document.getElementById("resp-edit-input");
-    input.focus();
-    input.select();
-
-    document.getElementById("resp-save-btn").addEventListener("click", function () {
-      saveRespondent(interactionId, input.value);
-    });
-    document.getElementById("resp-cancel-btn").addEventListener("click", function () {
-      revertRespondentView(initialValue);
-    });
-    input.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") { e.preventDefault(); saveRespondent(interactionId, input.value); }
-      if (e.key === "Escape") { e.preventDefault(); revertRespondentView(initialValue); }
-    });
-  }
-
-  function revertRespondentView(value) {
-    const container = document.getElementById("resp-info-value");
-    if (!container) return;
-    const display = normalizeRespondent(value);
-    const isDetected = (display !== "Not detected");
-    container.innerHTML =
-      '<div class="resp-view" id="resp-view">' +
-        '<span id="resp-text" class="' + (isDetected ? "" : "muted") + '">' +
-          EA.esc(display) +
-        '</span>' +
-        '<button type="button" class="resp-edit-btn" id="resp-edit-btn" ' +
-                'title="Edit respondent name">' +
-          '<span class="resp-edit-icon">✎</span>Edit' +
-        '</button>' +
-        '<span class="resp-saved" id="resp-saved" hidden>Saved ✓</span>' +
-      '</div>';
-    // Re-wire: the edit button was replaced.
-    const interactionId = state.currentInteractionId;
-    if (interactionId) wireRespondentEdit(interactionId);
-  }
-
-  async function saveRespondent(interactionId, rawValue) {
-    const name = (rawValue || "").trim();
-    if (!name) {
-      EA.toast("Enter a name before saving.", "error");
-      return;
-    }
-    const saveBtn = document.getElementById("resp-save-btn");
-    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving…"; }
-    try {
-      const res = await EA.fetchJSON(
-        "/api/interactions/" + encodeURIComponent(interactionId) + "/respondent",
-        { method: "PUT", body: { respondent_name: name } }
-      );
-      revertRespondentView(res.respondent_name || name);
-      const savedEl = document.getElementById("resp-saved");
-      if (savedEl) {
-        savedEl.hidden = false;
-        setTimeout(function () { if (savedEl) savedEl.hidden = true; }, 1800);
-      }
-      EA.toast("Respondent saved.", "success");
-    } catch (err) {
-      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "Save"; }
-      EA.toast(err.message || "Could not save respondent", "error");
-    }
-  }
-
-  function wireResultPanel(interactionId) {
-    state.currentInteractionId = interactionId;
-    $("#btn-grade-another").addEventListener("click", function () {
-      saveGradeContext();
-      resetForm();
-    });
-    const resetBtn = $("#btn-grade-reset");
-    if (resetBtn) {
-      resetBtn.addEventListener("click", function () {
-        clearGradeContext();
-        resetForm();
-      });
-    }
-    wireRespondentEdit(interactionId);
   }
 
   // ─── Arc C: Schedule AI Shop ──────────────────────────────────────
@@ -2576,23 +2279,6 @@
       }));
     } catch (_) { /* private mode etc. — non-fatal */ }
   }
-  // Phase 2c: caller-only sticky payload written when the inline result
-  // panel closes. Project / location / campaign are intentionally NOT
-  // saved — the user re-picks the location-driven cascade for each grade.
-  // Marked with sticky:true so applyGradeContext can route it down a
-  // separate branch instead of misinterpreting it as the legacy shape.
-  function saveGradeContextSticky() {
-    const callerSel = $("#gf-caller");
-    const callerId  = callerSel ? (callerSel.value || "") : "";
-    if (!callerId) return;
-    try {
-      sessionStorage.setItem(GRADE_CTX_KEY, JSON.stringify({
-        sticky: true,
-        caller_user_id: callerId,
-        ts: Date.now(),
-      }));
-    } catch (_) { /* private mode etc. — non-fatal */ }
-  }
   function readGradeContext() {
     try {
       const raw = sessionStorage.getItem(GRADE_CTX_KEY);
@@ -2611,23 +2297,8 @@
   }
   function applyGradeContext() {
     const ctx = readGradeContext();
-    dbg("applyGradeContext:enter", { hasCtx: !!ctx, sticky: ctx ? !!ctx.sticky : null });
+    dbg("applyGradeContext:enter", { hasCtx: !!ctx });
     if (!ctx) return;
-
-    // Phase 2c sticky payload: caller-only. Restore the caller dropdown and
-    // bail — location/project/campaign are intentionally left empty so the
-    // user re-picks the cascade. Caller dropdown was loaded once at init
-    // and survives resetForm's $("#grade-form").reset().
-    if (ctx.sticky) {
-      const callerSel = $("#gf-caller");
-      if (callerSel && ctx.caller_user_id) {
-        const opt = Array.from(callerSel.options).find(
-          (o) => String(o.value) === String(ctx.caller_user_id),
-        );
-        if (opt) callerSel.value = String(ctx.caller_user_id);
-      }
-      return;
-    }
 
     const locSel  = $("#gf-location");
     const projSel = $("#gf-project");
@@ -2659,7 +2330,7 @@
     }
   }
 
-  // Reset after a successful submit (split-pane / legacy / voip / no-answer).
+  // Reset after a successful submit (split-pane / legacy / no-answer).
   // Preserves caller + location + project + campaign + intel card + notes
   // draft. Clears audio + date + per-call state. The form section stays
   // visible (legacy mode hides + restores around the modal lifecycle).
@@ -2680,58 +2351,10 @@
       + String(_t.getDate()).padStart(2,"0");
     $("#form-hint").textContent = "";
     // Re-arm the audio source panel that the user was on so the contextual
-    // submit button (record/upload/voip) gets reset along with its state.
+    // submit button (record/upload) gets reset along with its state.
     switchTab(state.activePanel || (window.MediaRecorder ? "record" : "upload"));
     // Form section stays visible — no modal in split-pane mode. Don't
     // touch project/location/campaign/intel-card — those are preserved.
-  }
-
-  function resetForm() {
-    dbg("resetForm:enter");
-    window.gradeComplete = false;
-    $("#grade-result-section").hidden = true;
-    $("#grade-result-section").innerHTML = "";
-    $("#grade-form-section").hidden = false;
-    $("#grade-form").reset();
-    clearAudioFile();
-    cleanupLiveRecording(true);
-    state.currentInteraction = null;
-    state.callerNameDisplay = "";
-    state.locationNameDisplay = "";
-    // Local date — toISOString() would shift to tomorrow after 8 PM EDT.
-    const _t = new Date();
-    $("#gf-date").value = _t.getFullYear() + "-"
-      + String(_t.getMonth()+1).padStart(2,"0") + "-"
-      + String(_t.getDate()).padStart(2,"0");
-    $("#form-hint").textContent = "";
-    // Reset the location-driven project dropdown to its "pick a location" state
-    $("#gf-location-phone").textContent = "";
-    $("#gf-location-phone").hidden = true;
-    renderProjectDropdown(null);
-    destroyCampaignCombo();
-    setCampaignFieldEnabled(false);
-    const intel = document.getElementById("location-intel-card");
-    if (intel) {
-      intel.hidden = true;
-      intel.innerHTML = "";
-      intel.classList.add("compact");
-    }
-    updateProjectFieldVisibility();
-    switchTab(window.MediaRecorder ? "record" : "upload");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-
-    const params = new URLSearchParams(window.location.search);
-    const forcedProjectId = params.get("project_id");
-    if (forcedProjectId) {
-      // Locked-URL workflow: re-run applyLockedProject to rebuild the
-      // project option + remount the campaign combo. Symmetric with init()
-      // — without this, resetForm's renderProjectDropdown(null) wipes the
-      // locked project and the campaign field is stuck on "Select a project
-      // first…" even though the lock strip still shows the project name.
-      applyLockedProject(forcedProjectId);
-    } else {
-      applyGradeContext();
-    }
   }
 
   // ── No-answer flow ─────────────────────────────────

@@ -772,7 +772,7 @@ def export_call_package():
     to a direct binary stream.
     """
     from interactions_routes import (
-        _safe_filename_segment, _sniff_audio_ext, STATUS_NO_ANSWER,
+        _sniff_audio_ext, STATUS_NO_ANSWER,
     )
     import pdf_export
 
