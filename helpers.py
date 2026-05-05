@@ -177,19 +177,27 @@ def verify_attribution_tenancy(
                 f"company {dict(row)['company_id']}, expected {company_id}")
 
     # caller_user_id → users.department_id → departments.company_id
+    # M-C-1: super_admins are platform-scoped (NULL department_id by design)
+    # and legitimately cross-cut tenants. Exempt them from the company match.
+    # LEFT JOIN on departments so super_admins survive the row lookup; the
+    # role join lets us identify them.
     cur = conn.execute(
-        q("""SELECT d.company_id FROM users u
-               JOIN departments d ON d.department_id = u.department_id
+        q("""SELECT d.company_id, r.role_name
+               FROM users u
+               LEFT JOIN departments d ON d.department_id = u.department_id
+               LEFT JOIN user_roles ur ON ur.user_role_id = u.user_role_id
+               LEFT JOIN roles      r  ON r.role_id       = ur.role_id
               WHERE u.user_id = ? AND u.user_deleted_at IS NULL"""),
         (caller_user_id,),
     )
     row = cur.fetchone()
     if not row:
-        return (f"tenant_mismatch: caller_user_id {caller_user_id} not found "
-                "or has no department")
-    if dict(row)["company_id"] != company_id:
-        return (f"tenant_mismatch: caller_user_id {caller_user_id} belongs to "
-                f"company {dict(row)['company_id']}, expected {company_id}")
+        return f"tenant_mismatch: caller_user_id {caller_user_id} not found"
+    row_d = dict(row)
+    if row_d.get("role_name") != "super_admin":
+        if row_d.get("company_id") != company_id:
+            return (f"tenant_mismatch: caller_user_id {caller_user_id} belongs to "
+                    f"company {row_d.get('company_id')}, expected {company_id}")
 
     # Optional campaign_id → must belong to the (already-verified) project
     if campaign_id is not None:

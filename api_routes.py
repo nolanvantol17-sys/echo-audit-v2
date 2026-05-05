@@ -2222,6 +2222,22 @@ _TEAM_SELECT = """
 """
 
 
+# M-C-1: caller-picker SELECT. Mirrors _TEAM_SELECT but LEFT JOINs on
+# departments so super_admins (NULL department_id by design — they're
+# platform-scoped, not tenant-scoped) survive into the result set. Used
+# only by GET /api/callers; /api/team and team.html keep _TEAM_SELECT.
+_CALLER_SELECT = """
+    SELECT u.user_id, u.user_email, u.user_first_name, u.user_last_name,
+           u.status_id, s.status_name, u.user_created_at,
+           r.role_name
+    FROM users u
+    LEFT JOIN departments d ON d.department_id = u.department_id
+    LEFT JOIN user_roles ur ON ur.user_role_id = u.user_role_id
+    LEFT JOIN roles      r  ON r.role_id       = ur.role_id
+    LEFT JOIN statuses   s  ON s.status_id     = u.status_id
+"""
+
+
 @api_bp.route("/team", methods=["GET"])
 @login_required
 @role_required("admin", "super_admin")
@@ -2235,6 +2251,37 @@ def list_team():
             _TEAM_SELECT + " WHERE d.company_id = ? AND u.user_deleted_at IS NULL"
                            " ORDER BY u.user_created_at DESC"
         ), (company_id,))
+        return jsonify(_rows(cur))
+    finally:
+        conn.close()
+
+
+@api_bp.route("/callers", methods=["GET"])
+@login_required
+@role_required("admin", "super_admin", "manager", "caller")
+def list_callers():
+    """All users selectable as the caller on a grade or AI shop call.
+
+    Returns: company-members of the current tenant + ALL super_admins
+    (regardless of tenant scope — super_admin role is platform-level by
+    design). Soft-deleted users are excluded. Same JSON shape as /api/team
+    so existing client-side rendering keeps working.
+
+    Separate from /api/team intentionally — that endpoint backs the team-
+    management page which should NOT surface platform super_admins as
+    company team members. Frontend (grade.html loadCallers) appends a
+    " (Platform)" suffix to disambiguate when names collide.
+    """
+    company_id, err = _require_company()
+    if err: return err
+
+    conn = get_conn()
+    try:
+        sql = (_CALLER_SELECT
+               + " WHERE u.user_deleted_at IS NULL"
+                 "   AND (d.company_id = ? OR r.role_name = 'super_admin')"
+                 " ORDER BY u.user_first_name, u.user_last_name")
+        cur = conn.execute(q(sql), (company_id,))
         return jsonify(_rows(cur))
     finally:
         conn.close()
