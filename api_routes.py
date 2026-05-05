@@ -1865,6 +1865,7 @@ def get_project_summary(project_id):
                     "stat_cards": {
                         "total_calls": 0, "avg_score": None,
                         "below_threshold": 0, "no_answer_count": 0,
+                        "no_answer_rate": None,
                     },
                     "recent_calls": [], "top_agents": [],
                 })
@@ -1899,11 +1900,20 @@ def get_project_summary(project_id):
         noans_row = _row_to_dict(cur.fetchone()) or {}
         no_answer_count = noans_row.get("cnt") or 0
 
+        # Derived: no_answer_rate = no_ans / (graded + no_ans). total_calls
+        # already excludes status=44 via the scored_row query's predicate, so
+        # it serves as the graded denominator. Mirrors dashboard_routes.py:342
+        # so the % means the same thing on the main dashboard and the project
+        # hub's _dashboard_stats.html partial.
+        nar_denom      = (scored_row.get("total_calls") or 0) + (no_answer_count or 0)
+        no_answer_rate = (no_answer_count / nar_denom) if nar_denom else None
+
         stat_cards = {
             "total_calls":     scored_row.get("total_calls") or 0,
             "avg_score":       stat_avg,
             "below_threshold": scored_row.get("below_threshold") or 0,
             "no_answer_count": no_answer_count,
+            "no_answer_rate":  no_answer_rate,
         }
 
         # Recent calls — last 5 in scope. ORDER BY DESC LIMIT 5 still, but
