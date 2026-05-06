@@ -891,6 +891,7 @@ def _process(voip_queue_id: int) -> None:
             transcript,
             queue_row.get("voip_queue_duration_seconds"),
             termination_reason,
+            conversation_id=queue_row.get("voip_queue_call_id"),
         )
         if classification != "real_conversation":
             _persist_classified_no_answer(
@@ -958,6 +959,7 @@ def _process(voip_queue_id: int) -> None:
             transcript,
             queue_row.get("voip_queue_duration_seconds"),
             termination_reason,
+            conversation_id=queue_row.get("voip_queue_call_id"),
         )
         if classification != "real_conversation":
             _persist_classified_no_answer(

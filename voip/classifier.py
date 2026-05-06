@@ -28,6 +28,7 @@ def classify_call(
     transcript: str,
     duration_seconds: int | None,
     termination_reason: str | None,
+    conversation_id: str | None = None,
 ) -> str:
     """Classify a call into one of four buckets. Never raises.
 
@@ -39,25 +40,31 @@ def classify_call(
         duration_seconds    — call length in seconds; may be None.
         termination_reason  — provider-supplied hint (ElevenLabs only today,
                               e.g. 'Call ended by remote party'); may be None.
+        conversation_id     — provider call id (e.g. ElevenLabs conv_*); logged
+                              for post-hoc audit of misclassifications.
     """
     transcript_len = len(transcript or "")
     summary = (
-        f"len={transcript_len} duration={duration_seconds} "
-        f"termination={termination_reason!r}"
+        f"conv={conversation_id or '(none)'} len={transcript_len} "
+        f"duration={duration_seconds} termination={termination_reason!r}"
     )
 
     prompt = (
         "You are a call classifier. Read the inputs and return exactly ONE "
         "lowercase label from this set, with NO extra text:\n"
         "  real_conversation  — two parties had a substantive back-and-forth "
-        "exchange (about a property, leasing, a question — anything real).\n"
+        "exchange (about a property, leasing, a question — anything real). "
+        "Requires a HUMAN response from the called party, not just an "
+        "automated/recorded prompt.\n"
         "  voicemail          — the recording captured a voicemail prompt "
         "('leave a message after the tone', 'no one is available', "
         "'press the pound key', 'voicemail for ...').\n"
         "  no_answer          — call was not answered by a human, OR only "
-        "carrier/hold messages were captured ('we will be with you shortly', "
-        "'this call may be monitored or recorded'). Empty/near-empty "
-        "transcripts are no_answer.\n"
+        "automated content was captured. Includes: carrier/hold messages "
+        "('we will be with you shortly', 'this call may be monitored or "
+        "recorded'); IVR auto-attendant menus that list options ('press 1 "
+        "for X, press 2 for Y') and never route to a human; empty/near-empty "
+        "transcripts.\n"
         "  failed_call        — technical failure, garbage, or none of the above.\n"
         "\n"
         "GROUNDING RULES:\n"
@@ -65,6 +72,14 @@ def classify_call(
         "- Carrier hold messages alone are NOT real_conversation.\n"
         "- A voicemail prompt with no human reply is voicemail, not "
         "real_conversation.\n"
+        "- An IVR menu/auto-attendant ('press 1 for leasing, press 2 for "
+        "maintenance, ...') that never routes to a human is no_answer, even "
+        "if the menu mentions topics like leasing or rentals.\n"
+        "- If the called party (typically Speaker B) produces ONLY automated "
+        "content (IVR menus, hold messages, voicemail prompts) and never a "
+        "human voice, classify as no_answer regardless of what the caller "
+        "(typically Speaker A — our outbound AI shopper) said. The caller "
+        "speaking does NOT make it real_conversation.\n"
         "- Reply with the single label and nothing else.\n"
         "\n"
         f"DURATION_SECONDS: {duration_seconds}\n"
