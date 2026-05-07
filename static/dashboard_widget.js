@@ -169,7 +169,7 @@
     .daw-popover {
       position: absolute; z-index: 50; min-width: 220px; max-width: 320px;
       background: var(--surface); border: 1px solid var(--border);
-      border-radius: 8px; box-shadow: 0 6px 18px rgba(31,26,20,0.10);
+      border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.30);
       padding: 8px; max-height: 320px; display: flex; flex-direction: column;
     }
     .daw-popover input.daw-popover-search {
@@ -471,12 +471,12 @@
     const cache = new Map();
     const root = document.documentElement;
     return function resolve(val) {
-      if (!val) return "#7A6F62";
+      if (!val) return "#9C9183";
       const m = /^var\((--[^)]+)\)$/.exec(String(val).trim());
       if (!m) return val;
       const key = m[1];
       if (cache.has(key)) return cache.get(key);
-      const resolved = getComputedStyle(root).getPropertyValue(key).trim() || "#7A6F62";
+      const resolved = getComputedStyle(root).getPropertyValue(key).trim() || "#9C9183";
       cache.set(key, resolved);
       return resolved;
     };
@@ -495,8 +495,8 @@
         datasets: [{
           label: "Score",
           data: dataset.data || [],
-          borderColor: "#4F5D75",
-          backgroundColor: "rgba(79,93,117,0.15)",
+          borderColor: "#4A8076",
+          backgroundColor: "rgba(74,128,118,0.15)",
           borderWidth: 2,
           pointRadius: 4,
           pointHoverRadius: 6,
@@ -535,7 +535,7 @@
   function chartCommonOptions(opts) {
     opts = opts || {};
     const isDate = opts.viewBy === "date";
-    const plugins = { legend: { labels: { color: "#1F1A14" } } };
+    const plugins = { legend: { labels: { color: "#ECE6D9" } } };
     if (isDate) {
       // Date-view tooltip reads the matched row from chart.$points (stashed
       // in renderChart). Aggregate views leave defaults untouched.
@@ -560,12 +560,12 @@
       scales: {
         y: {
           min: 0, max: 10,
-          ticks: { color: "#7A6F62", stepSize: 2 },
-          grid:  { color: "rgba(40,30,20,0.12)" },
+          ticks: { color: "#9C9183", stepSize: 2 },
+          grid:  { color: "rgba(236,230,217,0.10)" },
         },
         x: {
-          ticks: { color: "#7A6F62", maxRotation: 0, autoSkip: true },
-          grid:  { color: "rgba(40,30,20,0.12)" },
+          ticks: { color: "#9C9183", maxRotation: 0, autoSkip: true },
+          grid:  { color: "rgba(236,230,217,0.10)" },
         },
       },
       plugins: plugins,
@@ -580,7 +580,7 @@
         if (!scales.y) return;
         const y = scales.y.getPixelForValue(5);
         ctx.save();
-        ctx.strokeStyle = "rgba(168,80,73,0.7)";
+        ctx.strokeStyle = "rgba(196,90,79,0.7)";
         ctx.setLineDash([4, 4]);
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -588,7 +588,7 @@
         ctx.lineTo(chartArea.right, y);
         ctx.stroke();
         ctx.setLineDash([]);
-        ctx.fillStyle = "rgba(168,80,73,0.85)";
+        ctx.fillStyle = "rgba(196,90,79,0.85)";
         ctx.font = "11px Inter, sans-serif";
         ctx.textAlign = "right";
         ctx.fillText("threshold 5.0", chartArea.right - 6, y - 4);
