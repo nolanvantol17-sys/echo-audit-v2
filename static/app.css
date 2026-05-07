@@ -25,8 +25,8 @@
   --success-bg: rgba(168,232,71,0.16);
   --danger:     #FF5C4A;
   --danger-bg:  rgba(255,92,74,0.16);
-  --warning:    #FFD030;
-  --warning-bg: rgba(255,208,48,0.16);
+  --warning:    #FF8C2A;
+  --warning-bg: rgba(255,140,42,0.16);
   --radius:     10px;
   --radius-sm:  8px;
   --radius-lg:  14px;
@@ -207,7 +207,7 @@ button { font-family: inherit; }
 .flash-msg.info    { background: var(--accent-soft); color: #7DB5AB; border-color: rgba(74,128,118,0.40); }
 .flash-msg.success { background: var(--success-bg);  color: #D8FF8C; border-color: rgba(168,232,71,0.40); }
 .flash-msg.error   { background: var(--danger-bg);   color: #FF8C7A; border-color: rgba(255,92,74,0.40); }
-.flash-msg.warning { background: var(--warning-bg);  color: #FFE070; border-color: rgba(255,208,48,0.45); }
+.flash-msg.warning { background: var(--warning-bg);  color: #FFB870; border-color: rgba(255,140,42,0.45); }
 .flash-dismiss {
   background: none; border: none; color: inherit; opacity: 0.6;
   cursor: pointer; font-size: 1.1rem; padding: 0 4px;
@@ -897,8 +897,8 @@ button { font-family: inherit; }
 .flag-banner {
   padding: 10px 14px;
   background: var(--warning-bg);
-  border: 1px solid rgba(255,208,48,0.45);
-  color: #FFE070;
+  border: 1px solid rgba(255,140,42,0.45);
+  color: #FFB870;
   border-radius: var(--radius-sm);
   font-size: 0.88rem;
   margin-bottom: 10px;
