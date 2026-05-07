@@ -65,7 +65,7 @@
       ? '<div class="flag-banner">' + EA.esc(d.interaction_flags) + '</div>' : "";
 
     const regradedBanner = d.interaction_regraded_with_context
-      ? ('<div class="score-diff-banner" style="background:var(--accent-soft);border-color:rgba(37,99,235,0.25);color:#93c5fd;">' +
+      ? ('<div class="score-diff-banner" style="background:var(--accent-soft);border-color:rgba(79,93,117,0.25);color:#34405A;">' +
            '<strong>Regraded with reviewer context.</strong>' +
            (d.interaction_reviewer_context
              ? '<div class="text-small" style="margin-top:6px;white-space:pre-wrap;">' +
@@ -219,8 +219,8 @@
     const contextPanelHtml = (!readOnly && canRegrade) ? renderContextPanel(d) : '';
 
     const hardDeleteHtml = canHardDelete
-      ? '<div class="panel" style="margin-top:18px;border-color:rgba(220,38,38,0.35);">' +
-          '<div class="panel-title" style="color:#ef4444;">Danger zone</div>' +
+      ? '<div class="panel" style="margin-top:18px;border-color:rgba(168,80,73,0.35);">' +
+          '<div class="panel-title" style="color:#7A3A35;">Danger zone</div>' +
           '<div class="muted text-small" style="margin-bottom:10px;">' +
             'Permanently delete this interaction and everything attached to it ' +
             '(rubric scores, audio file, audit-log entries). ' +
@@ -472,7 +472,7 @@
     root.appendChild(survivesList);
 
     const warning = document.createElement("div");
-    warning.style.color = "#ef4444";
+    warning.style.color = "#7A3A35";
     warning.style.fontWeight = "600";
     warning.textContent = "This action cannot be undone.";
     root.appendChild(warning);

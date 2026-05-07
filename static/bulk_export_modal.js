@@ -143,7 +143,7 @@
         '</label>' +
       '</div>' +
       '<div class="muted text-small" style="margin-bottom:6px;">Toggling filters will update the counts.</div>' +
-      '<div data-role="stats" style="padding:10px 12px;background:var(--surface-2,#f1f5f9);border-radius:6px;">' +
+      '<div data-role="stats" style="padding:10px 12px;background:var(--surface-2,#F4EFE7);border-radius:6px;">' +
         '<div class="muted text-small">Pick a project to see counts.</div>' +
       '</div>';
 
@@ -179,7 +179,7 @@
         '</label>';
       });
       // Uncategorized pseudo-row — always shown when project has campaigns.
-      html += '<label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin-bottom:4px;padding-left:18px;font-style:italic;color:var(--muted,#64748b);">' +
+      html += '<label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin-bottom:4px;padding-left:18px;font-style:italic;color:var(--muted,#7A6F62);">' +
         '<input type="checkbox" class="campaign-cb" data-uncategorized="1" disabled> ' +
         'Uncategorized (no campaign)' +
       '</label>';
@@ -408,7 +408,7 @@
         '</label>' +
       '</div>' +
       '<div class="muted text-small" style="margin-bottom:6px;">Toggling filters will update the counts.</div>' +
-      '<div data-role="stats" style="padding:10px 12px;background:var(--surface-2,#f1f5f9);border-radius:6px;">' +
+      '<div data-role="stats" style="padding:10px 12px;background:var(--surface-2,#F4EFE7);border-radius:6px;">' +
         '<div class="muted text-small">Pick a project to see counts.</div>' +
       '</div>';
 
@@ -442,7 +442,7 @@
           EA.esc(c.campaign_name) +
         '</label>';
       });
-      html += '<label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin-bottom:4px;padding-left:18px;font-style:italic;color:var(--muted,#64748b);">' +
+      html += '<label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin-bottom:4px;padding-left:18px;font-style:italic;color:var(--muted,#7A6F62);">' +
         '<input type="checkbox" class="campaign-cb" data-uncategorized="1" disabled> ' +
         'Uncategorized (no campaign)' +
       '</label>';
