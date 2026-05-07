@@ -11,22 +11,22 @@
 :root {
   --bg:         #FAF7F2;
   --surface:    #FFFFFF;
-  --surface-2:  #F4EFE7;
-  --surface-3:  #EDE6DA;
-  --border:     rgba(40,30,20,0.10);
-  --border-strong: rgba(40,30,20,0.18);
+  --surface-2:  #EDE5D6;
+  --surface-3:  #E2D8C4;
+  --border:     rgba(40,30,20,0.18);
+  --border-strong: rgba(40,30,20,0.32);
   --text:       #1F1A14;
-  --muted:      #7A6F62;
-  --muted-2:    #9C9183;
-  --accent:     #4F5D75;
-  --accent-h:   #3F4D63;
-  --accent-soft: rgba(79,93,117,0.12);
-  --success:    #5C8062;
-  --success-bg: rgba(92,128,98,0.10);
-  --danger:     #A85049;
-  --danger-bg:  rgba(168,80,73,0.10);
-  --warning:    #B58452;
-  --warning-bg: rgba(181,132,82,0.10);
+  --muted:      #5E534A;
+  --muted-2:    #7A6F62;
+  --accent:     #2D3F5A;
+  --accent-h:   #1F2D44;
+  --accent-soft: rgba(45,63,90,0.16);
+  --success:    #3F6549;
+  --success-bg: rgba(63,101,73,0.18);
+  --danger:     #8A3530;
+  --danger-bg:  rgba(138,53,48,0.18);
+  --warning:    #8C5E2C;
+  --warning-bg: rgba(140,94,44,0.18);
   --radius:     10px;
   --radius-sm:  8px;
   --radius-lg:  14px;
@@ -204,10 +204,10 @@ button { font-family: inherit; }
   align-items: center;
   border: 1px solid transparent;
 }
-.flash-msg.info    { background: var(--accent-soft); color: #34405A; border-color: rgba(79,93,117,0.25); }
-.flash-msg.success { background: var(--success-bg);  color: #3F5E45; border-color: rgba(92,128,98,0.25); }
-.flash-msg.error   { background: var(--danger-bg);   color: #7A3A35; border-color: rgba(168,80,73,0.25); }
-.flash-msg.warning { background: var(--warning-bg);  color: #7C5A2F; border-color: rgba(181,132,82,0.3); }
+.flash-msg.info    { background: var(--accent-soft); color: #1F2D44; border-color: rgba(45,63,90,0.40); }
+.flash-msg.success { background: var(--success-bg);  color: #2A4831; border-color: rgba(63,101,73,0.40); }
+.flash-msg.error   { background: var(--danger-bg);   color: #5E2520; border-color: rgba(138,53,48,0.40); }
+.flash-msg.warning { background: var(--warning-bg);  color: #5E3F1C; border-color: rgba(140,94,44,0.45); }
 .flash-dismiss {
   background: none; border: none; color: inherit; opacity: 0.6;
   cursor: pointer; font-size: 1.1rem; padding: 0 4px;
@@ -389,8 +389,8 @@ button { font-family: inherit; }
 .section-error {
   padding: 14px;
   background: var(--danger-bg);
-  border: 1px solid rgba(168,80,73,0.25);
-  color: #7A3A35;
+  border: 1px solid rgba(138,53,48,0.40);
+  color: #5E2520;
   border-radius: var(--radius-sm);
   font-size: 0.85rem;
 }
@@ -693,7 +693,7 @@ button { font-family: inherit; }
 }
 .toast-msg.show { opacity: 1; transform: translateY(0); }
 .toast-success { border-left: 3px solid var(--success); }
-.toast-error   { border-left: 3px solid var(--danger);  color: #7A3A35; }
+.toast-error   { border-left: 3px solid var(--danger);  color: #5E2520; }
 .toast-info    { border-left: 3px solid var(--accent); }
 
 /* ── Grade result / interaction detail ──────────────────── */
@@ -897,8 +897,8 @@ button { font-family: inherit; }
 .flag-banner {
   padding: 10px 14px;
   background: var(--warning-bg);
-  border: 1px solid rgba(181,132,82,0.3);
-  color: #7C5A2F;
+  border: 1px solid rgba(140,94,44,0.45);
+  color: #5E3F1C;
   border-radius: var(--radius-sm);
   font-size: 0.88rem;
   margin-bottom: 10px;
@@ -998,13 +998,13 @@ details.collapsible > summary::-webkit-details-marker { display: none; }
   color: var(--muted);
 }
 .status-pill.status-graded  { background: var(--success-bg); color: var(--success); }
-.status-pill.status-pending { background: var(--accent-soft); color: #34405A; }
+.status-pill.status-pending { background: var(--accent-soft); color: #1F2D44; }
 .status-pill.status-no_answer,
 .status-pill.status-no-answer { background: var(--warning-bg); color: var(--warning); }
 .status-pill.status-awaiting_clarification,
 .status-pill.status-awaiting-clarification { background: var(--warning-bg); color: var(--warning); }
 /* Test-call flag pill — purple/violet, distinct from status semantic colors. */
-.status-pill.status-test { background: rgba(74,61,112,0.16); color: #4A3D70; }
+.status-pill.status-test { background: rgba(46,33,80,0.20); color: #2E2150; }
 
 /* Score pill extension — gray variant for no-answer rows */
 .score-pill.gray { background: var(--surface-3); color: var(--muted); }
@@ -1016,7 +1016,7 @@ details.collapsible > summary::-webkit-details-marker { display: none; }
   gap: 6px;
   padding: 4px 10px;
   background: var(--accent-soft);
-  color: #34405A;
+  color: #1F2D44;
   border-radius: 999px;
   font-size: 0.72rem;
   font-weight: 600;
@@ -1026,8 +1026,8 @@ details.collapsible > summary::-webkit-details-marker { display: none; }
 .score-diff-banner {
   padding: 10px 14px;
   background: var(--success-bg);
-  border: 1px solid rgba(92,128,98,0.25);
-  color: #3F5E45;
+  border: 1px solid rgba(63,101,73,0.40);
+  color: #2A4831;
   border-radius: var(--radius-sm);
   font-size: 0.88rem;
   margin-bottom: 14px;
@@ -1195,8 +1195,8 @@ audio.app-audio {
   color: var(--muted);
 }
 .role-pill.role-super_admin,
-.role-pill.role-super-admin { background: #E8E3F2; color: #4A3D70; }
-.role-pill.role-admin   { background: var(--accent-soft); color: #34405A; }
+.role-pill.role-super-admin { background: #E8E3F2; color: #2E2150; }
+.role-pill.role-admin   { background: var(--accent-soft); color: #1F2D44; }
 .role-pill.role-manager { background: var(--warning-bg); color: var(--warning); }
 .role-pill.role-caller  { background: var(--surface-3); color: var(--muted); }
 
@@ -1281,8 +1281,8 @@ audio.app-audio {
   margin-bottom: 14px;
   padding: 10px 14px;
   background: var(--accent-soft);
-  border: 1px solid rgba(79,93,117,0.25);
-  color: #34405A;
+  border: 1px solid rgba(45,63,90,0.40);
+  color: #1F2D44;
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
@@ -1404,7 +1404,7 @@ audio.app-audio {
 /* ── FE-5: VoIP queue status pills ───────────────────────── */
 .status-pill.status-processing {
   background: var(--accent-soft);
-  color: #34405A;
+  color: #1F2D44;
   animation: queue-processing-pulse 1.6s infinite;
 }
 @keyframes queue-processing-pulse {
@@ -1753,7 +1753,7 @@ tr.row-flagged td { background: rgba(168,80,73,0.06); }
   text-transform: uppercase;
   white-space: nowrap;
 }
-.ajd-pill-status.queued      { background: var(--accent-soft); color: #34405A; }
+.ajd-pill-status.queued      { background: var(--accent-soft); color: #1F2D44; }
 .ajd-pill-status.in_progress { background: var(--warning-bg);  color: var(--warning); }
 .ajd-pill-status.graded      { background: var(--success-bg);  color: var(--success); }
 .ajd-pill-status.no_answer   { background: var(--surface-3);   color: var(--muted); }

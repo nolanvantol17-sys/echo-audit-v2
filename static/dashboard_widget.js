@@ -561,11 +561,11 @@
         y: {
           min: 0, max: 10,
           ticks: { color: "#7A6F62", stepSize: 2 },
-          grid:  { color: "rgba(40,30,20,0.06)" },
+          grid:  { color: "rgba(40,30,20,0.12)" },
         },
         x: {
           ticks: { color: "#7A6F62", maxRotation: 0, autoSkip: true },
-          grid:  { color: "rgba(40,30,20,0.06)" },
+          grid:  { color: "rgba(40,30,20,0.12)" },
         },
       },
       plugins: plugins,
