@@ -14,16 +14,17 @@ project / caller / location / phone_routing (bar averages). "respondent" is
 accepted as a legacy alias for "caller" — both group on i.caller_user_id.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request
-from flask_login import login_required
+from flask_login import current_user, login_required
 
 from dashboard_helpers import (
     _report_url_for, _roll_up_locations, _trend_for_calls,
 )
 from db import get_conn, q
 from helpers import get_effective_company_id
+from insights import compute_dashboard_insights_async, fetch_cached as fetch_insights_cached
 
 dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/api")
 
@@ -220,7 +221,7 @@ def get_dashboard():
                    {extra_clause}
                  GROUP BY r.respondent_id, r.respondent_name, r.location_id
                  ORDER BY avg_score DESC
-                 LIMIT 3"""),
+                 LIMIT 10"""),
             tuple([company_id, STATUS_NO_ANSWER, *extra_params]),
         )
         rolling_start = date.today() - timedelta(days=30)
@@ -330,7 +331,7 @@ def get_dashboard():
                  WHERE p.company_id = ? AND i.interaction_deleted_at IS NULL
                    AND i.interaction_is_test = FALSE
                  ORDER BY i.interaction_id DESC
-                 LIMIT 5"""),
+                 LIMIT 8"""),
             (company_id,),
         )
         recent = _rows(cur)
@@ -342,6 +343,40 @@ def get_dashboard():
         nar_denom    = (graded_total or 0) + (no_answer_count or 0)
         no_answer_rate = (no_answer_count / nar_denom) if nar_denom else None
 
+        # Activity strip (rolling 7d vs prior 7d). Intentionally NOT
+        # filter-scoped — same rationale as active_projects above. Two
+        # separate queries instead of COUNT(*) FILTER (which is PG-only) so
+        # the SQLite path stays happy.
+        today = date.today()
+        this_week_start = today - timedelta(days=6)
+        prior_start     = today - timedelta(days=13)
+        prior_end       = today - timedelta(days=7)
+        cur = conn.execute(
+            q("""SELECT COUNT(*) AS cnt FROM interactions i
+                 JOIN projects p ON p.project_id = i.project_id
+                WHERE p.company_id = ? AND i.interaction_deleted_at IS NULL
+                  AND i.interaction_is_test = FALSE AND i.status_id <> ?
+                  AND i.interaction_date >= ?"""),
+            (company_id, STATUS_NO_ANSWER, this_week_start),
+        )
+        this_week_count = _scalar(_row_to_dict(cur.fetchone()), "cnt", 0)
+        cur = conn.execute(
+            q("""SELECT COUNT(*) AS cnt FROM interactions i
+                 JOIN projects p ON p.project_id = i.project_id
+                WHERE p.company_id = ? AND i.interaction_deleted_at IS NULL
+                  AND i.interaction_is_test = FALSE AND i.status_id <> ?
+                  AND i.interaction_date >= ? AND i.interaction_date <= ?"""),
+            (company_id, STATUS_NO_ANSWER, prior_start, prior_end),
+        )
+        last_week_count = _scalar(_row_to_dict(cur.fetchone()), "cnt", 0)
+
+        if last_week_count > 0:
+            delta_pct = round(((this_week_count - last_week_count) / last_week_count) * 100, 1)
+        elif this_week_count > 0:
+            delta_pct = None  # infinite growth from zero — undefined, render as "—"
+        else:
+            delta_pct = 0.0
+
         return jsonify({
             "stat_cards": {
                 "total_calls":      _scalar(scored_row, "total_calls", 0),
@@ -351,11 +386,82 @@ def get_dashboard():
                 "no_answer_rate":   no_answer_rate,
                 "active_projects":  active_projects,
             },
+            "activity": {
+                "this_week": this_week_count,
+                "last_week": last_week_count,
+                "delta_pct": delta_pct,
+            },
             "leaderboard":        leaderboard,
             "recent_interactions": recent,
         })
     finally:
         conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════
+# Dashboard insights (recurring-issues mini-report) — /api/dashboard/insights
+# ═══════════════════════════════════════════════════════════════
+#
+# GET returns the cached row (or null on cold start) and triggers a background
+# refresh when the cache is missing or older than 24h. The frontend renders
+# stale content immediately and picks up fresh content on next page load.
+#
+# POST refreshes on demand. Admin-only — generation cost is non-trivial
+# (Haiku call) and we don't want regular users hammering it.
+
+_INSIGHTS_TTL = timedelta(hours=24)
+
+
+def _is_stale(generated_at):
+    if generated_at is None:
+        return True
+    if isinstance(generated_at, str):
+        # SQLite returns strings; coerce to compare.
+        try:
+            generated_at = datetime.fromisoformat(generated_at)
+        except ValueError:
+            return True
+    if generated_at.tzinfo is None:
+        generated_at = generated_at.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - generated_at) > _INSIGHTS_TTL
+
+
+@dashboard_bp.route("/dashboard/insights", methods=["GET"])
+@login_required
+def get_dashboard_insights():
+    company_id, err = _require_company()
+    if err: return err
+
+    cached = fetch_insights_cached(company_id)
+    if cached is None or _is_stale(cached.get("di_generated_at")):
+        compute_dashboard_insights_async(company_id)
+
+    if cached is None:
+        return jsonify({
+            "report_markdown":  None,
+            "calls_in_window":  0,
+            "generated_at":     None,
+            "is_generating":    True,
+        })
+
+    gen_at = cached.get("di_generated_at")
+    return jsonify({
+        "report_markdown":  cached.get("di_report_markdown"),
+        "calls_in_window":  cached.get("di_calls_in_window") or 0,
+        "generated_at":     gen_at.isoformat() if hasattr(gen_at, "isoformat") else gen_at,
+        "is_generating":    _is_stale(gen_at),
+    })
+
+
+@dashboard_bp.route("/dashboard/insights/refresh", methods=["POST"])
+@login_required
+def refresh_dashboard_insights():
+    company_id, err = _require_company()
+    if err: return err
+    if current_user.role not in ("admin", "super_admin"):
+        return _err("Admin role required to refresh insights.", 403)
+    compute_dashboard_insights_async(company_id)
+    return jsonify({"ok": True, "is_generating": True}), 202
 
 
 # ═══════════════════════════════════════════════════════════════

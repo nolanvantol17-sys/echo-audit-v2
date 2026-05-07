@@ -504,6 +504,18 @@ _ADDITIVE_MIGRATIONS = [
         voice_agent_created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )""",
     "ALTER TABLE scheduled_calls ADD COLUMN IF NOT EXISTS sc_voice_agent_id INTEGER REFERENCES voice_agents(voice_agent_id) ON DELETE SET NULL",
+
+    # Sub-Task T: dashboard_insights — cached company-wide "recurring issues"
+    # mini-report rendered on /app/projects. Refreshed by insights.py on a
+    # 24h TTL (lazy on dashboard load, or on-demand via /api/dashboard/insights/refresh).
+    """CREATE TABLE IF NOT EXISTS dashboard_insights (
+        dashboard_insight_id  SERIAL PRIMARY KEY,
+        company_id            INTEGER NOT NULL UNIQUE
+                                  REFERENCES companies (company_id) ON DELETE CASCADE,
+        di_calls_in_window    INTEGER NOT NULL DEFAULT 0,
+        di_report_markdown    TEXT,
+        di_generated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
 ]
 
 

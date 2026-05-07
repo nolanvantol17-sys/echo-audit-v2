@@ -250,6 +250,62 @@
     align-items: center;
     margin-bottom: 12px;
   }
+
+  /* ── Activity strip (rolling 7d vs prior 7d) ── */
+  .dash-activity {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .dash-activity .stat-card { padding: 14px 16px; }
+  .dash-activity .stat-label { font-size: 0.78rem; }
+  .dash-activity .stat-value { font-size: 1.7rem; }
+  .activity-delta.up   { color: var(--success); }
+  .activity-delta.down { color: var(--danger); }
+  .activity-delta.flat { color: var(--muted); }
+  @media (max-width: 768px) {
+    .dash-activity { grid-template-columns: 1fr; }
+    .dash-activity .stat-value { font-size: 1.4rem; }
+  }
+
+  /* ── Recurring Issues panel ── */
+  #insights-panel {
+    margin-top: 18px;
+    padding: 18px 20px;
+  }
+  #insights-panel .panel-title-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+  #insights-panel .panel-title { margin-bottom: 0; }
+  #insights-panel .insights-meta {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+  #insights-panel .insights-body { line-height: 1.55; font-size: 0.93rem; }
+  #insights-panel .insights-body ul { margin: 0; padding-left: 18px; }
+  #insights-panel .insights-body li { margin-bottom: 8px; }
+  #insights-panel .insights-body li ul { margin-top: 4px; }
+  #insights-panel .insights-body li ul li {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 0;
+  }
+  #insights-panel .insights-body p {
+    color: var(--muted);
+    margin: 0 0 8px 0;
+    font-size: 0.88rem;
+  }
+  #insights-panel .insights-empty { color: var(--muted); font-style: italic; }
+  #insights-panel .insights-refresh {
+    font-size: 0.78rem;
+    padding: 4px 10px;
+  }
 </style>
 {% endblock %}
 
@@ -264,6 +320,22 @@
 {% include '_dashboard_stats.html' %}
 {% endwith %}
 
+{# ── Activity strip (rolling 7d vs prior 7d). Hidden until data loads. ── #}
+<div id="dash-activity" class="dash-activity" hidden>
+  <div class="stat-card">
+    <span class="stat-label">Calls This Week</span>
+    <span class="stat-value" id="activity-this-week">—</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">Calls Last Week</span>
+    <span class="stat-value" id="activity-last-week">—</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">Week-over-Week</span>
+    <span class="stat-value activity-delta" id="activity-delta">—</span>
+  </div>
+</div>
+
 <section id="projects-section">
   <div class="projects-section-header">
     <button type="button" class="btn btn-primary" id="btn-new-project">New Project</button>
@@ -277,7 +349,23 @@
   </div>
 </section>
 
+{% with include_chart=False %}
 {% include '_dashboard_analytics.html' %}
+{% endwith %}
+
+{# ── Recurring Issues — AI mini-report. Hidden until first fetch. ── #}
+<section id="insights-panel" class="panel" hidden>
+  <div class="panel-title-row">
+    <div class="panel-title">🔍 Recurring Issues</div>
+    <button type="button" class="btn btn-ghost insights-refresh" hidden>Refresh</button>
+  </div>
+  <div class="insights-meta"></div>
+  <div class="insights-body">
+    <div class="skeleton" style="height:14px;margin:6px 0;"></div>
+    <div class="skeleton" style="height:14px;margin:6px 0;width:85%;"></div>
+    <div class="skeleton" style="height:14px;margin:6px 0;width:72%;"></div>
+  </div>
+</section>
 
 {# ── Wizard modal (hidden until New Project clicked) ── #}
 <div id="wizard-backdrop" class="wizard-backdrop" hidden>
@@ -452,8 +540,6 @@
 <script defer src="{{ url_for('static', filename='audio_player.js') }}?v={{ static_v('audio_player.js') }}"></script>
 <script defer src="{{ url_for('static', filename='interaction_view.js') }}?v={{ static_v('interaction_view.js') }}"></script>
 <script defer src="{{ url_for('static', filename='interaction_panel.js') }}?v={{ static_v('interaction_panel.js') }}"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script defer src="{{ url_for('static', filename='dashboard_widget.js') }}?v={{ static_v('dashboard_widget.js') }}"></script>
 <script defer src="{{ url_for('static', filename='dashboard_summary.js') }}?v={{ static_v('dashboard_summary.js') }}"></script>
 <script defer src="{{ url_for('static', filename='rubric_list_view.js') }}?v={{ static_v('rubric_list_view.js') }}"></script>
 <script>
@@ -530,6 +616,8 @@
     $("#btn-new-project").addEventListener("click", openWizard);
     const emptyBtn = $("#btn-new-project-empty");
     if (emptyBtn) emptyBtn.addEventListener("click", openWizard);
+    const refreshBtn = document.querySelector("#insights-panel .insights-refresh");
+    if (refreshBtn) refreshBtn.addEventListener("click", refreshInsights);
     await Promise.all([loadProjects(), loadDashboardSummary()]);
     const params = new URLSearchParams(window.location.search);
     const editId = parseInt(params.get("edit") || "", 10);
@@ -541,9 +629,14 @@
   }
 
   // ── Dashboard summary (tenant-scoped) ──
-  // Hidden in zero-state so a brand-new tenant sees the empty projects grid
-  // as the page's primary call-to-action without analytics chrome above it.
-  let widgetHandle = null;
+  // The score-trend chart used to live here; per Sub-Task T it moved into
+  // the per-project hub. /app/projects is now a stat-and-insights surface:
+  // the 5 KPI cards, an Activity strip (rolling 7d vs prior 7d), expanded
+  // Top Callers + Recent Grades panels, and a Haiku-generated Recurring
+  // Issues report. Hidden in zero-state so a brand-new tenant sees the
+  // empty projects grid as the page's primary call-to-action.
+  const IS_ADMIN =
+    {{ 'true' if user_role in ('admin', 'super_admin') else 'false' }};
 
   async function loadDashboardSummary() {
     try {
@@ -551,49 +644,38 @@
       const totalCalls = Number((d.stat_cards || {}).total_calls || 0);
       if (totalCalls === 0) return;
       document.getElementById("dash-summary").hidden = false;
-      document.getElementById("dash-chart-wrap").hidden = false;
       document.getElementById("dash-bottom").hidden = false;
-      widgetHandle = EA.DashboardWidget.init({
-        container:         document.getElementById("dashboard-widget"),
-        defaultViewBy:     "date",
-        // Default all-time so tiles + chart agree with the (also all-time)
-        // initial /api/dashboard fetch above. Mirrors the project hub.
-        defaultDatePreset: "all",
-        showFilters:       ["campaigns"],
-        onChange:          onWidgetFilterChange,
-      });
       EA.DashboardSummary.renderStats(d.stat_cards || {});
-      EA.DashboardSummary.renderLeaderboard(d.leaderboard || []);
-      EA.DashboardSummary.renderRecent(d.recent_interactions || []);
+      EA.DashboardSummary.renderActivity(d.activity || {});
+      EA.DashboardSummary.renderLeaderboard(d.leaderboard || [], { limit: 10 });
+      EA.DashboardSummary.renderRecent(d.recent_interactions || [], { limit: 8 });
     } catch (err) {
       console.warn("Dashboard summary load failed:", err);
     }
+    // Insights fetch is independent — its first generation is async on the
+    // server, so we render whatever's cached now and refresh on next page load.
+    loadInsights();
   }
 
-  // Widget → host bridge. Fires after each user-initiated filter change.
-  // Refetches /api/dashboard with matching params and re-renders stats +
-  // leaderboard + recent. Initial boot uses loadDashboardSummary() above —
-  // the widget skips its first onChange to avoid a duplicate fetch.
-  async function onWidgetFilterChange(filterState) {
-    const params = new URLSearchParams();
-    if (filterState.date_from) params.set("date_from", filterState.date_from);
-    if (filterState.date_to)   params.set("date_to",   filterState.date_to);
-    if (filterState.location_ids.length)
-      params.set("location_ids",      filterState.location_ids.join(","));
-    if (filterState.caller_ids.length)
-      params.set("caller_ids",        filterState.caller_ids.join(","));
-    if (filterState.phone_routing_ids.length)
-      params.set("phone_routing_ids", filterState.phone_routing_ids.join(","));
-    if (filterState.campaign_ids.length)
-      params.set("campaign_ids",      filterState.campaign_ids.join(","));
-    const qs = params.toString();
+  async function loadInsights() {
     try {
-      const d = await EA.fetchJSON("/api/dashboard" + (qs ? ("?" + qs) : ""));
-      EA.DashboardSummary.renderStats(d.stat_cards || {});
-      EA.DashboardSummary.renderLeaderboard(d.leaderboard || []);
-      EA.DashboardSummary.renderRecent(d.recent_interactions || []);
+      const payload = await EA.fetchJSON("/api/dashboard/insights");
+      EA.DashboardSummary.renderInsights(payload, { isAdmin: IS_ADMIN });
     } catch (err) {
-      EA.toast(err.message || "Failed to refresh dashboard.", "error");
+      console.warn("Insights load failed:", err);
+    }
+  }
+
+  async function refreshInsights() {
+    const btn = document.querySelector("#insights-panel .insights-refresh");
+    if (btn) { btn.disabled = true; btn.textContent = "Refreshing…"; }
+    try {
+      await EA.fetchJSON("/api/dashboard/insights/refresh", { method: "POST" });
+      EA.toast("Refreshing the report — check back in a moment.", "info");
+    } catch (err) {
+      EA.toast(err.message || "Refresh failed.", "error");
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "Refresh"; }
     }
   }
 

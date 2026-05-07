@@ -10,7 +10,11 @@
          Where the Recent Grades "View all" link points.
      view_all_reports_href str, default "/app/reports"
          Where the Top Callers "View all" link points.
+     include_chart         bool, default True
+         When False, skips the score-trend chart wrapper. Used by
+         /app/projects which renders insights + activity instead.
    #}
+{% set include_chart = include_chart if include_chart is defined else True %}
 <style>
   .dash3 { display: flex; flex-direction: column; gap: 16px; }
   .dash3-stats {
@@ -150,9 +154,11 @@
 </style>
 
 {# ── Analytics chart widget ── #}
+{% if include_chart %}
 <div id="dash-chart-wrap" style="margin-top: 22px;" hidden>
   <div id="dashboard-widget"></div>
 </div>
+{% endif %}
 
 {# ── Top Callers + Recent Grades ── #}
 <div id="dash-bottom" class="dash3-bottom" style="margin-top: 16px;" hidden>
