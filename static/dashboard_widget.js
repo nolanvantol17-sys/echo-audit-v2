@@ -84,6 +84,11 @@
         <button type="button" class="daw-pill" data-range="365">1Y</button>
         <button type="button" class="daw-pill" data-range="all">All time</button>
       </div>
+
+      <button type="button" class="daw-share-btn"
+              title="Copy a link to this view — paste anywhere to share">
+        Share
+      </button>
     </div>
 
     <section class="panel daw-chart-panel">
@@ -145,6 +150,20 @@
     .daw-pill.is-active {
       background: var(--accent); border-color: var(--accent);
       color: #fff;
+    }
+
+    .daw-share-btn {
+      background: var(--surface-2); border: 1px solid var(--border);
+      color: var(--text); font-size: 0.78rem; font-weight: 500;
+      padding: 6px 12px; border-radius: 6px;
+      font-family: inherit; cursor: pointer; flex-shrink: 0;
+      transition: all 0.15s ease;
+    }
+    .daw-share-btn:hover {
+      border-color: var(--accent); color: var(--accent);
+    }
+    .daw-share-btn:active {
+      transform: translateY(1px);
     }
 
     .daw-popover {
@@ -217,6 +236,7 @@
       .daw-filters .daw-view-by,
       .daw-ms-btn { flex: 1 1 140px; }
       .daw-date-pills { margin-left: 0; padding-left: 0; width: 100%; }
+      .daw-share-btn { flex: 1 1 100%; margin-top: 4px; }
       .daw-chart-panel { min-height: 340px; }
       .daw-chart-wrap { min-height: 340px; }
     }
@@ -400,6 +420,19 @@
         if (!state.all) {
           [...state.ids].forEach((id) => { if (!validIds.has(id)) state.ids.delete(id); });
           if (state.ids.size === 0) state = { all: true, ids: new Set() };
+        }
+        syncLabel();
+        if (popover) renderList();
+      },
+      // Pre-select a list of ids, typically called during URL hydration BEFORE
+      // setItems has loaded the option list. Invalid ids get pruned later when
+      // setItems runs (existing validation in setItems above).
+      setSelection(ids) {
+        const list = Array.isArray(ids) ? ids.filter((n) => Number.isFinite(n)) : [];
+        if (list.length === 0) {
+          state = { all: true, ids: new Set() };
+        } else {
+          state = { all: false, ids: new Set(list) };
         }
         syncLabel();
         if (popover) renderList();
@@ -647,6 +680,18 @@
     let allPhoneRoutings = [];   // raw phone routing list for client-side narrowing
     // Per-instance default takes precedence; falls back to global constant.
     let datePreset = opts.defaultDatePreset || DEFAULT_DATE_PRESET;
+    // Custom date range overrides the preset when set (e.g. when hydrated from
+    // a shared-link URL with explicit date_from/date_to). Cleared when user
+    // clicks any preset pill.
+    let customDateFrom = null;
+    let customDateTo   = null;
+
+    function effectiveDateRange() {
+      if (customDateFrom || customDateTo) {
+        return { from: customDateFrom, to: customDateTo };
+      }
+      return dateRangeFor(datePreset);
+    }
 
     // Date pill wiring
     const pillBtns = root.querySelectorAll(".daw-pill");
@@ -657,7 +702,11 @@
     }
     pillBtns.forEach((b) => {
       b.addEventListener("click", () => {
-        if (b.dataset.range === datePreset) return;
+        // Picking a preset always clears any custom range from URL hydration.
+        const wasCustom = !!(customDateFrom || customDateTo);
+        customDateFrom = null;
+        customDateTo   = null;
+        if (b.dataset.range === datePreset && !wasCustom) return;
         datePreset = b.dataset.range;
         syncPillActive();
         reload();
@@ -698,6 +747,94 @@
       onChange: reload,
     });
 
+    // ── Hydrate widget state from window.location.search ──
+    // Runs once at boot, BEFORE the initial loadFilters/reload pair. The
+    // multi-selects accept setSelection() before items are loaded; setItems()
+    // later prunes invalid ids automatically. Recipient lands on the same
+    // chart the sender was looking at.
+    function hydrateFromURL() {
+      const sp = new URLSearchParams(window.location.search);
+      // view_by — accept only options that exist in this widget instance
+      // (some callers prune options via hideViewByModes).
+      const vb = sp.get("view_by");
+      if (vb && viewBySel.querySelector('option[value="' + vb + '"]')) {
+        viewBySel.value = vb;
+        titleEl.textContent = chartTitleFor(vb);
+      }
+      // multi-select id lists (CSV)
+      const parseIds = (s) =>
+        (s || "").split(",")
+          .map((x) => parseInt(x, 10))
+          .filter((n) => Number.isFinite(n));
+      const locIds    = parseIds(sp.get("location_ids"));
+      const callerIds = parseIds(sp.get("caller_ids"));
+      const phrIds    = parseIds(sp.get("phone_routing_ids"));
+      const campIds   = parseIds(sp.get("campaign_ids"));
+      if (locIds.length)    locMS.setSelection(locIds);
+      if (callerIds.length) callerMS.setSelection(callerIds);
+      if (phrIds.length)    phrMS.setSelection(phrIds);
+      if (campIds.length)   campMS.setSelection(campIds);
+      // explicit date range — overrides preset; pills will all deactivate
+      const dateFrom = sp.get("date_from");
+      const dateTo   = sp.get("date_to");
+      if (dateFrom || dateTo) {
+        customDateFrom = dateFrom || null;
+        customDateTo   = dateTo   || null;
+        // Force every pill to inactive (none match a custom range).
+        pillBtns.forEach((b) => b.classList.remove("is-active"));
+      }
+    }
+    hydrateFromURL();
+
+    // ── Share button — copies a URL that pins current filter state ──
+    // Always emits explicit date_from/date_to (so a 30-day range stays the
+    // same 30-day window when the recipient opens the link, not "30 days
+    // ending today" from their perspective). view_by always included.
+    // Multi-select ids omitted when "All …" is the active filter.
+    const shareBtn = root.querySelector(".daw-share-btn");
+    function buildShareURL() {
+      const sp = new URLSearchParams();
+      sp.set("view_by", viewBySel.value);
+      const loc    = locMS.get();
+      const caller = callerMS.get();
+      const phr    = phrMS.get();
+      const camp   = campMS.get();
+      if (!loc.all    && loc.ids.length)    sp.set("location_ids",      loc.ids.join(","));
+      if (!caller.all && caller.ids.length) sp.set("caller_ids",        caller.ids.join(","));
+      if (!phr.all    && phr.ids.length)    sp.set("phone_routing_ids", phr.ids.join(","));
+      if (!camp.all   && camp.ids.length)   sp.set("campaign_ids",      camp.ids.join(","));
+      const range = effectiveDateRange();
+      if (range.from) sp.set("date_from", range.from);
+      if (range.to)   sp.set("date_to",   range.to);
+      return window.location.origin + window.location.pathname + "?" + sp.toString();
+    }
+    if (shareBtn) {
+      shareBtn.addEventListener("click", async () => {
+        const url = buildShareURL();
+        let copied = false;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          try {
+            await navigator.clipboard.writeText(url);
+            copied = true;
+          } catch (_) { /* fall through to manual prompt */ }
+        }
+        if (copied) {
+          if (EA.toast) {
+            EA.toast("Link copied — paste anywhere to share this view.", "success");
+          }
+        } else {
+          // Fallback for browsers/contexts where clipboard write is blocked
+          // (e.g. insecure origin, missing permission). Prompt() lets the user
+          // copy manually with the URL pre-selected.
+          try { window.prompt("Copy this link:", url); }
+          catch (_) {
+            console.warn("[DashboardWidget] Share URL:", url);
+            if (EA.toast) EA.toast("Couldn't copy automatically — see console.", "error");
+          }
+        }
+      });
+    }
+
     function narrowPhoneRoutingsByLocation() {
       const loc = locMS.get();
       let visible = allPhoneRoutings;
@@ -729,7 +866,7 @@
       if (!phr.all    && phr.ids.length)    params.set("phone_routing_ids",  phr.ids.join(","));
       if (!camp.all   && camp.ids.length)   params.set("campaign_ids",       camp.ids.join(","));
 
-      const range = dateRangeFor(datePreset);
+      const range = effectiveDateRange();
       if (range.from) params.set("date_from", range.from);
       if (range.to)   params.set("date_to",   range.to);
       return params;
@@ -739,7 +876,7 @@
     // receives. Mirrors /api/dashboard/chart and /api/projects/<id>/summary
     // param vocabulary so the host can splat it into URLSearchParams.
     function currentFilterState() {
-      const range  = dateRangeFor(datePreset);
+      const range  = effectiveDateRange();
       const loc    = locMS.get();
       const caller = callerMS.get();
       const phr    = phrMS.get();
