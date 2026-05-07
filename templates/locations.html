@@ -75,6 +75,11 @@
   .loc-sticky-bar[hidden]          { display: none; }
   .loc-sticky-bar .selected-meta   { font-weight: 500; }
   .loc-sticky-bar .selected-warn   { color: var(--warning); font-size: 0.82rem; margin-left: 8px; }
+  /* Mobile: sidebar collapses above main (≤960px in app.css), so reset
+     left:0 to span full width instead of indenting by --sidebar-w. */
+  @media (max-width: 960px) {
+    .loc-sticky-bar { left: 0; padding: 10px 14px; }
+  }
 
   /* ── Progress modal rows (used by EA.BulkExportModal.openMulti) ── */
   .loc-progress-list               { display: flex; flex-direction: column; gap: 6px; }

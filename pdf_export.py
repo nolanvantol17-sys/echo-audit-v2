@@ -91,7 +91,16 @@ def _score_palette(score):
 
 
 def _fmt_date_long(d):
-    return d.strftime("%B %d, %Y") if d else "—"
+    if not d:
+        return "—"
+    # SQLite returns ISO strings while Postgres returns date objects — normalize.
+    if isinstance(d, str):
+        try:
+            from datetime import date as _date
+            d = _date.fromisoformat(d[:10])
+        except ValueError:
+            return d
+    return d.strftime("%B %d, %Y")
 
 
 def _fmt_duration(seconds):
