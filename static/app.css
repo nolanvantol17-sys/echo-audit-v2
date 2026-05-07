@@ -21,12 +21,12 @@
   --accent:     #4A8076;
   --accent-h:   #5E9389;
   --accent-soft: rgba(74,128,118,0.18);
-  --success:    #7EC257;
-  --success-bg: rgba(126,194,87,0.16);
-  --danger:     #C45A4F;
-  --danger-bg:  rgba(196,90,79,0.14);
-  --warning:    #F2BC3D;
-  --warning-bg: rgba(242,188,61,0.16);
+  --success:    #A8E847;
+  --success-bg: rgba(168,232,71,0.16);
+  --danger:     #FF5C4A;
+  --danger-bg:  rgba(255,92,74,0.16);
+  --warning:    #FFD030;
+  --warning-bg: rgba(255,208,48,0.16);
   --radius:     10px;
   --radius-sm:  8px;
   --radius-lg:  14px;
@@ -205,9 +205,9 @@ button { font-family: inherit; }
   border: 1px solid transparent;
 }
 .flash-msg.info    { background: var(--accent-soft); color: #7DB5AB; border-color: rgba(74,128,118,0.40); }
-.flash-msg.success { background: var(--success-bg);  color: #C9E89A; border-color: rgba(126,194,87,0.40); }
-.flash-msg.error   { background: var(--danger-bg);   color: #E08470; border-color: rgba(196,90,79,0.40); }
-.flash-msg.warning { background: var(--warning-bg);  color: #FFD250; border-color: rgba(242,188,61,0.45); }
+.flash-msg.success { background: var(--success-bg);  color: #D8FF8C; border-color: rgba(168,232,71,0.40); }
+.flash-msg.error   { background: var(--danger-bg);   color: #FF8C7A; border-color: rgba(255,92,74,0.40); }
+.flash-msg.warning { background: var(--warning-bg);  color: #FFE070; border-color: rgba(255,208,48,0.45); }
 .flash-dismiss {
   background: none; border: none; color: inherit; opacity: 0.6;
   cursor: pointer; font-size: 1.1rem; padding: 0 4px;
@@ -389,8 +389,8 @@ button { font-family: inherit; }
 .section-error {
   padding: 14px;
   background: var(--danger-bg);
-  border: 1px solid rgba(196,90,79,0.40);
-  color: #E08470;
+  border: 1px solid rgba(255,92,74,0.40);
+  color: #FF8C7A;
   border-radius: var(--radius-sm);
   font-size: 0.85rem;
 }
@@ -693,7 +693,7 @@ button { font-family: inherit; }
 }
 .toast-msg.show { opacity: 1; transform: translateY(0); }
 .toast-success { border-left: 3px solid var(--success); }
-.toast-error   { border-left: 3px solid var(--danger);  color: #E08470; }
+.toast-error   { border-left: 3px solid var(--danger);  color: #FF8C7A; }
 .toast-info    { border-left: 3px solid var(--accent); }
 
 /* ── Grade result / interaction detail ──────────────────── */
@@ -812,7 +812,7 @@ button { font-family: inherit; }
   padding: 2px 6px;
   border-radius: 6px;
 }
-.rubric-item .ri-delete:hover { color: var(--danger); background: rgba(196,90,79,0.1); }
+.rubric-item .ri-delete:hover { color: var(--danger); background: rgba(255,92,74,0.1); }
 
 .rubric-item .ri-guidance {
   grid-column: 1 / -1;
@@ -897,8 +897,8 @@ button { font-family: inherit; }
 .flag-banner {
   padding: 10px 14px;
   background: var(--warning-bg);
-  border: 1px solid rgba(242,188,61,0.45);
-  color: #FFD250;
+  border: 1px solid rgba(255,208,48,0.45);
+  color: #FFE070;
   border-radius: var(--radius-sm);
   font-size: 0.88rem;
   margin-bottom: 10px;
@@ -1004,7 +1004,7 @@ details.collapsible > summary::-webkit-details-marker { display: none; }
 .status-pill.status-awaiting_clarification,
 .status-pill.status-awaiting-clarification { background: var(--warning-bg); color: var(--warning); }
 /* Test-call flag pill — purple/violet, distinct from status semantic colors. */
-.status-pill.status-test { background: rgba(170,150,210,0.20); color: #BFA9E0; }
+.status-pill.status-test { background: rgba(216,176,255,0.20); color: #D8B0FF; }
 
 /* Score pill extension — gray variant for no-answer rows */
 .score-pill.gray { background: var(--surface-3); color: var(--muted); }
@@ -1026,8 +1026,8 @@ details.collapsible > summary::-webkit-details-marker { display: none; }
 .score-diff-banner {
   padding: 10px 14px;
   background: var(--success-bg);
-  border: 1px solid rgba(126,194,87,0.40);
-  color: #C9E89A;
+  border: 1px solid rgba(168,232,71,0.40);
+  color: #D8FF8C;
   border-radius: var(--radius-sm);
   font-size: 0.88rem;
   margin-bottom: 14px;
@@ -1195,7 +1195,7 @@ audio.app-audio {
   color: var(--muted);
 }
 .role-pill.role-super_admin,
-.role-pill.role-super-admin { background: #E8E3F2; color: #BFA9E0; }
+.role-pill.role-super-admin { background: #E8E3F2; color: #D8B0FF; }
 .role-pill.role-admin   { background: var(--accent-soft); color: #7DB5AB; }
 .role-pill.role-manager { background: var(--warning-bg); color: var(--warning); }
 .role-pill.role-caller  { background: var(--surface-3); color: var(--muted); }
@@ -1460,7 +1460,7 @@ audio.app-audio {
 .usage-bar-fill.bar-green { background: var(--success); }
 .usage-bar-fill.bar-amber { background: var(--warning); }
 .usage-bar-fill.bar-red   { background: var(--danger); }
-tr.row-flagged td { background: rgba(196,90,79,0.06); }
+tr.row-flagged td { background: rgba(255,92,74,0.06); }
 
 /* ── FE-5: Health status cards ───────────────────────────── */
 .health-section-title {

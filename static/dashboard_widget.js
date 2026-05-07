@@ -580,7 +580,7 @@
         if (!scales.y) return;
         const y = scales.y.getPixelForValue(5);
         ctx.save();
-        ctx.strokeStyle = "rgba(196,90,79,0.7)";
+        ctx.strokeStyle = "rgba(255,92,74,0.7)";
         ctx.setLineDash([4, 4]);
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -588,7 +588,7 @@
         ctx.lineTo(chartArea.right, y);
         ctx.stroke();
         ctx.setLineDash([]);
-        ctx.fillStyle = "rgba(196,90,79,0.85)";
+        ctx.fillStyle = "rgba(255,92,74,0.85)";
         ctx.font = "11px Inter, sans-serif";
         ctx.textAlign = "right";
         ctx.fillText("threshold 5.0", chartArea.right - 6, y - 4);

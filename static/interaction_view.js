@@ -219,8 +219,8 @@
     const contextPanelHtml = (!readOnly && canRegrade) ? renderContextPanel(d) : '';
 
     const hardDeleteHtml = canHardDelete
-      ? '<div class="panel" style="margin-top:18px;border-color:rgba(196,90,79,0.35);">' +
-          '<div class="panel-title" style="color:#E08470;">Danger zone</div>' +
+      ? '<div class="panel" style="margin-top:18px;border-color:rgba(255,92,74,0.35);">' +
+          '<div class="panel-title" style="color:#FF8C7A;">Danger zone</div>' +
           '<div class="muted text-small" style="margin-bottom:10px;">' +
             'Permanently delete this interaction and everything attached to it ' +
             '(rubric scores, audio file, audit-log entries). ' +
@@ -472,7 +472,7 @@
     root.appendChild(survivesList);
 
     const warning = document.createElement("div");
-    warning.style.color = "#E08470";
+    warning.style.color = "#FF8C7A";
     warning.style.fontWeight = "600";
     warning.textContent = "This action cannot be undone.";
     root.appendChild(warning);
