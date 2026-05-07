@@ -21,12 +21,12 @@
   --accent:     #4A8076;
   --accent-h:   #5E9389;
   --accent-soft: rgba(74,128,118,0.18);
-  --success:    #8DAA70;
-  --success-bg: rgba(141,170,112,0.14);
+  --success:    #7EC257;
+  --success-bg: rgba(126,194,87,0.16);
   --danger:     #C45A4F;
   --danger-bg:  rgba(196,90,79,0.14);
-  --warning:    #D9A547;
-  --warning-bg: rgba(217,165,71,0.14);
+  --warning:    #F2BC3D;
+  --warning-bg: rgba(242,188,61,0.16);
   --radius:     10px;
   --radius-sm:  8px;
   --radius-lg:  14px;
@@ -205,9 +205,9 @@ button { font-family: inherit; }
   border: 1px solid transparent;
 }
 .flash-msg.info    { background: var(--accent-soft); color: #7DB5AB; border-color: rgba(74,128,118,0.40); }
-.flash-msg.success { background: var(--success-bg);  color: #B5CC95; border-color: rgba(141,170,112,0.40); }
+.flash-msg.success { background: var(--success-bg);  color: #C9E89A; border-color: rgba(126,194,87,0.40); }
 .flash-msg.error   { background: var(--danger-bg);   color: #E08470; border-color: rgba(196,90,79,0.40); }
-.flash-msg.warning { background: var(--warning-bg);  color: #F0CC75; border-color: rgba(217,165,71,0.45); }
+.flash-msg.warning { background: var(--warning-bg);  color: #FFD250; border-color: rgba(242,188,61,0.45); }
 .flash-dismiss {
   background: none; border: none; color: inherit; opacity: 0.6;
   cursor: pointer; font-size: 1.1rem; padding: 0 4px;
@@ -897,8 +897,8 @@ button { font-family: inherit; }
 .flag-banner {
   padding: 10px 14px;
   background: var(--warning-bg);
-  border: 1px solid rgba(217,165,71,0.45);
-  color: #F0CC75;
+  border: 1px solid rgba(242,188,61,0.45);
+  color: #FFD250;
   border-radius: var(--radius-sm);
   font-size: 0.88rem;
   margin-bottom: 10px;
@@ -1026,8 +1026,8 @@ details.collapsible > summary::-webkit-details-marker { display: none; }
 .score-diff-banner {
   padding: 10px 14px;
   background: var(--success-bg);
-  border: 1px solid rgba(141,170,112,0.40);
-  color: #B5CC95;
+  border: 1px solid rgba(126,194,87,0.40);
+  color: #C9E89A;
   border-radius: var(--radius-sm);
   font-size: 0.88rem;
   margin-bottom: 14px;
