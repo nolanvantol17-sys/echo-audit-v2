@@ -247,21 +247,17 @@ def _upsert_respondent(conn, company_id, location_id, respondent_name):
         )
     existing = _row_to_dict(cur.fetchone())
     if existing:
-        rid = existing["respondent_id"]
-        conn.execute(
-            q("""UPDATE respondents
-                    SET respondent_call_count = respondent_call_count + 1
-                  WHERE respondent_id = ?"""),
-            (rid,),
-        )
-        return rid, existing["respondent_name"]
+        # Count adjustment lives in _link_interaction_respondent so a re-grade
+        # without a rename doesn't double-count, and a rename properly
+        # decrements the old respondent.
+        return existing["respondent_id"], existing["respondent_name"]
 
     if IS_POSTGRES:
         cur = conn.execute(
             """INSERT INTO respondents
                    (company_id, location_id, respondent_name,
                     respondent_call_count, respondent_first_seen)
-               VALUES (%s, %s, %s, 1, CURRENT_DATE)
+               VALUES (%s, %s, %s, 0, CURRENT_DATE)
                RETURNING respondent_id""",
             (company_id, location_id, name),
         )
@@ -270,7 +266,7 @@ def _upsert_respondent(conn, company_id, location_id, respondent_name):
         """INSERT INTO respondents
                (company_id, location_id, respondent_name,
                 respondent_call_count, respondent_first_seen)
-           VALUES (?, ?, ?, 1, date('now'))""",
+           VALUES (?, ?, ?, 0, date('now'))""",
         (company_id, location_id, name),
     )
     rid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -278,6 +274,34 @@ def _upsert_respondent(conn, company_id, location_id, respondent_name):
 
 
 def _link_interaction_respondent(conn, interaction_id, respondent_id):
+    """Point an interaction at a respondent and keep respondent_call_count
+    in sync. No-op when the link is already correct (regrade w/o rename).
+    Decrements the old respondent + increments the new one on rename."""
+    cur = conn.execute(
+        q("SELECT respondent_id FROM interactions WHERE interaction_id = ?"),
+        (interaction_id,),
+    )
+    old = _row_to_dict(cur.fetchone()) or {}
+    old_rid = old.get("respondent_id")
+    if old_rid == respondent_id:
+        return
+    if old_rid is not None:
+        # CASE-WHEN floor at 0 (vs GREATEST) so SQLite stays happy too.
+        conn.execute(
+            q("""UPDATE respondents
+                    SET respondent_call_count = CASE
+                        WHEN respondent_call_count > 0 THEN respondent_call_count - 1
+                        ELSE 0 END
+                  WHERE respondent_id = ?"""),
+            (old_rid,),
+        )
+    if respondent_id is not None:
+        conn.execute(
+            q("""UPDATE respondents
+                    SET respondent_call_count = respondent_call_count + 1
+                  WHERE respondent_id = ?"""),
+            (respondent_id,),
+        )
     conn.execute(
         q("UPDATE interactions SET respondent_id = ? WHERE interaction_id = ?"),
         (respondent_id, interaction_id),
@@ -1136,6 +1160,10 @@ def log_no_answer():
         # success path, and exception path all converge here. Audio save
         # uses a separate conn so partial-success doesn't roll back the row.
         conn.close()
+
+    # Refresh the per-location intel briefing — mirrors submit_grade so a
+    # stretch of no-answers doesn't leave the briefing frozen on stale data.
+    compute_location_intel_async(location_id, company_id)
 
     # ── Step 2: save audio (separate transaction so partial-success is OK) ──
     audio_saved = False

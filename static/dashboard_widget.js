@@ -47,6 +47,11 @@
 
   // ── Static: per-instance template rendered into the container ──
   const TEMPLATE = `
+    <div class="daw-share-banner" hidden>
+      <span class="daw-share-banner-icon" aria-hidden="true">🔗</span>
+      <span class="daw-share-banner-text">Filters applied from a shared link.</span>
+      <button type="button" class="daw-share-banner-reset">Reset to defaults</button>
+    </div>
     <div class="daw-filters">
       <span class="daw-bar-title">Analytics</span>
 
@@ -161,6 +166,29 @@
     }
     .daw-share-btn:hover {
       border-color: var(--accent); color: var(--accent);
+    }
+
+    /* ── Shared-link banner (visible when widget hydrated from URL) ── */
+    .daw-share-banner {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; margin-bottom: 10px;
+      background: var(--accent-soft);
+      border: 1px solid var(--border-strong);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--radius-sm);
+      font-size: 0.86rem; color: var(--text);
+    }
+    .daw-share-banner[hidden] { display: none; }
+    .daw-share-banner-icon { font-size: 0.95rem; }
+    .daw-share-banner-text { flex: 1; }
+    .daw-share-banner-reset {
+      background: transparent; border: 1px solid var(--border-strong);
+      color: var(--accent); font-size: 0.78rem; font-weight: 500;
+      padding: 4px 10px; border-radius: 6px;
+      font-family: inherit; cursor: pointer;
+    }
+    .daw-share-banner-reset:hover {
+      background: var(--accent); color: var(--text); border-color: var(--accent);
     }
     .daw-share-btn:active {
       transform: translateY(1px);
@@ -754,12 +782,14 @@
     // chart the sender was looking at.
     function hydrateFromURL() {
       const sp = new URLSearchParams(window.location.search);
+      let touched = false;
       // view_by — accept only options that exist in this widget instance
       // (some callers prune options via hideViewByModes).
       const vb = sp.get("view_by");
       if (vb && viewBySel.querySelector('option[value="' + vb + '"]')) {
         viewBySel.value = vb;
         titleEl.textContent = chartTitleFor(vb);
+        touched = true;
       }
       // multi-select id lists (CSV)
       const parseIds = (s) =>
@@ -770,10 +800,10 @@
       const callerIds = parseIds(sp.get("caller_ids"));
       const phrIds    = parseIds(sp.get("phone_routing_ids"));
       const campIds   = parseIds(sp.get("campaign_ids"));
-      if (locIds.length)    locMS.setSelection(locIds);
-      if (callerIds.length) callerMS.setSelection(callerIds);
-      if (phrIds.length)    phrMS.setSelection(phrIds);
-      if (campIds.length)   campMS.setSelection(campIds);
+      if (locIds.length)    { locMS.setSelection(locIds);    touched = true; }
+      if (callerIds.length) { callerMS.setSelection(callerIds); touched = true; }
+      if (phrIds.length)    { phrMS.setSelection(phrIds);    touched = true; }
+      if (campIds.length)   { campMS.setSelection(campIds);  touched = true; }
       // explicit date range — overrides preset; pills will all deactivate
       const dateFrom = sp.get("date_from");
       const dateTo   = sp.get("date_to");
@@ -782,9 +812,40 @@
         customDateTo   = dateTo   || null;
         // Force every pill to inactive (none match a custom range).
         pillBtns.forEach((b) => b.classList.remove("is-active"));
+        touched = true;
+      }
+      return touched;
+    }
+    const _wasHydrated = hydrateFromURL();
+
+    // ── Shared-link banner: shown when filters were hydrated from URL.
+    // "Reset to defaults" clears every selector + strips query params so the
+    // user can pivot off the shared view without manually resetting each.
+    const banner = root.querySelector(".daw-share-banner");
+    if (banner && _wasHydrated) {
+      banner.hidden = false;
+      const resetBtn = banner.querySelector(".daw-share-banner-reset");
+      if (resetBtn) {
+        resetBtn.addEventListener("click", () => {
+          // Reset every selector + custom date range, then reapply the widget's
+          // configured default preset (matches what fresh init produced).
+          locMS.setSelection([]);
+          callerMS.setSelection([]);
+          phrMS.setSelection([]);
+          campMS.setSelection([]);
+          customDateFrom = null;
+          customDateTo   = null;
+          const defaultPill = root.querySelector(
+            '.daw-pill[data-range="' + (opts.defaultDatePreset || "30") + '"]'
+          );
+          if (defaultPill) defaultPill.click();
+          else reload({});
+          // Strip query params from the URL so refresh doesn't re-hydrate.
+          history.replaceState(null, "", window.location.pathname);
+          banner.hidden = true;
+        });
       }
     }
-    hydrateFromURL();
 
     // ── Share button — copies a URL that pins current filter state ──
     // Always emits explicit date_from/date_to (so a 30-day range stays the
@@ -892,6 +953,14 @@
     }
 
     function notifyChange() {
+      // Mirror current filter state into the URL via replaceState so refresh
+      // / back-button preserves the view, and so the share button can copy
+      // the up-to-the-second URL even before the user clicks it.
+      try {
+        const url = buildShareURL();
+        const tail = url.replace(window.location.origin, "");
+        history.replaceState(null, "", tail);
+      } catch (_) { /* defensive — share URL builder unavailable on init */ }
       if (typeof opts.onChange !== "function") return;
       try { opts.onChange(currentFilterState()); }
       catch (e) { console.warn("DashboardWidget onChange threw:", e); }

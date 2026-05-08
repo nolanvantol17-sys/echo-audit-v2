@@ -516,6 +516,26 @@ _ADDITIVE_MIGRATIONS = [
         di_report_markdown    TEXT,
         di_generated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )""",
+
+    # Sub-Task W: one-shot backfill of respondent_call_count.
+    # Counter was historically maintained inside _upsert_respondent, which
+    # under-counted some paths and over-counted re-grades. The link function
+    # is now the source of truth, but existing rows still carry stale totals.
+    # Sentinel: company_respondent_count_backfilled_at — the gate fires only
+    # when NO company has been marked yet, so new tenants joining post-deploy
+    # don't re-trigger the global recompute.
+    "ALTER TABLE companies ADD COLUMN IF NOT EXISTS company_respondent_count_backfilled_at TIMESTAMPTZ",
+    """DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM companies)
+           AND NOT EXISTS (SELECT 1 FROM companies WHERE company_respondent_count_backfilled_at IS NOT NULL) THEN
+            UPDATE respondents r SET respondent_call_count = COALESCE((
+                SELECT COUNT(*) FROM interactions i
+                 WHERE i.respondent_id = r.respondent_id
+                   AND i.interaction_deleted_at IS NULL
+            ), 0);
+            UPDATE companies SET company_respondent_count_backfilled_at = NOW();
+        END IF;
+    END $$""",
 ]
 
 
