@@ -3,6 +3,30 @@
 
 {% block extra_css %}
 <style>
+  /* ── Back-to-project link in the page header ──────────────── */
+  .back-to-project {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 0.85rem;
+    font-weight: 500;
+    text-decoration: none;
+    margin-bottom: 8px;
+    padding: 4px 10px 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .back-to-project:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+    background: var(--surface-2);
+    text-decoration: none;
+  }
+  .back-to-project[hidden] { display: none; }
+
   /* ── Read-only info block shown in the grade-result panel ── */
   .result-info {
     display: flex;
@@ -602,6 +626,12 @@
 {% block content %}
 <div class="page-header">
   <div>
+    {# ── Back to project: visible only when ?project_id= URL param is set,
+         meaning the user arrived from a project hub. Wired in init() below. #}
+    <a href="#" id="back-to-project" class="back-to-project" hidden>
+      <span aria-hidden="true">←</span>
+      <span class="back-to-project-text">Back to project</span>
+    </a>
     <div class="page-title">Grade a Call</div>
     <div class="page-subtitle">Record a call, upload an audio file, or place an AI Caller outbound call.</div>
   </div>
@@ -993,6 +1023,26 @@
     const forcedProjectId = params.get("project_id");
     if (forcedProjectId) {
       await applyLockedProject(forcedProjectId);
+      // Wire the in-page "Back to project" link. activeProject in
+      // sessionStorage is set by base.html's __refreshBreadcrumb when the
+      // user enters from the project hub; falls back to a generic label
+      // when the user deep-linked directly with ?project_id=.
+      const backLink = document.getElementById("back-to-project");
+      if (backLink) {
+        let activeProjectName = null;
+        try {
+          const ap = JSON.parse(sessionStorage.getItem("activeProject") || "null");
+          if (ap && String(ap.project_id) === String(forcedProjectId)) {
+            activeProjectName = ap.project_name || null;
+          }
+        } catch (_) { /* swallow */ }
+        backLink.href = "/app/projects/" + encodeURIComponent(forcedProjectId);
+        const labelEl = backLink.querySelector(".back-to-project-text");
+        if (labelEl && activeProjectName) {
+          labelEl.textContent = "Back to " + activeProjectName;
+        }
+        backLink.hidden = false;
+      }
     } else {
       applyGradeContext();
     }
