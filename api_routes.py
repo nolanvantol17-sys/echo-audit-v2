@@ -2318,6 +2318,161 @@ def create_team_member():
         conn.close()
 
 
+def _company_uses_sso(conn, company_id):
+    """Return True iff this company has Microsoft SSO fully wired up:
+    a non-NULL company_email_domain AND the AZURE_AD_* env vars all set.
+
+    Drives the bulk-invite mode switch: SSO-configured companies skip
+    temp-password generation (users sign in via Microsoft only); others
+    fall back to the temp-password flow that single-invite uses today.
+    """
+    cur = conn.execute(
+        q("SELECT company_email_domain FROM companies WHERE company_id = ?"),
+        [company_id],
+    )
+    row = cur.fetchone()
+    if not row:
+        return False
+    domain = row["company_email_domain"] if hasattr(row, "keys") else row[0]
+    if not domain:
+        return False
+    try:
+        from sso_routes import is_microsoft_sso_configured
+        return is_microsoft_sso_configured()
+    except Exception:
+        return False
+
+
+@api_bp.route("/team/bulk-invite", methods=["POST"])
+@login_required
+@role_required("admin", "super_admin")
+def bulk_invite_team():
+    """Mass-invite users in one shot. All rows share role + department
+    (most common onboarding pattern — same hire wave, same role).
+
+    Body: {"role_name": "caller", "department_id": 5,
+           "users": [{"email": "...", "first_name": "...", "last_name": "..."}, ...]}
+
+    SSO-mode auto-detection (companies.company_email_domain set + AZURE_AD_*
+    env vars present): no temp password is returned — users sign in via
+    Microsoft only. Admin can issue a password reset later via
+    /forgot-password if SSO ever breaks. Non-SSO mode mirrors the existing
+    single-invite flow: random temp password returned per user, force
+    password change on first login.
+
+    Returns per-row results so partial success is clean. Failures don't
+    abort the batch — admin gets a per-row report and can fix and retry.
+    """
+    company_id, err = _require_company()
+    if err: return err
+
+    body = _body()
+    err = _require(body, "role_name", "department_id", "users")
+    if err: return _err(err, 400)
+
+    users = body["users"]
+    if not isinstance(users, list) or not users:
+        return _err("'users' must be a non-empty list", 400)
+    # Hard cap protects against runaway client requests + keeps the
+    # transactional / per-row-write loop bounded. 500 covers a typical
+    # property-management onboarding wave with headroom.
+    if len(users) > 500:
+        return _err("Bulk invite is capped at 500 users per call", 400)
+
+    role_name = body["role_name"]
+    if role_name == "super_admin" and not current_user.is_super_admin:
+        return _err("Only super admins can assign the super_admin role", 403)
+    department_id = body["department_id"]
+
+    conn = get_conn()
+    try:
+        if not _get_department(conn, department_id, company_id):
+            return _err("Department not found in this company", 404)
+        sso_mode = _company_uses_sso(conn, company_id)
+    finally:
+        conn.close()
+
+    results = []
+    for entry in users:
+        if not isinstance(entry, dict):
+            results.append({"email": "(invalid)", "status": "error",
+                            "error": "Each user entry must be an object"})
+            continue
+        email      = (entry.get("email")      or "").strip()
+        first_name = (entry.get("first_name") or "").strip()
+        last_name  = (entry.get("last_name")  or "").strip()
+        if not email or not first_name or not last_name:
+            results.append({
+                "email": email or "(missing email)",
+                "status": "error",
+                "error": "Each row needs email, first_name, and last_name",
+            })
+            continue
+
+        # SSO mode still generates a random password for storage (the schema
+        # requires user_password_hash NOT NULL) — we just don't return it.
+        # User effectively can't password-auth because nobody knows the value;
+        # SSO is the only path in. Admin can /forgot-password to issue one if
+        # SSO ever breaks.
+        password = generate_temp_password()
+        try:
+            new_user_id = auth.create_user(
+                email=email, password=password, role_name=role_name,
+                first_name=first_name, last_name=last_name,
+                department_id=department_id,
+            )
+        except ValueError as e:
+            results.append({"email": email, "status": "error", "error": str(e)})
+            continue
+        except Exception as e:
+            logger.exception("[bulk_invite] unexpected create_user failure")
+            results.append({"email": email, "status": "error",
+                            "error": "Unexpected error: " + str(e)})
+            continue
+
+        conn = get_conn()
+        try:
+            if not sso_mode:
+                # Non-SSO path mirrors single-invite — first login forces a
+                # password change. SSO-mode users never see the password,
+                # so the flag would just block them on first login.
+                conn.execute(
+                    q("UPDATE users SET user_must_change_password = ? WHERE user_id = ?"),
+                    (True, new_user_id),
+                )
+            write_audit_log(
+                current_user.user_id, ACTION_CREATED, ENTITY_USER, new_user_id,
+                metadata={
+                    "email": email, "role_name": role_name,
+                    "department_id": department_id,
+                    "bulk_invite": True, "sso_mode": sso_mode,
+                },
+                conn=conn,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        results.append({
+            "email": email,
+            "status": "ok",
+            "user_id": new_user_id,
+            "temp_password": (None if sso_mode else password),
+        })
+
+    summary = {
+        "total":     len(users),
+        "succeeded": sum(1 for r in results if r["status"] == "ok"),
+        "failed":    sum(1 for r in results if r["status"] == "error"),
+        "sso_mode":  sso_mode,
+    }
+    # 207 Multi-Status is the technically-correct code for partial success,
+    # but most clients treat 2xx-vs-4xx as the gate. Use 201 when any user
+    # was created (typical case) and 400 only when the entire batch failed.
+    status_code = 201 if summary["succeeded"] > 0 else 400
+    return jsonify({"summary": summary, "results": results}), status_code
+
+
 @api_bp.route("/team/<int:user_id>", methods=["PUT"])
 @login_required
 @role_required("admin", "super_admin")

@@ -1,6 +1,105 @@
 {% extends "base.html" %}
 {% block title %}Team | {{ client_name or "Echo Audit" }}{% endblock %}
 
+{% block extra_css %}
+<style>
+  /* ── Bulk invite modal — local to /app/team. Charcoal-and-teal, mirrors
+     the shared dialog patterns used elsewhere (wizard modal in projects). */
+  .bi-backdrop {
+    position: fixed; inset: 0; z-index: 80;
+    background: rgba(0,0,0,0.55);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 5vh 16px;
+    overflow-y: auto;
+  }
+  .bi-backdrop[hidden] { display: none !important; }
+  .bi-card {
+    width: 100%; max-width: 720px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.40);
+    display: flex; flex-direction: column;
+  }
+  .bi-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .bi-title { font-size: 1.05rem; font-weight: 700; color: var(--text); }
+  .bi-close {
+    background: transparent; border: 1px solid transparent;
+    color: var(--muted); font-size: 1.4rem; line-height: 1;
+    cursor: pointer; padding: 2px 8px; border-radius: 6px;
+  }
+  .bi-close:hover { color: var(--text); border-color: var(--border); background: var(--surface-2); }
+  .bi-body { padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
+  .bi-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .bi-row label {
+    flex: 1 1 200px; display: flex; flex-direction: column; gap: 4px;
+    font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .bi-row select {
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--text); font-family: inherit; font-size: 0.88rem;
+    padding: 8px 10px; border-radius: 8px;
+  }
+  .bi-row select:focus { outline: none; border-color: var(--accent); }
+  #bi-rows {
+    width: 100%; min-height: 200px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--text); font-family: 'Geist Mono', ui-monospace, monospace;
+    font-size: 0.84rem; line-height: 1.5;
+    padding: 10px 12px; border-radius: 8px; resize: vertical;
+  }
+  #bi-rows:focus { outline: none; border-color: var(--accent); }
+  .bi-hint { color: var(--muted); font-size: 0.82rem; margin: 0; }
+  .bi-hint code {
+    background: var(--surface-2); padding: 1px 5px; border-radius: 4px;
+    font-size: 0.78rem; color: var(--text);
+  }
+  .bi-mode-pill {
+    display: inline-block; padding: 2px 8px; margin-right: 6px;
+    background: var(--accent-soft); color: var(--accent); border-radius: 999px;
+    font-size: 0.74rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .bi-footer {
+    display: flex; gap: 8px; padding-top: 6px;
+    border-top: 1px solid var(--border); margin-top: 6px;
+    padding: 14px 0 0 0;
+  }
+  .bi-footer .spacer { flex: 1 1 auto; }
+  .bi-summary {
+    padding: 10px 14px; border-radius: 8px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-size: 0.88rem; color: var(--text);
+  }
+  .bi-summary .bi-stat-ok    { color: var(--success); font-weight: 700; }
+  .bi-summary .bi-stat-fail  { color: var(--danger);  font-weight: 700; }
+  .bi-results-wrap {
+    max-height: 360px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 8px;
+  }
+  .bi-results-wrap table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+  .bi-results-wrap th, .bi-results-wrap td {
+    padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border);
+  }
+  .bi-results-wrap thead th {
+    background: var(--surface-2); color: var(--muted);
+    font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.04em;
+    position: sticky; top: 0; z-index: 1;
+  }
+  .bi-row-ok    td:first-child::before { content: "✓ "; color: var(--success); }
+  .bi-row-fail  td:first-child::before { content: "✗ "; color: var(--danger); }
+  .bi-temp-pw {
+    font-family: 'Geist Mono', ui-monospace, monospace; font-size: 0.82rem;
+    background: var(--surface-2); padding: 2px 6px; border-radius: 4px;
+    color: var(--text); user-select: all;
+  }
+  .bi-error-cell { color: var(--danger); font-size: 0.82rem; }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="page-header">
   <div>
@@ -9,9 +108,72 @@
   </div>
   {% if user_role in ('admin','super_admin') %}
   <div class="hstack-wrap">
+    <button type="button" class="btn btn-ghost btn-sm" id="btn-bulk-invite">Bulk invite</button>
     <button type="button" class="btn btn-primary btn-sm" id="btn-add-member">Add member</button>
   </div>
   {% endif %}
+</div>
+
+{# ── Bulk invite modal — hidden until "Bulk invite" clicked ────────
+   Two-stage flow: (1) form to enter rows + pick role/department,
+   (2) results panel showing per-row outcome + bulk download. #}
+<div id="bulk-invite-backdrop" class="bi-backdrop" hidden>
+  <div class="bi-card" role="dialog" aria-modal="true" aria-labelledby="bi-title">
+    <div class="bi-header">
+      <div class="bi-title" id="bi-title">Bulk invite team members</div>
+      <button type="button" class="bi-close" id="bi-close" aria-label="Close">&times;</button>
+    </div>
+
+    {# Stage 1 — input form. #}
+    <div class="bi-body" id="bi-stage-input">
+      <div class="bi-row">
+        <label>Role
+          <select id="bi-role">
+            <option value="caller" selected>Caller</option>
+            <option value="manager">Manager</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+        <label>Department
+          <select id="bi-department">
+            <option value="">—</option>
+          </select>
+        </label>
+      </div>
+
+      <p class="bi-hint">
+        Paste one person per line in this format:
+        <code>email,first_name,last_name</code>.
+        Header row is optional. Whitespace gets trimmed.
+      </p>
+      <textarea id="bi-rows" rows="10" spellcheck="false"
+        placeholder="myra.robledo@mayfairmgt.com,Myra,Robledo&#10;jane.doe@mayfairmgt.com,Jane,Doe"></textarea>
+
+      <p class="bi-hint" id="bi-mode-hint">
+        <span class="bi-mode-pill">Auto-detect</span>
+        Mode is determined by your tenant's SSO config.
+      </p>
+
+      <div class="bi-footer">
+        <button type="button" class="btn btn-ghost" id="bi-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="bi-submit">Invite all</button>
+      </div>
+    </div>
+
+    {# Stage 2 — result table + downloads. #}
+    <div class="bi-body" id="bi-stage-results" hidden>
+      <div id="bi-summary" class="bi-summary"></div>
+      <div id="bi-results-table-wrap" class="bi-results-wrap"></div>
+      <div class="bi-footer">
+        <button type="button" class="btn btn-ghost" id="bi-download-csv" hidden>
+          Download CSV (with passwords)
+        </button>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-ghost" id="bi-back">Invite more</button>
+        <button type="button" class="btn btn-primary" id="bi-done">Done</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 {# Temp-password banner slot — filled after a successful member creation. #}
@@ -70,6 +232,8 @@
     if (CAN_WRITE) {
       const addBtn = $("#btn-add-member"); if (addBtn) addBtn.addEventListener("click", onAddMember);
       const deptBtn = $("#btn-add-dept"); if (deptBtn) deptBtn.addEventListener("click", onAddDept);
+      const bulkBtn = $("#btn-bulk-invite"); if (bulkBtn) bulkBtn.addEventListener("click", onBulkInvite);
+      wireBulkModal();
     }
   }
 
@@ -222,6 +386,174 @@
     banner.appendChild(dismiss);
 
     slot.appendChild(banner);
+  }
+
+  // ── Bulk invite ──────────────────────────────────
+  // Two-stage modal: input form → results table. Backend handles SSO-mode
+  // detection (companies.company_email_domain + AZURE_AD_* env vars). When
+  // SSO is on, no temp password is returned and users sign in via Microsoft.
+  let lastBulkResults = null;   // cached for CSV download
+
+  function wireBulkModal() {
+    $("#bi-close").addEventListener("click", closeBulkModal);
+    $("#bi-cancel").addEventListener("click", closeBulkModal);
+    $("#bi-done").addEventListener("click", () => { closeBulkModal(); loadTeam(); });
+    $("#bi-back").addEventListener("click", () => {
+      $("#bi-stage-results").hidden = true;
+      $("#bi-stage-input").hidden = false;
+      $("#bi-rows").value = "";
+      lastBulkResults = null;
+    });
+    $("#bi-submit").addEventListener("click", submitBulkInvite);
+    $("#bi-download-csv").addEventListener("click", downloadResultsCSV);
+    // Backdrop click closes (but not clicks inside the card)
+    $("#bulk-invite-backdrop").addEventListener("click", (ev) => {
+      if (ev.target.id === "bulk-invite-backdrop") closeBulkModal();
+    });
+  }
+
+  function onBulkInvite() {
+    if (!departments.length) {
+      EA.toast("Create a department first.", "error");
+      return;
+    }
+    // Refresh dept dropdown each open in case a new dept was just added.
+    const sel = $("#bi-department");
+    sel.innerHTML = departments.map((d) =>
+      '<option value="' + d.department_id + '">' + EA.esc(d.department_name) + '</option>'
+    ).join("");
+    $("#bi-rows").value = "";
+    $("#bi-stage-input").hidden = false;
+    $("#bi-stage-results").hidden = true;
+    $("#bulk-invite-backdrop").hidden = false;
+    setTimeout(() => $("#bi-rows").focus(), 0);
+  }
+
+  function closeBulkModal() {
+    $("#bulk-invite-backdrop").hidden = true;
+  }
+
+  // Parse a textarea of "email,first,last" rows into an array of objects.
+  // Tolerates: header rows (skipped if row 0 has 'email' as first cell),
+  // extra whitespace, blank lines, trailing commas.
+  function parseBulkRows(raw) {
+    const lines = (raw || "").split(/\r?\n/);
+    const out = [];
+    lines.forEach((line, idx) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      const parts = trimmed.split(",").map((p) => p.trim());
+      // Skip a single header row if present
+      if (idx === 0 && parts[0].toLowerCase() === "email") return;
+      out.push({
+        email:      parts[0] || "",
+        first_name: parts[1] || "",
+        last_name:  parts[2] || "",
+        _line:      idx + 1,
+      });
+    });
+    return out;
+  }
+
+  async function submitBulkInvite() {
+    const role = $("#bi-role").value;
+    const dept = parseInt($("#bi-department").value, 10);
+    if (!Number.isFinite(dept)) {
+      EA.toast("Pick a department.", "error");
+      return;
+    }
+    const rows = parseBulkRows($("#bi-rows").value);
+    if (!rows.length) {
+      EA.toast("No rows to import. Paste at least one row.", "error");
+      return;
+    }
+
+    const submitBtn = $("#bi-submit");
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Inviting…";
+    try {
+      const resp = await EA.fetchJSON("/api/team/bulk-invite", {
+        method: "POST",
+        body: {
+          role_name:     role,
+          department_id: dept,
+          users:         rows.map((r) => ({
+            email: r.email, first_name: r.first_name, last_name: r.last_name,
+          })),
+        },
+      });
+      renderBulkResults(resp);
+    } catch (err) {
+      EA.toast(err.message || "Bulk invite failed.", "error");
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Invite all";
+    }
+  }
+
+  function renderBulkResults(resp) {
+    lastBulkResults = resp;
+    $("#bi-stage-input").hidden = true;
+    $("#bi-stage-results").hidden = false;
+
+    const s = resp.summary || {};
+    const modePill = s.sso_mode
+      ? '<span class="bi-mode-pill">SSO mode</span> Users will sign in via Microsoft. No passwords issued.'
+      : '<span class="bi-mode-pill">Password mode</span> Each new user gets a temp password — copy + send.';
+    $("#bi-summary").innerHTML =
+      '<strong>' + s.total + '</strong> total — ' +
+      '<span class="bi-stat-ok">' + s.succeeded + ' invited</span>' +
+      (s.failed ? ' &middot; <span class="bi-stat-fail">' + s.failed + ' failed</span>' : '') +
+      '<br><span style="font-size: 0.82rem;">' + modePill + '</span>';
+
+    const rows = (resp.results || []).map((r) => {
+      if (r.status === "ok") {
+        const pw = r.temp_password
+          ? '<span class="bi-temp-pw">' + EA.esc(r.temp_password) + '</span>'
+          : '<span class="muted text-small">— SSO only —</span>';
+        return (
+          '<tr class="bi-row-ok">' +
+            '<td>' + EA.esc(r.email) + '</td>' +
+            '<td>' + pw + '</td>' +
+          '</tr>'
+        );
+      }
+      return (
+        '<tr class="bi-row-fail">' +
+          '<td>' + EA.esc(r.email) + '</td>' +
+          '<td class="bi-error-cell">' + EA.esc(r.error || "Unknown error") + '</td>' +
+        '</tr>'
+      );
+    }).join("");
+    $("#bi-results-table-wrap").innerHTML =
+      '<table><thead><tr><th>Email</th><th>Temp password / Error</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table>';
+
+    // Show the CSV download only when there are temp passwords to capture
+    // (non-SSO mode + at least one success).
+    const hasPasswords = !s.sso_mode && s.succeeded > 0;
+    $("#bi-download-csv").hidden = !hasPasswords;
+  }
+
+  function downloadResultsCSV() {
+    if (!lastBulkResults) return;
+    // Two columns — keep it minimal so admin can paste straight into a mail merge.
+    const lines = ["email,temp_password"];
+    (lastBulkResults.results || []).forEach((r) => {
+      if (r.status === "ok" && r.temp_password) {
+        // Quote-wrap to defend against commas in passwords.
+        lines.push('"' + r.email + '","' + r.temp_password + '"');
+      }
+    });
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "echo-audit-bulk-invites-" + new Date().toISOString().slice(0,10) + ".csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   // ── Edit member ───────────────────────────────────
