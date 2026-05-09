@@ -90,6 +90,14 @@
         <button type="button" class="daw-pill" data-range="all">All time</button>
       </div>
 
+      <div class="daw-custom-date" role="group" aria-label="Custom date range">
+        <input type="date" class="daw-date-input" data-key="from"
+               aria-label="From date" title="From date">
+        <span class="daw-date-sep" aria-hidden="true">→</span>
+        <input type="date" class="daw-date-input" data-key="to"
+               aria-label="To date" title="To date">
+      </div>
+
       <button type="button" class="daw-share-btn"
               title="Copy a link to this view — paste anywhere to share">
         Share
@@ -156,6 +164,24 @@
       background: var(--accent); border-color: var(--accent);
       color: #fff;
     }
+
+    /* Custom date inputs — sit immediately after the preset pills. Picking
+       any value in either input clears the active pill, since "custom range"
+       and "preset" are orthogonal. Clicking a preset pill clears both. */
+    .daw-custom-date {
+      display: inline-flex; align-items: center; gap: 4px;
+      flex-shrink: 0;
+    }
+    .daw-date-input {
+      background: var(--surface-2); border: 1px solid var(--border);
+      color: var(--text); font-size: 0.74rem; padding: 3px 6px;
+      border-radius: 6px; font-family: inherit;
+      color-scheme: dark;
+      width: 132px;
+    }
+    .daw-date-input:hover { border-color: var(--accent); }
+    .daw-date-input:focus { outline: none; border-color: var(--accent); }
+    .daw-date-sep { color: var(--muted); font-size: 0.78rem; }
 
     .daw-share-btn {
       background: var(--surface-2); border: 1px solid var(--border);
@@ -785,19 +811,34 @@
       return dateRangeFor(datePreset);
     }
 
-    // Date pill wiring
-    const pillBtns = root.querySelectorAll(".daw-pill");
+    // Date pill wiring + custom date input wiring.
+    // Pills and custom-date inputs are mutually exclusive: picking either
+    // clears the other. customDate is "active" when EITHER from or to has a
+    // value (the server tolerates one-sided ranges).
+    const pillBtns       = root.querySelectorAll(".daw-pill");
+    const customDateFromEl = root.querySelector('.daw-date-input[data-key="from"]');
+    const customDateToEl   = root.querySelector('.daw-date-input[data-key="to"]');
+
     function syncPillActive() {
+      const customActive = !!(customDateFrom || customDateTo);
       pillBtns.forEach((b) => {
-        b.classList.toggle("is-active", b.dataset.range === datePreset);
+        // Active pill = matches the current preset AND no custom range is set.
+        b.classList.toggle("is-active",
+          !customActive && b.dataset.range === datePreset);
       });
+    }
+    function syncCustomInputs() {
+      // Reflect the in-memory custom dates back into the visible inputs.
+      if (customDateFromEl) customDateFromEl.value = customDateFrom || "";
+      if (customDateToEl)   customDateToEl.value   = customDateTo   || "";
     }
     pillBtns.forEach((b) => {
       b.addEventListener("click", () => {
-        // Picking a preset always clears any custom range from URL hydration.
+        // Picking a preset always clears any custom range — visually too.
         const wasCustom = !!(customDateFrom || customDateTo);
         customDateFrom = null;
         customDateTo   = null;
+        syncCustomInputs();
         if (b.dataset.range === datePreset && !wasCustom) return;
         datePreset = b.dataset.range;
         syncPillActive();
@@ -805,6 +846,23 @@
       });
     });
     syncPillActive();
+
+    // Custom date input change → set custom range, deactivate pills, reload.
+    // We accept partial ranges (only from, or only to) because the server
+    // already handles either side missing. Empty + empty = back to preset.
+    function onCustomDateChange() {
+      const newFrom = (customDateFromEl && customDateFromEl.value) || null;
+      const newTo   = (customDateToEl   && customDateToEl.value)   || null;
+      // No-op if nothing actually changed (avoids redundant reloads when
+      // the change event fires from programmatic updates).
+      if (newFrom === customDateFrom && newTo === customDateTo) return;
+      customDateFrom = newFrom;
+      customDateTo   = newTo;
+      syncPillActive();
+      reload();
+    }
+    if (customDateFromEl) customDateFromEl.addEventListener("change", onCustomDateChange);
+    if (customDateToEl)   customDateToEl.addEventListener("change", onCustomDateChange);
 
     // Chart state machine
     function showLoading() {
@@ -874,8 +932,10 @@
       if (dateFrom || dateTo) {
         customDateFrom = dateFrom || null;
         customDateTo   = dateTo   || null;
-        // Force every pill to inactive (none match a custom range).
+        // Force every pill to inactive (none match a custom range) AND mirror
+        // the URL dates into the visible custom-date inputs.
         pillBtns.forEach((b) => b.classList.remove("is-active"));
+        syncCustomInputs();
         touched = true;
       }
       return touched;
@@ -899,6 +959,7 @@
           campMS.setSelection([]);
           customDateFrom = null;
           customDateTo   = null;
+          syncCustomInputs();
           const defaultPill = root.querySelector(
             '.daw-pill[data-range="' + (opts.defaultDatePreset || "30") + '"]'
           );

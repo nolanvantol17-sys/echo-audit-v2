@@ -739,15 +739,6 @@ def register_routes(app):
     def reports_page():
         return render_page("reports.html")
 
-    # Ad-hoc search/reporting surface — hosts the dashboard widget with all
-    # filters visible (callers, locations, phone routings, campaigns) and an
-    # optional manual date range input on top. Not in the sidebar yet —
-    # accessible via direct link while the surface gets validated.
-    @app.route("/app/search")
-    @login_required
-    def search_page():
-        return render_page("search.html")
-
     @app.route("/app/team")
     @login_required
     @auth.role_required("manager", "admin", "super_admin")
