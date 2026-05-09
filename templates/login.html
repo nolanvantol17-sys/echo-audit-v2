@@ -101,6 +101,32 @@
     }
     .auth-footer a { color: var(--accent); text-decoration: none; font-weight: 600; }
     .auth-footer a:hover { text-decoration: underline; }
+
+    /* SSO row — sits below the password form. "or" divider with hairlines.
+       Microsoft button uses Microsoft's actual logo glyph (4-square mark)
+       rendered as an inline SVG so it renders without a network request. */
+    .auth-divider {
+      display: flex; align-items: center; gap: 10px;
+      margin: 22px 0 16px 0; font-size: 0.74rem;
+      color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    .auth-divider::before, .auth-divider::after {
+      content: ""; flex: 1 1 auto; height: 1px;
+      background: var(--border);
+    }
+    .btn-sso {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      width: 100%; padding: 11px;
+      background: var(--surface-2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px;
+      font-family: inherit; font-size: 0.88rem; font-weight: 500;
+      cursor: pointer; text-decoration: none;
+      transition: border 0.15s, background 0.15s;
+    }
+    .btn-sso:hover {
+      border-color: var(--accent); background: var(--surface);
+    }
+    .btn-sso svg { flex-shrink: 0; }
   </style>
 </head>
 <body>
@@ -141,6 +167,22 @@
 
       <button type="submit" class="btn btn-primary">Sign In</button>
     </form>
+
+    {# Microsoft SSO — only show the divider + button when SSO is actually
+       configured on this instance (env vars set). Avoids a dead button on
+       fresh deploys before the AZURE_AD_* values land. #}
+    {% if sso_microsoft_enabled %}
+    <div class="auth-divider">or</div>
+    <a href="{{ url_for('sso.microsoft_start') }}" class="btn-sso">
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+        <rect x="0" y="0"  width="7" height="7" fill="#F25022"/>
+        <rect x="9" y="0"  width="7" height="7" fill="#7FBA00"/>
+        <rect x="0" y="9"  width="7" height="7" fill="#00A4EF"/>
+        <rect x="9" y="9"  width="7" height="7" fill="#FFB900"/>
+      </svg>
+      Sign in with Microsoft
+    </a>
+    {% endif %}
 
     <div class="auth-footer">
       New organization? <a href="{{ url_for('signup') }}">Create an account</a>

@@ -44,9 +44,12 @@ Echo Audit-side TODO before this is production-ready:
 import logging
 import os
 import secrets
-from urllib.parse import urlencode
 
-from flask import Blueprint, jsonify, redirect, request, session, url_for
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, session, url_for
+from flask_login import login_user
+
+import auth
+from db import get_conn, q
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +73,14 @@ def _config():
     if not all(cfg.values()):
         return None
     return cfg
+
+
+def is_microsoft_sso_configured():
+    """True iff every AZURE_AD_* env var is populated. Templates use this
+    via the global context processor to decide whether to render the
+    "Sign in with Microsoft" button on the login page (avoids a dead
+    button on instances that haven't been wired yet)."""
+    return _config() is not None
 
 
 def _not_configured_response():
@@ -125,14 +136,30 @@ def microsoft_start():
     return redirect(auth_url)
 
 
+def _login_failure(reason_for_user, log_msg=None):
+    """Render the standard login template with an error banner.
+
+    Falls through the same path a wrong-password attempt would, so the user
+    lands back on a familiar surface instead of a JSON error page. Internal
+    detail goes to the log; the user sees only `reason_for_user`.
+    """
+    if log_msg:
+        logger.warning("[sso] login failure: %s", log_msg)
+    return render_template("login.html", error=reason_for_user, email=""), 401
+
+
 @sso_bp.route("/microsoft/callback", methods=["GET"])
 def microsoft_callback():
-    """Handle Microsoft's redirect back. Validates state, exchanges the auth
-    code for tokens, and (TODO) JIT-provisions + logs in the user.
+    """Handle Microsoft's redirect back.
 
-    Returns 501 today on the user-creation step — the surrounding flow
-    (state validation + token exchange) IS exercised so we'll know if Azure
-    AD config breaks before the JIT logic ships.
+    Steps: validate state → exchange code for tokens → look up Echo Audit
+    user by email → enforce email-domain matches a registered company →
+    log them in → redirect to the original destination (or /app).
+
+    Carlos's invite-only model: we DO NOT create new users here. If the
+    Microsoft-authenticated email has no matching Echo Audit user, the
+    flow rejects with "ask your admin to invite you" — admins still
+    pre-provision via the normal team management UI.
     """
     cfg = _config()
     if not cfg:
@@ -141,56 +168,108 @@ def microsoft_callback():
     # Microsoft includes ?error= when consent fails or the user cancels.
     err = request.args.get("error")
     if err:
-        logger.warning("[sso] Microsoft returned error=%s description=%s",
-                       err, request.args.get("error_description", ""))
-        return jsonify({"error": "Microsoft SSO failed", "details": err}), 400
+        return _login_failure(
+            "Microsoft sign-in was cancelled or failed. Please try again.",
+            log_msg=f"Microsoft returned error={err} description={request.args.get('error_description', '')}",
+        )
 
     expected_state = session.pop("sso_state", None)
     received_state = request.args.get("state")
     if not expected_state or expected_state != received_state:
-        logger.warning("[sso] state mismatch — possible CSRF or stale session")
-        return jsonify({"error": "Invalid SSO state"}), 400
+        return _login_failure(
+            "Sign-in session expired. Please try again.",
+            log_msg="state mismatch — possible CSRF or stale session",
+        )
 
     code = request.args.get("code")
     if not code:
-        return jsonify({"error": "Missing authorization code"}), 400
+        return _login_failure(
+            "Microsoft sign-in was incomplete. Please try again.",
+            log_msg="missing authorization code in callback",
+        )
 
-    app = _msal_app(cfg)
-    result = app.acquire_token_by_authorization_code(
+    msal_app = _msal_app(cfg)
+    result = msal_app.acquire_token_by_authorization_code(
         code=code,
         scopes=["openid", "profile", "email", "User.Read"],
         redirect_uri=cfg["AZURE_AD_REDIRECT_URI"],
     )
     if "error" in result:
-        logger.warning("[sso] token exchange failed: %s", result.get("error"))
-        return jsonify({
-            "error": "Token exchange failed",
-            "details": result.get("error_description", result.get("error")),
-        }), 400
+        return _login_failure(
+            "Couldn't complete Microsoft sign-in. Please try again or use your password.",
+            log_msg=f"token exchange failed: {result.get('error')} {result.get('error_description', '')}",
+        )
 
     id_claims = result.get("id_token_claims") or {}
-    email = (id_claims.get("preferred_username") or id_claims.get("email") or "").lower()
-    name  = id_claims.get("name") or ""
-    if not email:
-        return jsonify({"error": "Microsoft did not return an email claim"}), 400
+    # Microsoft's preferred_username is the UPN (typically the email). Falls
+    # back to email claim if preferred_username is missing.
+    email = (id_claims.get("preferred_username") or id_claims.get("email") or "").strip().lower()
+    if not email or "@" not in email:
+        return _login_failure(
+            "Microsoft didn't return a usable email. Please contact your admin.",
+            log_msg=f"id_claims missing/malformed email: {id_claims!r}",
+        )
 
-    # ── TODO (waiting on user direction) ─────────────────────
-    # 1. Look up users.user_email — if exists, login_user(existing).
-    # 2. Else: parse email domain → look up companies.company_email_domain,
-    #    JIT-create the user with caller role, login_user(new).
-    # 3. Else: reject with "Your email domain is not registered with any
-    #    Echo Audit organization."
-    # 4. Audit log success / failure via audit_log blueprint.
-    # 5. redirect(session.pop("sso_next", "/app"))
-    return jsonify({
-        "ok": False,
-        "scaffold_only": True,
-        "message": (
-            "Microsoft SSO authenticated successfully but JIT user "
-            "provisioning is not yet implemented. See sso_routes.py TODO."
-        ),
-        "claims": {
-            "email": email,
-            "name":  name,
-        },
-    }), 501
+    domain = email.split("@", 1)[1]
+
+    conn = get_conn()
+    try:
+        # Step 1 — confirm the email's domain belongs to a registered Echo
+        # Audit company. Defense in depth + future multi-tenant routing.
+        cur = conn.execute(
+            q("SELECT company_id, company_name FROM companies "
+              "WHERE LOWER(company_email_domain) = LOWER(?) LIMIT 1"),
+            [domain],
+        )
+        company_row = cur.fetchone()
+        if not company_row:
+            return _login_failure(
+                f"The email domain @{domain} isn't registered with any Echo Audit organization. "
+                f"Contact your admin if you believe this is an error.",
+                log_msg=f"unknown email domain: {domain}",
+            )
+        company_id = company_row["company_id"] if hasattr(company_row, "keys") else company_row[0]
+
+        # Step 2 — find the Echo Audit user by email. Invite-only model: no
+        # auto-creation. If the user doesn't exist, point them at their admin.
+        user_row = auth._load_user_row(conn, email=email)
+        if not user_row:
+            return _login_failure(
+                "No Echo Audit account found for this email. Ask your admin to invite you first.",
+                log_msg=f"no user for email {email} (domain mapped to company {company_id})",
+            )
+
+        user = auth.User(user_row)
+
+        # Step 3 — sanity check: the user's company must match the domain's
+        # company. Catches a mis-seeded company_email_domain or a user whose
+        # email was changed to an unrelated tenant's domain post-creation.
+        if user.company_id != company_id:
+            return _login_failure(
+                "Account / organization mismatch. Contact your admin.",
+                log_msg=f"user {user.user_id} company={user.company_id} != domain company={company_id}",
+            )
+
+        # Step 4 — enforce account status. Suspended/inactive accounts can't
+        # sign in via SSO any more than they can via password.
+        if not user.is_active:
+            return _login_failure(
+                "Your account is inactive. Contact your admin.",
+                log_msg=f"inactive user {user.user_id} attempted SSO",
+            )
+
+        # Step 5 — actually log them in. login_user issues the Flask-Login
+        # session cookie; everything downstream (current_user, role gates,
+        # PageRouter) treats this exactly like a password login.
+        login_user(user)
+        logger.info("[sso] login OK user_id=%s email=%s company_id=%s",
+                    user.user_id, email, company_id)
+
+        next_url = session.pop("sso_next", "/app") or "/app"
+        # Defensive: only allow same-origin redirects to prevent open-redirect
+        # via a tampered ?next= param.
+        if not next_url.startswith("/"):
+            next_url = "/app"
+        return redirect(next_url)
+    finally:
+        conn.close()

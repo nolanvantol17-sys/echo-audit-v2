@@ -212,7 +212,16 @@ def _register_context_processors(app):
             "keyterm_min_length":  5,
             "keyterm_max_length":  50,
             "active_jobs_initial": [],
+            # SSO availability — login.html toggles the "Sign in with Microsoft"
+            # button on this. Cheap (just env-var presence checks); safe to
+            # call on every render.
+            "sso_microsoft_enabled": False,
         }
+        try:
+            from sso_routes import is_microsoft_sso_configured as _sso_ok
+            ctx["sso_microsoft_enabled"] = _sso_ok()
+        except Exception:
+            pass
         try:
             import grader as _grader
             ctx["keyterms_prompt_max_terms"] = _grader.KEYTERMS_PROMPT_MAX_TERMS

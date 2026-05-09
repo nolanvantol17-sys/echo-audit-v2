@@ -517,6 +517,20 @@ _ADDITIVE_MIGRATIONS = [
         di_generated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )""",
 
+    # SSO email-domain → company mapping. Microsoft SSO authenticates a user
+    # by their corporate email; we look up which Echo Audit tenant they belong
+    # to by matching the email's domain against this column. Stored without
+    # the leading "@" (e.g. "mayfairmgt.com") and unique per tenant. Nullable
+    # for tenants who haven't configured SSO yet — they keep using password
+    # auth as before.
+    "ALTER TABLE companies ADD COLUMN IF NOT EXISTS company_email_domain TEXT",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_companies_email_domain ON companies (LOWER(company_email_domain)) WHERE company_email_domain IS NOT NULL",
+    # Seed Mayfair (company_id=25) with mayfairmgt.com so SSO works on first
+    # deploy. Idempotent — only sets when the column is currently NULL, so a
+    # later admin-edit through the settings UI won't be overwritten on reboot.
+    """UPDATE companies SET company_email_domain = 'mayfairmgt.com'
+        WHERE company_id = 25 AND company_email_domain IS NULL""",
+
     # Sub-Task W: one-shot backfill of respondent_call_count.
     # Counter was historically maintained inside _upsert_respondent, which
     # under-counted some paths and over-counted re-grades. The link function
