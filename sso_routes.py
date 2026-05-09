@@ -244,7 +244,11 @@ def microsoft_callback():
         # Step 3 — sanity check: the user's company must match the domain's
         # company. Catches a mis-seeded company_email_domain or a user whose
         # email was changed to an unrelated tenant's domain post-creation.
-        if user.company_id != company_id:
+        # Super admins are exempt — they're cross-org by design and have no
+        # fixed company_id (their role grants access to every tenant). For
+        # them, the email-domain match is just OAuth tenant routing, not an
+        # access gate.
+        if not user.is_super_admin and user.company_id != company_id:
             return _login_failure(
                 "Account / organization mismatch. Contact your admin.",
                 log_msg=f"user {user.user_id} company={user.company_id} != domain company={company_id}",
