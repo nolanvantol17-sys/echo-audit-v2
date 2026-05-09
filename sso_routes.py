@@ -129,7 +129,7 @@ def microsoft_start():
 
     app = _msal_app(cfg)
     auth_url = app.get_authorization_request_url(
-        scopes=["openid", "profile", "email", "User.Read"],
+        scopes=["User.Read"],
         state=state,
         redirect_uri=cfg["AZURE_AD_REDIRECT_URI"],
     )
@@ -191,7 +191,7 @@ def microsoft_callback():
     msal_app = _msal_app(cfg)
     result = msal_app.acquire_token_by_authorization_code(
         code=code,
-        scopes=["openid", "profile", "email", "User.Read"],
+        scopes=["User.Read"],
         redirect_uri=cfg["AZURE_AD_REDIRECT_URI"],
     )
     if "error" in result:
