@@ -40,6 +40,7 @@ from settings_routes import settings_bp
 from scheduled_calls_routes import scheduled_calls_bp
 from active_jobs_routes import active_jobs_bp
 from voice_agents_routes import voice_agents_bp
+from sso_routes import sso_bp
 # Re-exported from helpers so "from app import get_effective_company_id" works
 # for any callers that expect the helper to live on the main app module.
 # check_rate_limit and increment_usage live in helpers to avoid a circular
@@ -150,6 +151,10 @@ def create_app():
     app.register_blueprint(export_bp)
     app.register_blueprint(bulk_export_bp)
     app.register_blueprint(platform_admin_bp)
+
+    # Microsoft SSO scaffold — routes return 503 until AZURE_AD_* env vars
+    # are set + JIT user provisioning is wired in. See sso_routes.py.
+    app.register_blueprint(sso_bp)
 
     # JSON error handlers for /api/ paths (HTML paths get default handling)
     _register_error_handlers(app)
@@ -733,6 +738,15 @@ def register_routes(app):
     @login_required
     def reports_page():
         return render_page("reports.html")
+
+    # Ad-hoc search/reporting surface — hosts the dashboard widget with all
+    # filters visible (callers, locations, phone routings, campaigns) and an
+    # optional manual date range input on top. Not in the sidebar yet —
+    # accessible via direct link while the surface gets validated.
+    @app.route("/app/search")
+    @login_required
+    def search_page():
+        return render_page("search.html")
 
     @app.route("/app/team")
     @login_required

@@ -239,7 +239,7 @@
 
     .daw-chart-loading {
       position: absolute; inset: 0; display: flex; align-items: center;
-      justify-content: center; background: rgba(255,247,242, 0.55);
+      justify-content: center; background: rgba(26,31,31,0.55);
       border-radius: var(--radius); z-index: 2; backdrop-filter: blur(1px);
     }
     .daw-spinner {
@@ -287,22 +287,35 @@
     const filterRows = options.filterRows || null;  // optional fn(item, state) → bool
 
     const labelEl = button.querySelector(".daw-ms-label");
+    // Strip the leading "All " from the all-state label to derive the category
+    // word used as a prefix when something IS selected — e.g.
+    // "All Locations" → "Locations". Falls back to the full allLabel if the
+    // pattern doesn't match.
+    const categoryLabel = /^All\s+(.+)$/i.test(allLabel)
+      ? allLabel.replace(/^All\s+/i, "")
+      : allLabel;
     let items = [];           // [{id, name, ...extras}]
     let state = { all: true, ids: new Set() };
     let popover = null;
     let searchTerm = "";
 
     function syncLabel() {
+      // Default state ("All Locations" etc.) keeps its original phrasing.
       if (state.all || state.ids.size === 0) {
         labelEl.textContent = allLabel;
         return;
       }
+      // Single selection: name reads naturally with the category prefix
+      // ("Locations: Briarwood"). Skip "selected" — the colon implies it.
       if (state.ids.size === 1) {
         const only = items.find((it) => it.id === [...state.ids][0]);
-        labelEl.textContent = only ? only.name : "1 selected";
+        labelEl.textContent = categoryLabel + ": " +
+          (only ? only.name : "1 selected");
         return;
       }
-      labelEl.textContent = state.ids.size + " selected";
+      // Multi-selection: show count with the category prefix so the bar
+      // doesn't collapse to ambiguous numbers ("3 selected" without context).
+      labelEl.textContent = categoryLabel + ": " + state.ids.size + " selected";
     }
 
     function close() {
@@ -600,29 +613,80 @@
     };
   }
 
+  // Two dynamic reference lines:
+  //   - "View avg" — average of the currently-visible chart values (filtered
+  //                  slice). Computed client-side from the data the user is
+  //                  looking at right now.
+  //   - "Company avg" — all-time company-wide average (no filters applied).
+  //                     Returned by the chart endpoint as `company_avg`.
+  // Both rendered as horizontal dashed lines with a label at opposite edges
+  // so they don't overlap when the two values are close. Either is skipped if
+  // its value is null/NaN. The chart instance is expected to expose
+  // chart.$thresholds = { view: number|null, company: number|null }.
   function thresholdLinePlugin() {
     return {
       id: "daw-threshold-line",
       afterDraw(chartInstance) {
         const { ctx, chartArea, scales } = chartInstance;
         if (!scales.y) return;
-        const y = scales.y.getPixelForValue(5);
+        const t = chartInstance.$thresholds || {};
+        const view    = (typeof t.view === "number"    && isFinite(t.view))    ? t.view    : null;
+        const company = (typeof t.company === "number" && isFinite(t.company)) ? t.company : null;
+
         ctx.save();
-        ctx.strokeStyle = "rgba(255,92,74,0.7)";
-        ctx.setLineDash([4, 4]);
+        ctx.font = "11px Geist, Inter, sans-serif";
         ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(chartArea.left, y);
-        ctx.lineTo(chartArea.right, y);
-        ctx.stroke();
+
+        if (company !== null) {
+          const yC = scales.y.getPixelForValue(company);
+          ctx.strokeStyle = "rgba(156,145,131,0.55)";
+          ctx.setLineDash([2, 4]);
+          ctx.beginPath();
+          ctx.moveTo(chartArea.left, yC);
+          ctx.lineTo(chartArea.right, yC);
+          ctx.stroke();
+          ctx.fillStyle = "rgba(156,145,131,0.95)";
+          ctx.textAlign = "left";
+          ctx.fillText("Company avg " + company.toFixed(2),
+                       chartArea.left + 6, yC - 4);
+        }
+
+        if (view !== null) {
+          const yV = scales.y.getPixelForValue(view);
+          ctx.strokeStyle = "rgba(74,128,118,0.85)";
+          ctx.setLineDash([5, 4]);
+          ctx.beginPath();
+          ctx.moveTo(chartArea.left, yV);
+          ctx.lineTo(chartArea.right, yV);
+          ctx.stroke();
+          ctx.fillStyle = "rgba(74,128,118,1)";
+          ctx.textAlign = "right";
+          ctx.fillText("View avg " + view.toFixed(2),
+                       chartArea.right - 6, yV - 4);
+        }
+
         ctx.setLineDash([]);
-        ctx.fillStyle = "rgba(255,92,74,0.85)";
-        ctx.font = "11px Inter, sans-serif";
-        ctx.textAlign = "right";
-        ctx.fillText("threshold 5.0", chartArea.right - 6, y - 4);
         ctx.restore();
       },
     };
+  }
+
+  // View avg = mean of the values the user is currently looking at. For
+  // line charts that's the raw per-call scores; for bar charts it's the
+  // mean of the bar heights (an avg-of-avgs — not statistically pure, but
+  // matches what the eye expects from "the average of these bars").
+  function computeViewAvg(data) {
+    const ds = (data && data.datasets && data.datasets[0]) || null;
+    const values = ds && Array.isArray(ds.data) ? ds.data : [];
+    let sum = 0, count = 0;
+    for (const v of values) {
+      if (v === null || v === undefined) continue;
+      const n = Number(v);
+      if (!isFinite(n)) continue;
+      sum += n;
+      count += 1;
+    }
+    return count > 0 ? sum / count : null;
   }
 
   // ── Date range presets ──
@@ -1013,6 +1077,13 @@
 
       chart = new Chart(canvasEl, cfg);
       chart.$points = data.points || [];
+      // Threshold lines read from chart.$thresholds in afterDraw. Setting them
+      // before/after `new Chart()` both work — afterDraw runs on every render.
+      const companyAvg = (typeof data.company_avg === "number") ? data.company_avg : null;
+      chart.$thresholds = {
+        view:    computeViewAvg(data),
+        company: companyAvg,
+      };
       showCanvas();
     }
 

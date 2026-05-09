@@ -99,6 +99,31 @@ def _in_clause(n):
     return "(" + ",".join(["?"] * n) + ")"
 
 
+def _company_avg_score(conn, company_id):
+    """Company-wide all-time average overall score, ignoring all chart filters
+    (date / location / caller / etc). Used as the baseline reference line on
+    every chart so a slice can be visually compared against the company norm.
+
+    Same baseline filters as the chart query (not deleted, not test, not
+    no-answer, score not null) so the two numbers are comparable.
+    """
+    cur = conn.execute(q("""
+        SELECT AVG(i.interaction_overall_score) AS avg_score
+        FROM interactions i
+        JOIN projects p ON p.project_id = i.project_id
+        WHERE p.company_id = ?
+          AND i.interaction_deleted_at IS NULL
+          AND i.interaction_is_test = FALSE
+          AND i.status_id <> ?
+          AND i.interaction_overall_score IS NOT NULL
+    """), [company_id, STATUS_NO_ANSWER])
+    row = cur.fetchone()
+    if not row:
+        return None
+    val = row["avg_score"] if hasattr(row, "keys") else row[0]
+    return round(float(val), 2) if val is not None else None
+
+
 # ═══════════════════════════════════════════════════════════════
 # GET /api/dashboard
 # ═══════════════════════════════════════════════════════════════
@@ -668,6 +693,8 @@ def get_chart():
 
     conn = get_conn()
     try:
+        company_avg = _company_avg_score(conn, company_id)
+
         if view_by == "date":
             sql = f"""
                 SELECT
@@ -707,6 +734,7 @@ def get_chart():
                 "labels":   labels,
                 "datasets": [{"label": "Score", "data": data}],
                 "points":   points,
+                "company_avg": company_avg,
             })
 
         if view_by == "project":
@@ -742,6 +770,7 @@ def get_chart():
                 "labels":   labels,
                 "datasets": [{"label": "Avg Score", "data": data}],
                 "points":   points,
+                "company_avg": company_avg,
             })
 
         if view_by == "caller":
@@ -777,6 +806,7 @@ def get_chart():
                 "labels":   labels,
                 "datasets": [{"label": "Avg Score", "data": data}],
                 "points":   points,
+                "company_avg": company_avg,
             })
 
         if view_by == "location":
@@ -812,6 +842,7 @@ def get_chart():
                 "labels":   labels,
                 "datasets": [{"label": "Avg Score", "data": data}],
                 "points":   points,
+                "company_avg": company_avg,
             })
 
         # view_by == "phone_routing"
@@ -847,6 +878,7 @@ def get_chart():
             "labels":   labels,
             "datasets": [{"label": "Avg Score", "data": data}],
             "points":   points,
+            "company_avg": company_avg,
         })
     finally:
         conn.close()

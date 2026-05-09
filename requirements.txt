@@ -5,6 +5,7 @@ elevenlabs>=1.50
 flask
 flask-login
 gunicorn
+msal
 openpyxl
 psycopg2-binary
 reportlab
