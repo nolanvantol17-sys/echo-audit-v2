@@ -129,6 +129,9 @@
       <div class="bi-row">
         <label>Role
           <select id="bi-role">
+            {% if user_role == 'super_admin' %}
+            <option value="super_admin">Super admin</option>
+            {% endif %}
             <option value="caller" selected>Caller</option>
             <option value="manager">Manager</option>
             <option value="admin">Admin</option>
@@ -216,7 +219,11 @@
   const USER_ROLE = "{{ user_role or '' }}";
   const USER_ID = {{ user_id or 'null' }};
   const CAN_WRITE = ["admin","super_admin"].indexOf(USER_ROLE) !== -1;
+  // super_admin only appears in the role picker for super_admins themselves —
+  // mirrors the backend guard in /api/team POST + PUT. Letting an admin pick it
+  // would just be denied server-side, so hide it client-side too.
   const ROLE_OPTIONS = [
+    ...(USER_ROLE === "super_admin" ? [{value:"super_admin", label:"Super admin"}] : []),
     {value:"admin",   label:"Admin"},
     {value:"manager", label:"Manager"},
     {value:"caller",  label:"Caller"},
