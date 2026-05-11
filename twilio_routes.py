@@ -342,13 +342,17 @@ def voice_twiml():
 @twilio_bp.route("/recording-callback", methods=["POST"])
 def recording_callback():
     """Twilio webhook fired when a call recording is fully written and
-    available. Pulls the audio bytes via Twilio's REST API and hands them
-    to enqueue_grade_job — same path the existing live-record + upload
-    flows use.
+    available. Branches on the user-selected disposition (set via
+    /pending-call/<id>/disposition from the bc-choice UI):
 
-    Idempotent on RecordingSid: re-firing this webhook for the same
-    recording is a no-op (already-processed rows have a non-null
-    tbc_interaction_id).
+      submit     → enqueue grade job (legacy default behavior)
+      no_answer  → create a no-answer interaction with audio attached
+      discard    → drop the audio, mark row 'discarded'
+      NULL       → user hasn't clicked yet — park audio in tbc_audio and
+                   wait. The disposition endpoint will pick it up and act
+                   on it the moment the user chooses.
+
+    Idempotent on tbc_interaction_id (already-processed rows are no-ops).
     """
     cfg = _config()
     if not cfg:
@@ -379,16 +383,16 @@ def recording_callback():
         return ("", 200)
     pending = dict(row) if hasattr(row, "keys") else {k: row[i] for i, k in enumerate(row.keys())}
 
-    if pending.get("tbc_interaction_id"):
-        logger.info("[twilio.rec_cb] already processed tbc=%s", pending["tbc_id"])
+    if pending.get("tbc_interaction_id") or pending.get("tbc_status") in ("graded", "discarded", "no_answer_logged", "failed"):
+        logger.info("[twilio.rec_cb] already processed tbc=%s status=%s",
+                    pending["tbc_id"], pending.get("tbc_status"))
         return ("", 200)
 
     _set_call_status(pending["tbc_id"], recording_sid=recording_sid,
-                     recording_url=recording_url, status="recorded")
+                     recording_url=recording_url)
 
-    # Fetch the recording audio. Twilio recordings are MP3 by default; the
-    # base RecordingUrl needs a .mp3 suffix for direct download. Auth is
-    # HTTP Basic with Account SID + Auth Token.
+    # Fetch the audio bytes from Twilio. MP3 by default — append .mp3 to
+    # the RecordingUrl for direct download. Auth is HTTP Basic.
     import requests
     audio_resp = requests.get(
         recording_url + ".mp3",
@@ -411,37 +415,197 @@ def recording_callback():
     except ValueError:
         pass
 
-    # Hand off to the existing pipeline — creates the interaction, pins the
-    # audio, queues the grade job. Daemon picks it up and grades async.
-    from grade_jobs import enqueue_grade_job, process_grade_job_async
-    try:
-        job_id, interaction_id = enqueue_grade_job(
-            company_id=pending["company_id"],
-            submitted_by_user_id=pending["caller_user_id"],
-            project_id=pending["project_id"],
-            location_id=pending["location_id"],
-            audio_bytes=audio_bytes,
-            audio_ext="mp3",
-            caller_user_id=pending["caller_user_id"],
-            campaign_id=pending.get("campaign_id"),
-            call_duration_seconds=duration_seconds,
-        )
-    except Exception as e:
-        logger.exception("[twilio.rec_cb] enqueue_grade_job failed tbc=%s", pending["tbc_id"])
-        _set_call_status(pending["tbc_id"], status="failed",
-                         error=f"enqueue failed: {e}", completed=True)
+    disposition = pending.get("tbc_disposition")
+    if disposition is None:
+        # User hasn't clicked any of the 4 bc-choice buttons yet. Park the
+        # audio in tbc_audio so the disposition endpoint can act on it the
+        # moment the user picks. Twilio's webhook is one-shot — we own the
+        # bytes from here on.
+        _park_audio(pending["tbc_id"], audio_bytes)
+        logger.info("[twilio.rec_cb] parked audio awaiting disposition tbc=%s",
+                    pending["tbc_id"])
         return ("", 200)
 
-    _set_call_status(pending["tbc_id"], status="graded",
-                     interaction_id=interaction_id, completed=True)
-
-    # Fire the async grade processor in the background (matches the live
-    # record / upload path's hand-off).
-    try:
-        process_grade_job_async(job_id, pending["caller_user_id"])
-    except Exception:
-        logger.exception("[twilio.rec_cb] async grade kickoff failed job=%s", job_id)
+    _apply_disposition(pending["tbc_id"], disposition, audio_bytes,
+                       pending, duration_seconds)
     return ("", 200)
+
+
+def _park_audio(tbc_id, audio_bytes):
+    """Stash the recording bytes + flip status to awaiting_disposition."""
+    conn = get_conn()
+    try:
+        conn.execute(
+            q("""UPDATE twilio_browser_calls
+                    SET tbc_audio = ?, tbc_status = 'awaiting_disposition'
+                  WHERE tbc_id = ?"""),
+            (audio_bytes, tbc_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _clear_parked_audio(tbc_id):
+    """Drop the parked audio bytes once the disposition has been honored."""
+    conn = get_conn()
+    try:
+        conn.execute(
+            q("UPDATE twilio_browser_calls SET tbc_audio = NULL WHERE tbc_id = ?"),
+            (tbc_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _apply_disposition(tbc_id, action, audio_bytes, pending, duration_seconds=None):
+    """Run the user's chosen post-call action against the recording bytes.
+
+    Called from two places:
+      1. recording-callback when disposition was set BEFORE audio arrived
+         (the common case — user clicks within seconds of hangup).
+      2. set_disposition endpoint when disposition is set AFTER audio arrived
+         (rare — fires when the recording webhook beat the user click).
+
+    All three branches are terminal: they update tbc_status to a final state
+    and clear tbc_audio so the table doesn't carry orphan bytes forever.
+    """
+    if action == "submit":
+        from grade_jobs import enqueue_grade_job, process_grade_job_async
+        try:
+            job_id, interaction_id = enqueue_grade_job(
+                company_id=pending["company_id"],
+                submitted_by_user_id=pending["caller_user_id"],
+                project_id=pending["project_id"],
+                location_id=pending["location_id"],
+                audio_bytes=audio_bytes,
+                audio_ext="mp3",
+                caller_user_id=pending["caller_user_id"],
+                campaign_id=pending.get("campaign_id"),
+                call_duration_seconds=duration_seconds,
+            )
+        except Exception as e:
+            logger.exception("[twilio.disp.submit] enqueue failed tbc=%s", tbc_id)
+            _set_call_status(tbc_id, status="failed",
+                             error=f"enqueue failed: {e}", completed=True)
+            _clear_parked_audio(tbc_id)
+            return
+        _set_call_status(tbc_id, status="graded",
+                         interaction_id=interaction_id, completed=True)
+        _clear_parked_audio(tbc_id)
+        try:
+            process_grade_job_async(job_id, pending["caller_user_id"])
+        except Exception:
+            logger.exception("[twilio.disp.submit] async kickoff failed job=%s", job_id)
+        return
+
+    if action == "no_answer":
+        # Create a no-answer interaction (status_id=44) with the recording
+        # attached. Reuses the helpers behind /api/interactions/no-answer
+        # so the resulting row is shape-identical to a UI-logged no-answer.
+        from datetime import date
+        from interactions_routes import (
+            STATUS_NO_ANSWER, _insert_interaction_row,
+            _save_audio, _save_no_answer_audio,
+        )
+        conn = get_conn()
+        try:
+            interaction_id = _insert_interaction_row(
+                conn,
+                project_id=pending["project_id"],
+                caller_user_id=pending["caller_user_id"],
+                respondent_user_id=None,
+                location_id=pending["location_id"],
+                campaign_id=pending.get("campaign_id"),
+                interaction_date=date.today(),
+                status_id=STATUS_NO_ANSWER,
+                call_start_time=None,
+                call_end_time=None,
+                call_duration_seconds=duration_seconds,
+                set_uploaded_at=True,
+            )
+            audio_url, audio_data = _save_audio(interaction_id, audio_bytes, ".mp3")
+            _save_no_answer_audio(conn, interaction_id, audio_url, audio_data)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.exception("[twilio.disp.no_answer] insert failed tbc=%s", tbc_id)
+            _set_call_status(tbc_id, status="failed",
+                             error=f"no-answer insert failed: {e}", completed=True)
+            _clear_parked_audio(tbc_id)
+            return
+        finally:
+            conn.close()
+        _set_call_status(tbc_id, status="no_answer_logged",
+                         interaction_id=interaction_id, completed=True)
+        _clear_parked_audio(tbc_id)
+        return
+
+    if action == "discard":
+        _set_call_status(tbc_id, status="discarded", completed=True)
+        _clear_parked_audio(tbc_id)
+        return
+
+    logger.warning("[twilio.disp] unknown action=%r tbc=%s", action, tbc_id)
+
+
+@twilio_bp.route("/pending-call/<int:tbc_id>/disposition", methods=["POST"])
+@login_required
+def set_disposition(tbc_id):
+    """Record the user's post-call choice (Submit / Log Unanswered / Discard
+    / Dial again — the last is purely client-side, no server call).
+
+    Body: {"action": "submit" | "no_answer" | "discard"}
+
+    Two paths:
+      - audio NOT yet arrived (status='dialing' or 'pending'): just persist
+        the disposition; the recording webhook will branch on it on arrival.
+      - audio already parked (status='awaiting_disposition'): apply the
+        disposition immediately using the stored bytes.
+
+    Returns instantly — heavy work (grade enqueue, no-answer insert) runs
+    server-side without blocking the client. The browser is free to dial
+    again right away.
+    """
+    body = request.get_json(silent=True) or {}
+    action = (body.get("action") or "").strip()
+    if action not in ("submit", "no_answer", "discard"):
+        return _err("Invalid action. Must be submit, no_answer, or discard.", 400)
+
+    pending = _load_pending(tbc_id)
+    if not pending:
+        return _err("Pending call not found.", 404)
+    if (pending["caller_user_id"] != current_user.user_id
+            and not current_user.is_super_admin):
+        return _err("Not yours.", 403)
+
+    if pending.get("tbc_disposition"):
+        # Already chosen — return the prior choice rather than letting the
+        # user toggle terminal states from the UI.
+        return jsonify({
+            "ok": False,
+            "already_chosen": pending["tbc_disposition"],
+        }), 409
+
+    # Persist the choice. The webhook reads this column on audio arrival.
+    conn = get_conn()
+    try:
+        conn.execute(
+            q("UPDATE twilio_browser_calls SET tbc_disposition = ? WHERE tbc_id = ?"),
+            (action, tbc_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Audio already arrived? Act on it now using the parked bytes.
+    if pending.get("tbc_status") == "awaiting_disposition" and pending.get("tbc_audio"):
+        _apply_disposition(tbc_id, action,
+                           bytes(pending["tbc_audio"]), pending,
+                           duration_seconds=None)
+
+    return jsonify({"ok": True, "action": action})
 
 
 @twilio_bp.route("/pending-call/<int:tbc_id>", methods=["GET"])

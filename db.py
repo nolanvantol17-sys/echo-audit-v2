@@ -544,6 +544,24 @@ _ADDITIVE_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_tbc_caller_user_id ON twilio_browser_calls (caller_user_id)",
     "CREATE INDEX IF NOT EXISTS idx_tbc_call_sid       ON twilio_browser_calls (tbc_call_sid)",
 
+    # Post-hangup user disposition: what to do with the recording when Twilio's
+    # webhook delivers it. Set by the user from the bc-choice UI as soon as the
+    # call ends — usually before the recording webhook fires (5–30s lag). The
+    # webhook reads this column and branches:
+    #   'submit'    → enqueue grade job (default behavior)
+    #   'no_answer' → create no-answer interaction with audio attached
+    #   'discard'   → drop audio, mark row 'discarded'
+    #   NULL        → user never chose → fall back to 'submit' (safe default)
+    "ALTER TABLE twilio_browser_calls ADD COLUMN IF NOT EXISTS tbc_disposition TEXT",
+
+    # Buffer for the audio bytes while we wait for the user to choose a
+    # disposition. The recording webhook fires 5–30s after hangup; the user
+    # almost always clicks one of the 4 bc-choice buttons before then. If
+    # disposition is null when the audio lands, we park the bytes here and
+    # let the disposition endpoint act on them once the user clicks. Cleared
+    # to NULL after the chosen action runs (graded / no-answer / discarded).
+    "ALTER TABLE twilio_browser_calls ADD COLUMN IF NOT EXISTS tbc_audio BYTEA",
+
     # SSO email-domain → company mapping. Microsoft SSO authenticates a user
     # by their corporate email; we look up which Echo Audit tenant they belong
     # to by matching the email's domain against this column. Stored without

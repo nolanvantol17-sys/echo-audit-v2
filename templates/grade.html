@@ -181,6 +181,19 @@
   }
   .bc-phone-input:focus { outline: none; border-color: var(--accent); }
 
+  /* ── bc-choice grid: 2×2 buttons after hangup ── */
+  .bc-choice-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    width: 100%;
+    max-width: 360px;
+  }
+  .bc-choice-grid .btn { width: 100%; padding: 10px 14px; font-size: 0.9rem; }
+  @media (max-width: 480px) {
+    .bc-choice-grid { grid-template-columns: 1fr; }
+  }
+
   /* ── Property intel card (shown when a location is selected) ── */
   .intel-card {
     margin-top: 14px;
@@ -901,13 +914,20 @@
                 </div>
               </div>
 
-              {# Post-call status — call ended, recording on its way back #}
-              <div id="bc-finishing" class="record-panel" hidden>
-                <div class="muted text-small" style="text-align:center;">
-                  Call ended. Recording uploading and queueing for grading…
+              {# Post-call choice — shown the moment the user hangs up.
+                 Twilio's recording webhook fires 5–30s after hangup, but
+                 we don't make the user wait for it. Each button POSTs the
+                 disposition, returns to idle instantly, and lets the
+                 server handle the audio in the background. #}
+              <div id="bc-choice" class="record-panel" hidden>
+                <div class="muted text-small" style="text-align:center;margin-bottom:8px;">
+                  Call ended. What should we do with this call?
                 </div>
-                <div class="hstack-wrap" style="margin-top:12px;justify-content:center;">
-                  <button type="button" class="btn btn-ghost btn-sm" id="btn-bc-redo">Dial again</button>
+                <div class="bc-choice-grid">
+                  <button type="button" id="btn-bc-submit"    class="btn btn-primary">Submit for grading</button>
+                  <button type="button" id="btn-bc-no-answer" class="btn btn-ghost">Log Unanswered Call</button>
+                  <button type="button" id="btn-bc-redial"    class="btn btn-ghost">Dial again</button>
+                  <button type="button" id="btn-bc-discard"   class="btn btn-ghost">Discard</button>
                 </div>
               </div>
             </div>
@@ -3197,7 +3217,6 @@
     activePendingId: null,
     timerInterval:  null,
     timerStart:     null,
-    pollInterval:   null,
   };
 
   function wireBrowserCall() {
@@ -3218,25 +3237,33 @@
     const dialBtn   = document.getElementById("btn-bc-dial");
     const hangupBtn = document.getElementById("btn-bc-hangup");
     const muteBtn   = document.getElementById("btn-bc-mute");
-    const redoBtn   = document.getElementById("btn-bc-redo");
     if (dialBtn)   dialBtn.addEventListener("click", onBcDial);
     if (hangupBtn) hangupBtn.addEventListener("click", onBcHangup);
     if (muteBtn)   muteBtn.addEventListener("click", onBcToggleMute);
-    if (redoBtn)   redoBtn.addEventListener("click", () => bcShow("idle"));
 
-    // No-answer button on browser-call panel reuses the existing endpoint.
+    // bc-choice buttons — fire-and-forget disposition + reset to idle.
+    const submitBtn   = document.getElementById("btn-bc-submit");
+    const noAnsBtn2   = document.getElementById("btn-bc-no-answer");
+    const redialBtn   = document.getElementById("btn-bc-redial");
+    const discardBtn  = document.getElementById("btn-bc-discard");
+    if (submitBtn)  submitBtn .addEventListener("click", () => onBcDisposition("submit",    "Submitted for grading."));
+    if (noAnsBtn2)  noAnsBtn2 .addEventListener("click", () => onBcDisposition("no_answer", "Logged as unanswered call."));
+    if (redialBtn)  redialBtn .addEventListener("click", () => onBcDisposition("discard",   "Ready to dial again."));
+    if (discardBtn) discardBtn.addEventListener("click", () => onBcDisposition("discard",   "Recording discarded."));
+
+    // No-answer button on the bc-idle dial form (when no call is active yet)
+    // reuses the existing no-answer handler from the Phone+mic panel.
     const noAnsBtn = document.getElementById("btn-no-answer-bc");
     if (noAnsBtn) noAnsBtn.addEventListener("click", () => {
-      // Defer to the existing no-answer handler if it exists in scope.
       const existing = document.getElementById("btn-no-answer-record");
       if (existing) existing.click();
     });
   }
 
   function bcShow(which) {
-    document.getElementById("bc-idle"     ).hidden = (which !== "idle");
-    document.getElementById("bc-active"   ).hidden = (which !== "active");
-    document.getElementById("bc-finishing").hidden = (which !== "finishing");
+    document.getElementById("bc-idle"  ).hidden = (which !== "idle");
+    document.getElementById("bc-active").hidden = (which !== "active");
+    document.getElementById("bc-choice").hidden = (which !== "choice");
   }
 
   function bcShowError(msg) {
@@ -3337,10 +3364,10 @@
     }
     if (ev.type === "disconnected") {
       stopBcTimer();
-      bcShow("finishing");
-      // Recording arrives via Twilio webhook server-side. Poll the pending
-      // row for status — once tbc_status hits "graded" we surface it.
-      pollBcPending();
+      // Show the 4-button choice. The recording is still in flight on
+      // Twilio's side; whatever the user picks here gets honored when
+      // the recording webhook arrives 5–30s later.
+      bcShow("choice");
     }
   }
 
@@ -3352,50 +3379,44 @@
     muteBtn.textContent = newMuted ? "Unmute" : "Mute";
   }
 
-  // Poll /api/twilio/pending-call/<id> until graded or failed. Times out
-  // after 5 min (recording webhook should fire within seconds — minutes is
-  // the alarm threshold, not the expected case).
-  function pollBcPending() {
-    if (!bcState.activePendingId) return;
+  // Fire-and-forget disposition click. POSTs the choice, resets the panel
+  // to the dial form so the user can immediately keep working, and pings
+  // the dock so any new grade-job row surfaces on the next poll. The
+  // server handles the audio when Twilio's recording webhook delivers it.
+  async function onBcDisposition(action, toastMessage) {
     const pendingId = bcState.activePendingId;
-    const startedAt = Date.now();
-    const TIMEOUT_MS = 5 * 60 * 1000;
-    if (bcState.pollInterval) clearInterval(bcState.pollInterval);
-    bcState.pollInterval = setInterval(async () => {
-      if (Date.now() - startedAt > TIMEOUT_MS) {
-        clearInterval(bcState.pollInterval);
-        bcState.pollInterval = null;
-        EA.toast("Call recording is taking longer than expected — check the dock.", "warning");
-        return;
-      }
-      try {
-        const s = await EA.fetchJSON("/api/twilio/pending-call/" + pendingId);
-        if (s.status === "graded" || s.interaction_id) {
-          clearInterval(bcState.pollInterval);
-          bcState.pollInterval = null;
-          EA.toast("Call recorded + queued for grading.", "success");
-          // Reset back to idle so the user can dial again.
-          bcShow("idle");
-          document.getElementById("btn-bc-dial").disabled = false;
-          // Refresh the active jobs dock so the new grade job appears.
-          if (window.EA && EA.ActiveJobsDock && typeof EA.ActiveJobsDock.refresh === "function") {
-            EA.ActiveJobsDock.refresh();
-          }
-          // Refresh the in-page grading queue (left pane on /app/grade).
-          // The function is defined later in this IIFE; call by name.
-          if (typeof loadGradeJobsQueue === "function") {
-            try { loadGradeJobsQueue(); } catch (_) { /* defensive */ }
-          }
-        } else if (s.status === "failed") {
-          clearInterval(bcState.pollInterval);
-          bcState.pollInterval = null;
-          bcShow("idle");
-          document.getElementById("btn-bc-dial").disabled = false;
-          bcShowError(s.error || "Recording / grading failed.");
-        }
-      } catch (_) { /* transient — keep polling */ }
-    }, 2000);
+    if (!pendingId) {
+      // No pending call (toggle clicked from a stale state) — just reset.
+      bcShow("idle");
+      return;
+    }
+    // Disable the choice buttons so a hot double-click doesn't double-submit.
+    ["btn-bc-submit","btn-bc-no-answer","btn-bc-redial","btn-bc-discard"]
+      .forEach((id) => { const b = document.getElementById(id); if (b) b.disabled = true; });
+    // Reset the UI immediately — don't make the user wait for the round-trip.
+    bcState.activePendingId = null;
+    bcShow("idle");
+    document.getElementById("btn-bc-dial").disabled = false;
+    EA.toast(toastMessage, "success");
+    if (window.EA && EA.ActiveJobsDock && typeof EA.ActiveJobsDock.refresh === "function") {
+      EA.ActiveJobsDock.refresh();
+    }
+    // Re-enable buttons for the next call.
+    ["btn-bc-submit","btn-bc-no-answer","btn-bc-redial","btn-bc-discard"]
+      .forEach((id) => { const b = document.getElementById(id); if (b) b.disabled = false; });
+    // Background POST — failures surface as a toast but don't block UX.
+    try {
+      await EA.fetchJSON(`/api/twilio/pending-call/${pendingId}/disposition`, {
+        method: "POST",
+        body: { action: action },
+      });
+    } catch (err) {
+      EA.toast(err.message || "Couldn't save your choice — call may not be processed.", "error");
+    }
   }
+
+  // (pollBcPending was removed — disposition flow returns to idle
+  // immediately and lets the dock surface the eventual grade job.)
 
   // Best-effort: read the existing form's campaign field if it has a
   // resolved id. The campaign input is a combobox over names, but the
