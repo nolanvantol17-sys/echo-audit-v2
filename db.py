@@ -517,6 +517,33 @@ _ADDITIVE_MIGRATIONS = [
         di_generated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )""",
 
+    # Twilio browser-dial: tracks pending + completed calls placed via the
+    # in-browser Voice SDK. Created when the user requests an access-token,
+    # updated as the call progresses, and pinned to the resulting interaction
+    # once the recording-complete webhook fires + the grade job is queued.
+    """CREATE TABLE IF NOT EXISTS twilio_browser_calls (
+        tbc_id              SERIAL PRIMARY KEY,
+        company_id          INTEGER NOT NULL
+                                REFERENCES companies (company_id) ON DELETE CASCADE,
+        caller_user_id      INTEGER NOT NULL
+                                REFERENCES users (user_id),
+        project_id          INTEGER REFERENCES projects  (project_id)  ON DELETE SET NULL,
+        location_id         INTEGER REFERENCES locations (location_id) ON DELETE SET NULL,
+        campaign_id         INTEGER REFERENCES campaigns (campaign_id) ON DELETE SET NULL,
+        tbc_target_phone    TEXT NOT NULL,
+        tbc_respondent_name TEXT,
+        tbc_call_sid        TEXT,
+        tbc_recording_sid   TEXT,
+        tbc_recording_url   TEXT,
+        tbc_interaction_id  INTEGER REFERENCES interactions (interaction_id) ON DELETE SET NULL,
+        tbc_status          TEXT NOT NULL DEFAULT 'pending',
+        tbc_error           TEXT,
+        tbc_created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        tbc_completed_at    TIMESTAMPTZ
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_tbc_caller_user_id ON twilio_browser_calls (caller_user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_tbc_call_sid       ON twilio_browser_calls (tbc_call_sid)",
+
     # SSO email-domain → company mapping. Microsoft SSO authenticates a user
     # by their corporate email; we look up which Echo Audit tenant they belong
     # to by matching the email's domain against this column. Stored without

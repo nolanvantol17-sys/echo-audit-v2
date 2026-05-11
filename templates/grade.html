@@ -138,6 +138,43 @@
   }
   .record-wrap .app-audio { width: 100%; }
 
+  /* ── Sub-toggle: Phone+mic vs Browser call (Twilio) ── */
+  .record-mode-toggle {
+    display: inline-flex; align-self: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 999px; padding: 3px;
+    margin-bottom: 14px;
+  }
+  .record-mode-btn {
+    background: transparent; border: none;
+    color: var(--muted); font-family: inherit; font-size: 0.82rem; font-weight: 500;
+    padding: 6px 14px; border-radius: 999px; cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .record-mode-btn:hover { color: var(--text); }
+  .record-mode-btn.is-active {
+    background: var(--accent); color: #fff;
+  }
+
+  /* ── Browser call panel (mirrors .record-wrap layout) ── */
+  .browser-call-wrap {
+    padding: 18px 16px; min-height: 200px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  }
+  .browser-call-wrap[hidden] { display: none; }
+  .bc-label {
+    font-size: 0.78rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.04em;
+    margin-bottom: 4px; align-self: center;
+  }
+  .bc-phone-input {
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--text); font-family: inherit; font-size: 1.05rem;
+    padding: 10px 14px; border-radius: 8px; width: 240px; text-align: center;
+  }
+  .bc-phone-input:focus { outline: none; border-color: var(--accent); }
+
   /* ── Property intel card (shown when a location is selected) ── */
   .intel-card {
     margin-top: 14px;
@@ -771,7 +808,22 @@
           </div>
 
           <section id="panel-record" class="tab-panel" data-tab-panel="record" hidden>
-            <div class="record-wrap" id="record-wrap">
+            {# Sub-toggle — only renders when Twilio Voice is configured.
+               Defaults to "Phone + mic" (existing flow). Switching to
+               "Browser call" reveals the Twilio dial UI. #}
+            {% if twilio_voice_enabled %}
+            <div class="record-mode-toggle" role="group" aria-label="Record source">
+              <button type="button" class="record-mode-btn is-active" data-record-mode="phonemic">
+                Phone + mic
+              </button>
+              <button type="button" class="record-mode-btn" data-record-mode="browser">
+                Browser call
+              </button>
+            </div>
+            {% endif %}
+
+            {# ── Phone + mic sub-panel — existing MediaRecorder flow ── #}
+            <div class="record-wrap" id="record-wrap" data-record-mode-panel="phonemic">
               <div id="record-permission-error" class="section-error" hidden></div>
 
               <div id="record-idle" class="record-panel">
@@ -808,6 +860,52 @@
                 </div>
               </div>
             </div>
+
+            {# ── Browser call sub-panel — Twilio Voice SDK wrapper ── #}
+            {% if twilio_voice_enabled %}
+            <div class="browser-call-wrap" data-record-mode-panel="browser" hidden>
+              <div id="bc-error" class="section-error" hidden></div>
+
+              {# Idle: dial form #}
+              <div id="bc-idle" class="record-panel">
+                <label class="bc-label" for="bc-target-phone">Property phone number</label>
+                <input type="tel" id="bc-target-phone" class="bc-phone-input"
+                       placeholder="(512) 555-0199" autocomplete="off">
+                <div class="record-action-row" style="margin-top:14px;">
+                  <button type="button" id="btn-bc-dial" class="btn btn-primary record-btn">
+                    Dial
+                  </button>
+                  <button type="button" class="btn btn-ghost" id="btn-no-answer-bc">Log Unanswered Call</button>
+                </div>
+                <div class="muted text-small" style="margin-top:10px; text-align:center;">
+                  Calls through Twilio. Recording uploads + grades automatically when you hang up.
+                </div>
+              </div>
+
+              {# Connecting / in-call status display #}
+              <div id="bc-active" class="record-panel" hidden>
+                <div class="record-indicator">
+                  <span class="record-pulse"></span>
+                  <span id="bc-status-label">Connecting…</span>
+                </div>
+                <div id="bc-timer" class="record-timer">0:00</div>
+                <div class="hstack-wrap" style="margin-top:14px;justify-content:center;">
+                  <button type="button" id="btn-bc-mute" class="btn btn-ghost">Mute</button>
+                  <button type="button" id="btn-bc-hangup" class="btn btn-danger">Hang up</button>
+                </div>
+              </div>
+
+              {# Post-call status — call ended, recording on its way back #}
+              <div id="bc-finishing" class="record-panel" hidden>
+                <div class="muted text-small" style="text-align:center;">
+                  Call ended. Recording uploading and queueing for grading…
+                </div>
+                <div class="hstack-wrap" style="margin-top:12px;justify-content:center;">
+                  <button type="button" class="btn btn-ghost btn-sm" id="btn-bc-redo">Dial again</button>
+                </div>
+              </div>
+            </div>
+            {% endif %}
           </section>
 
           <section id="panel-upload" class="tab-panel" data-tab-panel="upload" hidden>
@@ -875,6 +973,10 @@
 <script defer src="{{ url_for('static', filename='tabs.js') }}?v={{ static_v('tabs.js') }}"></script>
 <script defer src="{{ url_for('static', filename='interaction_view.js') }}?v={{ static_v('interaction_view.js') }}"></script>
 <script defer src="{{ url_for('static', filename='interaction_panel.js') }}?v={{ static_v('interaction_panel.js') }}"></script>
+{% if twilio_voice_enabled %}
+<script defer src="https://cdn.jsdelivr.net/npm/@twilio/voice-sdk@2/dist/twilio.min.js"></script>
+<script defer src="{{ url_for('static', filename='twilio_voice.js') }}?v={{ static_v('twilio_voice.js') }}"></script>
+{% endif %}
 <script>
 (function () {
   "use strict";
@@ -3067,6 +3169,233 @@
     loadGradeJobsQueue();
     setQueuePollRate(QUEUE_POLL_IDLE_MS);
   }
+
+  // ── Browser-call mode (Twilio Voice) ──────────────────────
+  // Lives next to the existing MediaRecorder UI inside the Record tab.
+  // Toggle flips between two sub-panels; the existing Phone+mic flow is
+  // unchanged. Browser-call dials via Twilio's Voice SDK; the recording
+  // is uploaded + queued by Twilio's recording-status webhook on the
+  // backend (no client-side upload). Hidden entirely when SSO/Twilio
+  // env vars aren't set (Jinja {% if twilio_voice_enabled %} above).
+  const bcState = {
+    activePendingId: null,
+    timerInterval:  null,
+    timerStart:     null,
+    pollInterval:   null,
+  };
+
+  function wireBrowserCall() {
+    const toggleBtns = document.querySelectorAll(".record-mode-btn");
+    if (!toggleBtns.length) return;  // Twilio not configured — nothing to wire
+
+    toggleBtns.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const mode = btn.dataset.recordMode;
+        toggleBtns.forEach((b) =>
+          b.classList.toggle("is-active", b.dataset.recordMode === mode));
+        document.querySelectorAll('[data-record-mode-panel]').forEach((p) => {
+          p.hidden = (p.dataset.recordModePanel !== mode);
+        });
+      });
+    });
+
+    const dialBtn   = document.getElementById("btn-bc-dial");
+    const hangupBtn = document.getElementById("btn-bc-hangup");
+    const muteBtn   = document.getElementById("btn-bc-mute");
+    const redoBtn   = document.getElementById("btn-bc-redo");
+    if (dialBtn)   dialBtn.addEventListener("click", onBcDial);
+    if (hangupBtn) hangupBtn.addEventListener("click", onBcHangup);
+    if (muteBtn)   muteBtn.addEventListener("click", onBcToggleMute);
+    if (redoBtn)   redoBtn.addEventListener("click", () => bcShow("idle"));
+
+    // No-answer button on browser-call panel reuses the existing endpoint.
+    const noAnsBtn = document.getElementById("btn-no-answer-bc");
+    if (noAnsBtn) noAnsBtn.addEventListener("click", () => {
+      // Defer to the existing no-answer handler if it exists in scope.
+      const existing = document.getElementById("btn-no-answer-record");
+      if (existing) existing.click();
+    });
+  }
+
+  function bcShow(which) {
+    document.getElementById("bc-idle"     ).hidden = (which !== "idle");
+    document.getElementById("bc-active"   ).hidden = (which !== "active");
+    document.getElementById("bc-finishing").hidden = (which !== "finishing");
+  }
+
+  function bcShowError(msg) {
+    const el = document.getElementById("bc-error");
+    if (!el) return;
+    el.textContent = msg;
+    el.hidden = false;
+    setTimeout(() => { el.hidden = true; }, 8000);
+  }
+
+  function startBcTimer() {
+    const tEl = document.getElementById("bc-timer");
+    bcState.timerStart = Date.now();
+    if (bcState.timerInterval) clearInterval(bcState.timerInterval);
+    bcState.timerInterval = setInterval(() => {
+      const sec = Math.floor((Date.now() - bcState.timerStart) / 1000);
+      const mm = Math.floor(sec / 60);
+      const ss = String(sec % 60).padStart(2, "0");
+      if (tEl) tEl.textContent = mm + ":" + ss;
+    }, 500);
+  }
+
+  function stopBcTimer() {
+    if (bcState.timerInterval) {
+      clearInterval(bcState.timerInterval);
+      bcState.timerInterval = null;
+    }
+  }
+
+  async function onBcDial() {
+    // Required form context — same fields the regular submit reads.
+    const projEl = document.getElementById("gf-project");
+    const locEl  = document.getElementById("gf-location");
+    const projectId  = projEl ? parseInt(projEl.value, 10) : NaN;
+    const locationId = locEl  ? parseInt(locEl.value,  10) : NaN;
+    const targetPhone = (document.getElementById("bc-target-phone").value || "").trim();
+    if (!projectId || !locationId) {
+      bcShowError("Pick a project and location first.");
+      return;
+    }
+    if (!targetPhone) {
+      bcShowError("Enter the property's phone number to dial.");
+      return;
+    }
+
+    document.getElementById("bc-error").hidden = true;
+    document.getElementById("btn-bc-dial").disabled = true;
+    document.getElementById("bc-status-label").textContent = "Connecting…";
+
+    // 1. Mint a token + create the pending-call row.
+    let tok;
+    try {
+      tok = await EA.fetchJSON("/api/twilio/access-token", {
+        method: "POST",
+        body: {
+          project_id:    projectId,
+          location_id:   locationId,
+          target_phone:  targetPhone,
+          campaign_id:   readCampaignIdIfAny(),
+          respondent_name: readRespondentNameIfAny(),
+        },
+      });
+    } catch (err) {
+      document.getElementById("btn-bc-dial").disabled = false;
+      bcShowError(err.message || "Couldn't start call.");
+      return;
+    }
+
+    bcState.activePendingId = tok.pending_call_id;
+
+    // 2. Init the Voice SDK + dial.
+    try {
+      await EA.TwilioVoice.init({ token: tok.token, identity: tok.identity });
+      bcShow("active");
+      startBcTimer();
+      await EA.TwilioVoice.dial({
+        targetPhone: targetPhone,
+        pendingCallId: tok.pending_call_id,
+        onEvent: onBcCallEvent,
+      });
+    } catch (err) {
+      stopBcTimer();
+      document.getElementById("btn-bc-dial").disabled = false;
+      bcShow("idle");
+      bcShowError(err.message || "Couldn't connect call.");
+    }
+  }
+
+  function onBcCallEvent(ev) {
+    const label = document.getElementById("bc-status-label");
+    if (ev.type === "connecting" && label) label.textContent = "Connecting…";
+    if (ev.type === "connected"  && label) label.textContent = "On call";
+    if (ev.type === "error") {
+      stopBcTimer();
+      bcShow("idle");
+      document.getElementById("btn-bc-dial").disabled = false;
+      bcShowError(ev.message || "Call error.");
+    }
+    if (ev.type === "disconnected") {
+      stopBcTimer();
+      bcShow("finishing");
+      // Recording arrives via Twilio webhook server-side. Poll the pending
+      // row for status — once tbc_status hits "graded" we surface it.
+      pollBcPending();
+    }
+  }
+
+  function onBcHangup() { EA.TwilioVoice.hangup(); }
+  function onBcToggleMute() {
+    const muteBtn = document.getElementById("btn-bc-mute");
+    const newMuted = !EA.TwilioVoice.muted();
+    EA.TwilioVoice.mute(newMuted);
+    muteBtn.textContent = newMuted ? "Unmute" : "Mute";
+  }
+
+  // Poll /api/twilio/pending-call/<id> until graded or failed. Times out
+  // after 5 min (recording webhook should fire within seconds — minutes is
+  // the alarm threshold, not the expected case).
+  function pollBcPending() {
+    if (!bcState.activePendingId) return;
+    const pendingId = bcState.activePendingId;
+    const startedAt = Date.now();
+    const TIMEOUT_MS = 5 * 60 * 1000;
+    if (bcState.pollInterval) clearInterval(bcState.pollInterval);
+    bcState.pollInterval = setInterval(async () => {
+      if (Date.now() - startedAt > TIMEOUT_MS) {
+        clearInterval(bcState.pollInterval);
+        bcState.pollInterval = null;
+        EA.toast("Call recording is taking longer than expected — check the dock.", "warning");
+        return;
+      }
+      try {
+        const s = await EA.fetchJSON("/api/twilio/pending-call/" + pendingId);
+        if (s.status === "graded" || s.interaction_id) {
+          clearInterval(bcState.pollInterval);
+          bcState.pollInterval = null;
+          EA.toast("Call recorded + queued for grading.", "success");
+          // Reset back to idle so the user can dial again.
+          bcShow("idle");
+          document.getElementById("btn-bc-dial").disabled = false;
+          // Refresh the active jobs dock so the new grade job appears.
+          if (window.EA && EA.ActiveJobsDock && typeof EA.ActiveJobsDock.refresh === "function") {
+            EA.ActiveJobsDock.refresh();
+          }
+        } else if (s.status === "failed") {
+          clearInterval(bcState.pollInterval);
+          bcState.pollInterval = null;
+          bcShow("idle");
+          document.getElementById("btn-bc-dial").disabled = false;
+          bcShowError(s.error || "Recording / grading failed.");
+        }
+      } catch (_) { /* transient — keep polling */ }
+    }, 2000);
+  }
+
+  // Best-effort: read the existing form's campaign field if it has a
+  // resolved id. The campaign input is a combobox over names, but the
+  // selected campaign_id gets stashed as a data-attribute by the existing
+  // combobox wiring. Absence just means null — backend tolerates it.
+  function readCampaignIdIfAny() {
+    const el = document.getElementById("gf-campaign");
+    if (!el) return null;
+    const raw = el.dataset.campaignId || el.dataset.id || "";
+    const v = parseInt(raw, 10);
+    return Number.isFinite(v) ? v : null;
+  }
+  function readRespondentNameIfAny() {
+    // Respondent isn't entered on the grade form today — assigned later
+    // via the existing respondent picker. Return null; backend handles it.
+    return null;
+  }
+
+  // Hook into the existing init path. wireBrowserCall is a no-op when
+  // Twilio isn't configured, so it's safe to call unconditionally.
+  document.addEventListener("DOMContentLoaded", wireBrowserCall);
 
   document.addEventListener("DOMContentLoaded", init);
 })();

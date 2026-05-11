@@ -41,6 +41,7 @@ from scheduled_calls_routes import scheduled_calls_bp
 from active_jobs_routes import active_jobs_bp
 from voice_agents_routes import voice_agents_bp
 from sso_routes import sso_bp
+from twilio_routes import twilio_bp
 # Re-exported from helpers so "from app import get_effective_company_id" works
 # for any callers that expect the helper to live on the main app module.
 # check_rate_limit and increment_usage live in helpers to avoid a circular
@@ -156,6 +157,11 @@ def create_app():
     # are set + JIT user provisioning is wired in. See sso_routes.py.
     app.register_blueprint(sso_bp)
 
+    # Twilio Voice browser-dial — routes return 503 until TWILIO_* env vars
+    # are set + the Twilio console-side TwiML App is configured. See
+    # twilio_routes.py module docstring.
+    app.register_blueprint(twilio_bp)
+
     # JSON error handlers for /api/ paths (HTML paths get default handling)
     _register_error_handlers(app)
 
@@ -216,10 +222,18 @@ def _register_context_processors(app):
             # button on this. Cheap (just env-var presence checks); safe to
             # call on every render.
             "sso_microsoft_enabled": False,
+            # Twilio Voice availability — grade.html toggles the Browser-call
+            # mode on this. Cheap (env-var presence check); safe per render.
+            "twilio_voice_enabled": False,
         }
         try:
             from sso_routes import is_microsoft_sso_configured as _sso_ok
             ctx["sso_microsoft_enabled"] = _sso_ok()
+        except Exception:
+            pass
+        try:
+            from twilio_routes import is_twilio_voice_configured as _twilio_ok
+            ctx["twilio_voice_enabled"] = _twilio_ok()
         except Exception:
             pass
         try:

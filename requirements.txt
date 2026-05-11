@@ -11,4 +11,5 @@ psycopg2-binary
 reportlab
 python-dotenv
 requests
+twilio
 werkzeug
