@@ -3176,7 +3176,7 @@
   // unchanged. Browser-call dials via Twilio's Voice SDK; the recording
   // is uploaded + queued by Twilio's recording-status webhook on the
   // backend (no client-side upload). Hidden entirely when SSO/Twilio
-  // env vars aren't set (Jinja {% if twilio_voice_enabled %} above).
+  // env vars aren't set (Jinja conditional above gates the whole block).
   const bcState = {
     activePendingId: null,
     timerInterval:  null,
