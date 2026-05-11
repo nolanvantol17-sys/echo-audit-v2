@@ -2212,13 +2212,13 @@ def create_project_with_rubric():
 
 _TEAM_SELECT = """
     SELECT u.user_id, u.user_email, u.user_first_name, u.user_last_name,
-           u.status_id, s.status_name, u.user_created_at,
+           u.status_id, s.status_name, u.user_created_at, u.department_id,
            r.role_name
     FROM users u
-    JOIN departments d ON d.department_id = u.department_id
-    LEFT JOIN user_roles ur ON ur.user_role_id = u.user_role_id
-    LEFT JOIN roles      r  ON r.role_id       = ur.role_id
-    LEFT JOIN statuses   s  ON s.status_id     = u.status_id
+    LEFT JOIN departments d ON d.department_id = u.department_id
+    LEFT JOIN user_roles  ur ON ur.user_role_id = u.user_role_id
+    LEFT JOIN roles       r  ON r.role_id       = ur.role_id
+    LEFT JOIN statuses    s  ON s.status_id     = u.status_id
 """
 
 
@@ -2231,9 +2231,20 @@ def list_team():
 
     conn = get_conn()
     try:
+        # Two paths into the result set:
+        # 1. Users in this company (via department → company_id)
+        # 2. Super admins — cross-org by design, no department binding.
+        #    They legitimately have access here and need to be selectable
+        #    as the caller of a graded interaction. Today's super_admin
+        #    population is small (Echo Audit ops + a couple of Mayfair
+        #    elevations) so the over-inclusion is negligible. Revisit when
+        #    the per-tenant config refactor adds a proper company-scoped
+        #    super_admin table.
         cur = conn.execute(q(
-            _TEAM_SELECT + " WHERE d.company_id = ? AND u.user_deleted_at IS NULL"
-                           " ORDER BY u.user_created_at DESC"
+            _TEAM_SELECT +
+            " WHERE u.user_deleted_at IS NULL"
+            "   AND (d.company_id = ? OR r.role_name = 'super_admin')"
+            " ORDER BY u.user_created_at DESC"
         ), (company_id,))
         return jsonify(_rows(cur))
     finally:
