@@ -266,6 +266,16 @@ def microsoft_callback():
         # session cookie; everything downstream (current_user, role gates,
         # PageRouter) treats this exactly like a password login.
         login_user(user)
+
+        # Seed the org-context switcher with the domain-resolved company.
+        # For super_admins this is the *only* signal — get_effective_company_id()
+        # falls back to None without it, and every _require_company() route
+        # returns 400 "No company context", leaving the dropdowns empty and
+        # the grade page unusable. Mayfair domain → company_id=25 here.
+        # No-op for non-super-admins (their effective company comes from
+        # current_user.company_id).
+        session["active_org_id"] = company_id
+
         logger.info("[sso] login OK user_id=%s email=%s company_id=%s",
                     user.user_id, email, company_id)
 
