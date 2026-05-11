@@ -1369,6 +1369,12 @@
       phoneEl.textContent = "📞 No phone number on file";
       phoneEl.hidden = false;
     }
+    // Auto-populate the Browser-call dial field with this location's phone
+    // when present; clear it when the location has no number on file (so the
+    // user knows they need to type one). Only applies when the Twilio toggle
+    // is rendered — the input doesn't exist on instances without Twilio.
+    const bcInput = document.getElementById("bc-target-phone");
+    if (bcInput) bcInput.value = phone || "";
     // Under a URL ?project_id= lock, the project dropdown is a single locked
     // option — don't let a user-driven location change rebuild it (and re-enable
     // it) and don't let the chained onProjectChange clobber the campaign field.
@@ -1653,9 +1659,10 @@
     const sel = $("#gf-caller");
     try {
       const team = await EA.fetchJSON("/api/team");
-      const callers = team.filter(function (u) {
-        return (u.role_name === "caller" || !u.role_name);
-      });
+      // Show every active team member regardless of role — admins and
+      // super_admins place shopping calls too. Only filter out hard-deleted
+      // / soft-deleted accounts (the API already excludes those).
+      const callers = team;
       sel.innerHTML = '<option value="">—</option>';
       callers.forEach(function (u) {
         const o = document.createElement("option");
