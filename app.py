@@ -15,6 +15,7 @@ from flask import (
     Flask, flash, jsonify, redirect, render_template, request, session, url_for,
 )
 from flask_login import current_user, login_required, login_user, logout_user
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash
 
 import db
@@ -853,6 +854,14 @@ def register_routes(app):
 
 
 app = create_app()
+
+# Trust Railway's reverse-proxy headers. Without this, request.url_root
+# returns the internal Railway hostname (http://*.internal:8080/) instead of
+# the public https URL — which broke the Twilio recording-status webhook
+# silently: we handed Twilio an unreachable callback URL in twilio_routes.py,
+# so the recording was never POSTed back and the call never reached the
+# grader. One proxy hop on Railway → x_for=1, x_proto=1, x_host=1.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 
 if __name__ == "__main__":
