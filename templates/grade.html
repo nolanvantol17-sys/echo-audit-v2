@@ -90,6 +90,12 @@
     justify-content: center;
     gap: 12px;
   }
+  /* `display: flex` above wins over the [hidden] attribute's UA `display: none`
+     because of selector specificity, so the toggle leaves the wrong panel
+     visible. Force-hide both record-wrap and browser-call-wrap when they
+     carry the [hidden] attribute. */
+  .record-wrap[hidden],
+  .browser-call-wrap[hidden] { display: none !important; }
   .record-btn {
     min-width: 200px;
     padding: 12px 22px;
@@ -3374,6 +3380,11 @@
           // Refresh the active jobs dock so the new grade job appears.
           if (window.EA && EA.ActiveJobsDock && typeof EA.ActiveJobsDock.refresh === "function") {
             EA.ActiveJobsDock.refresh();
+          }
+          // Refresh the in-page grading queue (left pane on /app/grade).
+          // The function is defined later in this IIFE; call by name.
+          if (typeof loadGradeJobsQueue === "function") {
+            try { loadGradeJobsQueue(); } catch (_) { /* defensive */ }
           }
         } else if (s.status === "failed") {
           clearInterval(bcState.pollInterval);
