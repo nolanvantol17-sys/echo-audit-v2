@@ -1659,10 +1659,13 @@
     const sel = $("#gf-caller");
     try {
       const team = await EA.fetchJSON("/api/team");
-      // Show every active team member regardless of role — admins and
-      // super_admins place shopping calls too. Only filter out hard-deleted
-      // / soft-deleted accounts (the API already excludes those).
-      const callers = team;
+      // Show active team members regardless of role (admins + super_admins
+      // place shopping calls too). Skip inactive accounts — they can't
+      // actually be the caller of a new call, and showing them in the
+      // dropdown lets old/duplicate accounts slip into new interactions.
+      const callers = team.filter(function (u) {
+        return Number(u.status_id) === 1;
+      });
       sel.innerHTML = '<option value="">—</option>';
       callers.forEach(function (u) {
         const o = document.createElement("option");
