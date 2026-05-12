@@ -124,6 +124,15 @@
     }
   }
 
+  function sendDigits(digits) {
+    if (!activeCall) return false;
+    try { activeCall.sendDigits(String(digits)); return true; }
+    catch (e) {
+      console.warn("[TwilioVoice] sendDigits failed:", e);
+      return false;
+    }
+  }
+
   function isInCall() { return !!activeCall; }
   function muted()    { return isMuted; }
 
@@ -136,6 +145,6 @@
   }
 
   EA.TwilioVoice = {
-    init, dial, mute, hangup, isInCall, muted, teardown,
+    init, dial, mute, hangup, sendDigits, isInCall, muted, teardown,
   };
 })();

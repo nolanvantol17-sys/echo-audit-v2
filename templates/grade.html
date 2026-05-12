@@ -194,6 +194,36 @@
     .bc-choice-grid { grid-template-columns: 1fr; }
   }
 
+  /* ── bc-keypad: 4×3 dial pad shown during active call for IVR navigation ── */
+  .bc-keypad {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    width: 100%;
+    max-width: 240px;
+    margin: 14px auto 0;
+  }
+  .bc-keypad-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 12px 0;
+    font-size: 1.15rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.08s, transform 0.08s;
+    user-select: none;
+  }
+  .bc-keypad-btn:hover    { background: var(--surface-hover, #2a2d33); }
+  .bc-keypad-btn:active   { transform: scale(0.96); background: var(--accent); color: #fff; }
+  .bc-keypad-label {
+    text-align: center;
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-top: 12px;
+  }
+
   /* ── Property intel card (shown when a location is selected) ── */
   .intel-card {
     margin-top: 14px;
@@ -912,6 +942,21 @@
                   <button type="button" id="btn-bc-mute" class="btn btn-ghost">Mute</button>
                   <button type="button" id="btn-bc-hangup" class="btn btn-danger">Hang up</button>
                 </div>
+                <div class="bc-keypad" id="bc-keypad" role="group" aria-label="Phone keypad">
+                  <button type="button" class="bc-keypad-btn" data-digit="1">1</button>
+                  <button type="button" class="bc-keypad-btn" data-digit="2">2</button>
+                  <button type="button" class="bc-keypad-btn" data-digit="3">3</button>
+                  <button type="button" class="bc-keypad-btn" data-digit="4">4</button>
+                  <button type="button" class="bc-keypad-btn" data-digit="5">5</button>
+                  <button type="button" class="bc-keypad-btn" data-digit="6">6</button>
+                  <button type="button" class="bc-keypad-btn" data-digit="7">7</button>
+                  <button type="button" class="bc-keypad-btn" data-digit="8">8</button>
+                  <button type="button" class="bc-keypad-btn" data-digit="9">9</button>
+                  <button type="button" class="bc-keypad-btn" data-digit="*">*</button>
+                  <button type="button" class="bc-keypad-btn" data-digit="0">0</button>
+                  <button type="button" class="bc-keypad-btn" data-digit="#">#</button>
+                </div>
+                <div class="bc-keypad-label">Tap a key to send a tone (for phone-tree menus)</div>
               </div>
 
               {# Post-call choice — shown the moment the user hangs up.
@@ -3240,6 +3285,15 @@
     if (dialBtn)   dialBtn.addEventListener("click", onBcDial);
     if (hangupBtn) hangupBtn.addEventListener("click", onBcHangup);
     if (muteBtn)   muteBtn.addEventListener("click", onBcToggleMute);
+
+    document.querySelectorAll("#bc-keypad .bc-keypad-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const d = btn.dataset.digit;
+        if (!d) return;
+        const ok = window.EA && EA.TwilioVoice && EA.TwilioVoice.sendDigits(d);
+        if (!ok) console.warn("[bc-keypad] sendDigits failed for", d);
+      });
+    });
 
     // bc-choice buttons — fire-and-forget disposition + reset to idle.
     const submitBtn   = document.getElementById("btn-bc-submit");
