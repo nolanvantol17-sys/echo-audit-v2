@@ -156,10 +156,20 @@ def _maybe_handle_elevenlabs_dial_failure(provider_key, payload):
 
     failure_reason = (data.get("failure_reason") or "Call initiation failed")[:500]
 
+    # Map ElevenLabs failure_reason → terminal sc_status. 'no-answer' is the
+    # property literally not picking up the phone (Twilio SIP 487 / CallStatus
+    # no-answer) — that's an unanswered call, not a system failure. Bucket
+    # it under 'no_answer' so it counts toward the property's no-answer rate
+    # and doesn't pollute the failure metric. Anything else stays 'failed'.
+    is_no_answer = failure_reason.strip().lower().replace("_", "-") == "no-answer"
+    target_status = "no_answer" if is_no_answer else "failed"
+
     conn = get_conn()
     try:
         cur = conn.execute(
-            q("""SELECT sc_id, sc_requested_by_user_id, sc_status
+            q("""SELECT sc_id, sc_requested_by_user_id, sc_status,
+                        sc_project_id, sc_location_id, sc_campaign_id,
+                        sc_caller_user_id
                    FROM scheduled_calls
                   WHERE sc_conversation_id = ?"""),
             (conv_id,),
@@ -178,13 +188,52 @@ def _maybe_handle_elevenlabs_dial_failure(provider_key, payload):
         if row["sc_status"] == "initiated":
             conn.execute(
                 q("""UPDATE scheduled_calls
-                        SET sc_status = 'failed',
+                        SET sc_status = ?,
                             sc_status_message = ?,
                             sc_completed_at = NOW()
                       WHERE sc_id = ?"""),
-                (failure_reason, row["sc_id"]),
+                (target_status, failure_reason, row["sc_id"]),
             )
             conn.commit()
+
+            # When it's a no-answer, also create an interactions row (status
+            # STATUS_NO_ANSWER=44) so the unanswered call shows up in the
+            # property's history and counts toward the no-answer-rate stat.
+            # No audio / no transcript — there was no conversation. Failure
+            # to create the row is logged but doesn't unwind the sc update;
+            # the dock signal is the more important user-facing surface.
+            if is_no_answer:
+                try:
+                    from datetime import date
+                    from interactions_routes import (
+                        STATUS_NO_ANSWER, _insert_interaction_row,
+                    )
+                    conn2 = get_conn()
+                    try:
+                        _insert_interaction_row(
+                            conn2,
+                            project_id=row["sc_project_id"],
+                            caller_user_id=row["sc_caller_user_id"],
+                            respondent_user_id=None,
+                            location_id=row["sc_location_id"],
+                            campaign_id=row.get("sc_campaign_id"),
+                            interaction_date=date.today(),
+                            status_id=STATUS_NO_ANSWER,
+                            call_start_time=None,
+                            call_end_time=None,
+                            call_duration_seconds=0,
+                            set_uploaded_at=False,
+                        )
+                        conn2.commit()
+                    finally:
+                        conn2.close()
+                except Exception:
+                    logger.exception(
+                        "[voip_webhook elevenlabs] sc_id=%s no-answer "
+                        "interaction row create failed (sc still flipped)",
+                        row["sc_id"],
+                    )
+
             write_audit_log(
                 row["sc_requested_by_user_id"], ACTION_UPDATED,
                 ENTITY_SCHEDULED_CALL, row["sc_id"],
@@ -192,14 +241,14 @@ def _maybe_handle_elevenlabs_dial_failure(provider_key, payload):
                     "event":           "elevenlabs_dial_failure",
                     "failure_reason":  failure_reason,
                     "from_status":     "initiated",
-                    "to_status":       "failed",
+                    "to_status":       target_status,
                     "conversation_id": conv_id,
                 },
             )
             logger.info(
-                "[voip_webhook elevenlabs] sc_id=%s flipped to failed "
+                "[voip_webhook elevenlabs] sc_id=%s flipped to %s "
                 "(reason=%r)",
-                row["sc_id"], failure_reason,
+                row["sc_id"], target_status, failure_reason,
             )
         else:
             logger.info(
