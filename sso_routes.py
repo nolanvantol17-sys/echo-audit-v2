@@ -276,6 +276,22 @@ def microsoft_callback():
         # current_user.company_id).
         session["active_org_id"] = company_id
 
+        # Stamp last-login timestamp. Password login already does this in
+        # auth.authenticate_user, but SSO bypasses that helper entirely —
+        # without this, the Team page shows "Last Login: Never" for every
+        # SSO user forever. Wrapped so a stamp failure never blocks login.
+        try:
+            conn.execute(
+                q("UPDATE users SET user_last_login_at = CURRENT_TIMESTAMP "
+                  "WHERE user_id = ?"),
+                (user.user_id,),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            logger.exception("[sso] failed to stamp last_login_at user_id=%s",
+                             user.user_id)
+
         logger.info("[sso] login OK user_id=%s email=%s company_id=%s",
                     user.user_id, email, company_id)
 

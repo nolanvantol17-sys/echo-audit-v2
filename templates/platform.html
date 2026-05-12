@@ -123,8 +123,13 @@
     document.querySelectorAll(".platform-tab").forEach((t) => {
       t.addEventListener("click", () => switchTab(t.dataset.tab));
     });
-    // Default tab — orgs
-    await Promise.all([loadOrgs(), loadHealthStats()]);
+    // Default tab — orgs. Serial, not parallel: loadHealthStats reads
+    // orgsCache (set by loadOrgs) to compute "Active Organizations".
+    // Promise.all let loadHealthStats win the race when /api/platform/health
+    // returned faster than /api/platform/orgs, so the count read [] and
+    // showed "0" even when active orgs existed.
+    await loadOrgs();
+    await loadHealthStats();
 
     $("#btn-create-org").addEventListener("click", onCreateOrg);
     $("#btn-health-refresh").addEventListener("click", loadHealth);
