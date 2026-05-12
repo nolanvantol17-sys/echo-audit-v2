@@ -176,20 +176,33 @@ def verify_attribution_tenancy(
         return (f"tenant_mismatch: location_id {location_id} belongs to "
                 f"company {dict(row)['company_id']}, expected {company_id}")
 
-    # caller_user_id → users.department_id → departments.company_id
+    # caller_user_id → users.department_id → departments.company_id.
+    # Super_admins are exempt: they're cross-org by design and have no
+    # department binding, so the department→company chain doesn't apply.
+    # LEFT JOIN so the user row comes back even when they have no department;
+    # the role check below decides whether that's allowed.
     cur = conn.execute(
-        q("""SELECT d.company_id FROM users u
-               JOIN departments d ON d.department_id = u.department_id
+        q("""SELECT d.company_id, r.role_name
+               FROM users u
+               LEFT JOIN departments d  ON d.department_id   = u.department_id
+               LEFT JOIN user_roles  ur ON ur.user_role_id   = u.user_role_id
+               LEFT JOIN roles       r  ON r.role_id         = ur.role_id
               WHERE u.user_id = ? AND u.user_deleted_at IS NULL"""),
         (caller_user_id,),
     )
     row = cur.fetchone()
     if not row:
         return (f"tenant_mismatch: caller_user_id {caller_user_id} not found "
-                "or has no department")
-    if dict(row)["company_id"] != company_id:
-        return (f"tenant_mismatch: caller_user_id {caller_user_id} belongs to "
-                f"company {dict(row)['company_id']}, expected {company_id}")
+                "or deleted")
+    row_dict = dict(row)
+    is_super_admin = row_dict.get("role_name") == "super_admin"
+    if not is_super_admin:
+        if row_dict.get("company_id") is None:
+            return (f"tenant_mismatch: caller_user_id {caller_user_id} has "
+                    "no department")
+        if row_dict["company_id"] != company_id:
+            return (f"tenant_mismatch: caller_user_id {caller_user_id} belongs "
+                    f"to company {row_dict['company_id']}, expected {company_id}")
 
     # Optional campaign_id → must belong to the (already-verified) project
     if campaign_id is not None:
