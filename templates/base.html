@@ -84,6 +84,7 @@
 {% set is_projects  = _p.startswith('/app/projects') or _p.startswith('/app/grade') %}
 {% set is_history   = _p.startswith('/app/history') %}
 {% set is_reports   = _p.startswith('/app/reports') %}
+{% set is_explore   = _p.startswith('/app/explore') %}
 {% set is_team      = _p.startswith('/app/team') %}
 {% set is_settings  = _p.startswith('/app/settings') %}
 {% set is_locations = _p.startswith('/app/locations') %}
@@ -123,6 +124,12 @@
          class="nav-link {% if is_reports %}active{% endif %}" {{ _nsw }}>
         <span class="nav-icon">◇</span> Performance Reports
       </a>
+      {% if feature_flags.ff_explore_v1 %}
+      <a href="{{ url_for('explore_page') }}"
+         class="nav-link {% if is_explore %}active{% endif %}" {{ _nsw }}>
+        <span class="nav-icon">⌕</span> Explore
+      </a>
+      {% endif %}
 
       {% if user_role in ('manager', 'admin', 'super_admin') %}
       <div class="sidebar-section-label">Manage</div>

@@ -24,6 +24,7 @@ from api_routes import api_bp
 from audit_log_routes import audit_log_bp
 from location_notes_routes import location_notes_bp
 from dashboard_routes import dashboard_bp
+from explore_routes import explore_bp
 from grade_jobs_routes import grade_jobs_bp
 from interactions_routes import interactions_bp
 from performance_reports import reports_bp
@@ -51,6 +52,7 @@ from helpers import (  # noqa: F401
     check_rate_limit,
     get_effective_company_id,
     increment_usage,
+    is_feature_enabled,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -126,6 +128,7 @@ def create_app():
     app.register_blueprint(rubrics_bp)
     app.register_blueprint(rubric_ai_bp)
     app.register_blueprint(dashboard_bp)
+    app.register_blueprint(explore_bp)
     app.register_blueprint(reports_bp)
     app.register_blueprint(platform_bp)
     app.register_blueprint(audit_log_bp)
@@ -219,6 +222,9 @@ def _register_context_processors(app):
             "keyterm_min_length":  5,
             "keyterm_max_length":  50,
             "active_jobs_initial": [],
+            # Per-company feature flags (ff_*) — driven by company_settings.
+            # Empty dict for unauthenticated requests / no active org.
+            "feature_flags": {},
             # SSO availability — login.html toggles the "Sign in with Microsoft"
             # button on this. Cheap (just env-var presence checks); safe to
             # call on every render.
@@ -301,6 +307,8 @@ def _register_context_processors(app):
                             ctx["location_label"] = v
                         elif k == "location_list_label":
                             ctx["property_list_label"] = v
+                        elif k.startswith("ff_"):
+                            ctx["feature_flags"][k] = (v == "1")
 
                 # Super-admin org picker data
                 if current_user.is_super_admin:
@@ -763,6 +771,16 @@ def register_routes(app):
     def reports_page():
         return render_page("reports.html")
 
+    @app.route("/app/explore")
+    @login_required
+    def explore_page():
+        # Per-tenant gate. Off by default; admins SQL-enable via
+        # company_settings.ff_explore_v1 = '1'. Phase 3 will ship a UI.
+        if not is_feature_enabled(get_effective_company_id(), "ff_explore_v1"):
+            from flask import abort
+            abort(404)
+        return render_page("explore.html")
+
     @app.route("/app/team")
     @login_required
     @auth.role_required("manager", "admin", "super_admin")
@@ -806,6 +824,33 @@ def register_routes(app):
         impersonating_id = session.get("impersonating_user_id")
         impersonated_user_name = None
         impersonated_org_name  = None
+
+        # Feature flags for the active company so the JS layer can hide
+        # nav links / page entry points without a separate fetch.
+        active_cid = get_effective_company_id()
+        flags = {}
+        if active_cid is not None:
+            try:
+                conn = db.get_conn()
+                try:
+                    cur = conn.execute(
+                        db.q("""SELECT company_setting_key, company_setting_value
+                                  FROM company_settings
+                                 WHERE company_id = ?
+                                   AND company_setting_key LIKE 'ff_%'"""),
+                        (active_cid,),
+                    )
+                    for r in cur.fetchall():
+                        try:
+                            flags[r["company_setting_key"]] = (
+                                r["company_setting_value"] == "1"
+                            )
+                        except (KeyError, TypeError, IndexError):
+                            flags[r[0]] = (r[1] == "1")
+                finally:
+                    conn.close()
+            except Exception:
+                logger.warning("/api/me feature-flag load failed", exc_info=True)
         if impersonating_id:
             try:
                 conn = db.get_conn()
@@ -847,6 +892,7 @@ def register_routes(app):
             "impersonated_user_id":   impersonating_id,
             "impersonated_user_name": impersonated_user_name,
             "impersonated_org_name":  impersonated_org_name,
+            "flags":                  flags,
         })
 
 

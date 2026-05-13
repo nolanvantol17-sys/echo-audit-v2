@@ -11,7 +11,7 @@ import secrets
 from datetime import datetime
 from typing import Optional
 
-from flask import session
+from flask import g, session
 from flask_login import current_user
 
 from db import get_conn, q, IS_POSTGRES
@@ -256,6 +256,42 @@ def load_active_hints(company_id):
         return [r["th_term"] for r in rows]
     finally:
         conn.close()
+
+
+def is_feature_enabled(company_id, key, default=False):
+    """Return True when a per-company feature flag is set to "1".
+
+    Reads `company_settings` once per request and memoizes the dict on
+    `flask.g._ff_cache` so a page that checks several flags doesn't fan
+    out into N round-trips. Returns `default` when company_id is None
+    (super_admins with no active org) or the key isn't present.
+    """
+    if not company_id:
+        return default
+    cache = getattr(g, "_ff_cache", None)
+    if cache is None:
+        cache = {}
+        g._ff_cache = cache
+    if company_id not in cache:
+        flags = {}
+        conn = get_conn()
+        try:
+            rows = conn.execute(
+                q("""SELECT company_setting_key, company_setting_value
+                       FROM company_settings
+                      WHERE company_id = ?
+                        AND company_setting_key LIKE 'ff_%'"""),
+                (company_id,),
+            ).fetchall()
+            for r in rows:
+                try:
+                    flags[r["company_setting_key"]] = r["company_setting_value"]
+                except (KeyError, TypeError, IndexError):
+                    flags[r[0]] = r[1]
+        finally:
+            conn.close()
+        cache[company_id] = flags
+    return cache[company_id].get(key, "1" if default else "0") == "1"
 
 
 def increment_usage(company_id, service):
