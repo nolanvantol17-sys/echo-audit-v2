@@ -251,6 +251,36 @@
     // loadHistory waits for both so the project_id query-param pre-filter
     // (set inside loadProjects) is in effect when the first fetch fires.
     await Promise.all([loadLocations(), loadProjects()]);
+
+    // URL-param hydration for filters beyond project_id (which loadProjects
+    // already handles). Dashboard-widget click-throughs land here with the
+    // chart's date range / location / campaign / status pre-set so the
+    // history view opens scoped to what the user clicked.
+    const sp = new URLSearchParams(window.location.search);
+    function hydrate(paramKey, fieldSel) {
+      const v = sp.get(paramKey);
+      if (v === null || v === "") return;
+      const el = document.querySelector(fieldSel);
+      if (el) el.value = v;
+    }
+    hydrate("q",                  "#f-search");
+    hydrate("location_id",        "#f-location");
+    hydrate("from_date",          "#f-from");
+    hydrate("to_date",            "#f-to");
+    hydrate("status_id",          "#f-status");
+    hydrate("respondent_user_id", "#f-respondent");
+    hydrate("score_max",          "#f-score-max");
+    // campaign_id only hydrates if a project_id was also pre-applied
+    // (campaigns dropdown is populated by the project cascade); otherwise
+    // the value would be ignored anyway and we skip silently.
+    if (sp.get("project_id") && sp.get("campaign_id")) {
+      hydrate("campaign_id", "#f-campaign");
+    }
+    if (sp.get("include_test") === "1") {
+      const inc = document.getElementById("f-include-test");
+      if (inc) inc.checked = true;
+    }
+
     await loadHistory();
   }
 

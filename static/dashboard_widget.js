@@ -605,17 +605,48 @@
     const plugins = { legend: { labels: { color: "#ECE6D9" } } };
     if (isDate) {
       // Date-view tooltip reads the matched row from chart.$points (stashed
-      // in renderChart). Aggregate views leave defaults untouched.
+      // in renderChart). Multi-line: score, caller, respondent, then a
+      // word-wrapped one-sentence summary. Aggregate (bar) views keep the
+      // default single-line tooltip.
       plugins.tooltip = {
+        displayColors: false,
         callbacks: {
+          title(items) {
+            if (!items || !items.length) return "";
+            const pts = items[0].chart && items[0].chart.$points;
+            const p = pts && pts[items[0].dataIndex];
+            return (p && p.interaction_date) || items[0].label || "";
+          },
           label(ctx) {
             const pts = ctx.chart && ctx.chart.$points;
             const p = pts && pts[ctx.dataIndex];
             if (!p) return ctx.formattedValue;
-            const resp  = p.respondent_name || "—";
-            const date  = p.date || ctx.label || "";
-            const score = EA.formatScore(p.score);
-            return resp + " · " + date + " · " + score;
+            const lines = [
+              "Score: "      + EA.formatScore(p.score),
+              "Caller: "     + (p.caller_name     || "—"),
+              "Respondent: " + (p.respondent_name || "—"),
+            ];
+            if (p.summary) {
+              lines.push("");
+              // Word-wrap so Chart.js renders the summary across multiple
+              // lines (tooltip default wraps poorly with long unbroken text).
+              const max = 60;
+              if (p.summary.length <= max) {
+                lines.push(p.summary);
+              } else {
+                let line = "";
+                p.summary.split(/\s+/).forEach((w) => {
+                  if ((line + " " + w).trim().length > max) {
+                    lines.push(line);
+                    line = w;
+                  } else {
+                    line = (line ? line + " " : "") + w;
+                  }
+                });
+                if (line) lines.push(line);
+              }
+            }
+            return lines;
           },
         },
       };
@@ -1058,6 +1089,46 @@
       return params;
     }
 
+    // Build the /app/history URL for a chart click-through. View-specific
+    // narrowing comes from the clicked datapoint; the rest of the URL
+    // inherits the dashboard's current filter state. Multi-select filters
+    // are passed through only when exactly one item is selected (history's
+    // filter UI is singular). Date range carries through except for date-
+    // view clicks, where the clicked date IS the range.
+    function buildHistoryURL(view, clickedPoint) {
+      const params = new URLSearchParams();
+      const state = currentFilterState();
+
+      if (projectId) params.set("project_id", projectId);
+      if (state.location_ids.length === 1) {
+        params.set("location_id", state.location_ids[0]);
+      }
+      if (state.campaign_ids.length === 1) {
+        params.set("campaign_id", state.campaign_ids[0]);
+      }
+
+      if (view === "date" && clickedPoint && clickedPoint.interaction_date) {
+        // Narrow to the clicked day; ignore the dashboard's current
+        // date range since the click is the more specific signal.
+        params.set("from_date", clickedPoint.interaction_date);
+        params.set("to_date",   clickedPoint.interaction_date);
+      } else if (view === "location" && clickedPoint && clickedPoint.location_id) {
+        // Clicked dimension overrides any multi-select pass-through.
+        params.set("location_id", clickedPoint.location_id);
+      } else if (view === "project" && clickedPoint && clickedPoint.project_id) {
+        params.set("project_id", clickedPoint.project_id);
+      }
+
+      // Carry the current date range when the click didn't already set one
+      // (i.e. anything other than date view).
+      if (view !== "date") {
+        if (state.date_from) params.set("from_date", state.date_from);
+        if (state.date_to)   params.set("to_date",   state.date_to);
+      }
+
+      return "/app/history?" + params.toString();
+    }
+
     // Snapshot of current filter state — what the host's onChange callback
     // receives. Mirrors /api/dashboard/chart and /api/projects/<id>/summary
     // param vocabulary so the host can splat it into URLSearchParams.
@@ -1122,13 +1193,20 @@
       const isDateView = data.type !== "bar";
       const cfg = isDateView ? buildLineCfg(data, resolve) : buildBarCfg(data, resolve);
 
-      if (isDateView) {
+      // Click-through: every clickable view navigates to /app/history with
+      // the chart's current filter state plus the clicked dimension. Only
+      // enabled for views where the clicked dimension maps to a history
+      // filter (date / location / project). Caller and phone_routing views
+      // skip the handler since history.html has no caller / phone_routing
+      // filter and the navigation would be misleading.
+      const view = viewBySel.value;
+      const clickableViews = { date: 1, location: 1, project: 1 };
+      if (clickableViews[view]) {
         cfg.options.onClick = function (evt, activeEls, ch) {
           if (!activeEls || !activeEls.length) return;
           const p = ch.$points && ch.$points[activeEls[0].index];
-          if (p && p.interaction_id && EA.InteractionPanel) {
-            EA.InteractionPanel.open(p.interaction_id);
-          }
+          if (!p) return;
+          window.location.href = buildHistoryURL(view, p);
         };
         cfg.options.onHover = function (evt, activeEls, ch) {
           if (!ch || !ch.canvas) return;

@@ -62,6 +62,28 @@ def _rows(cur):
     return [_row_to_dict(r) for r in cur.fetchall()]
 
 
+def _truncate_summary(s, max_chars=140):
+    """First sentence of a multi-paragraph assessment, capped at max_chars.
+
+    Used by the date-view chart points so the chart tooltip can render a
+    one-sentence quick context line per call without dragging the full
+    overall_assessment text through every fetch. None-safe; empty in →
+    empty out.
+    """
+    if not s:
+        return ""
+    s = str(s).strip()
+    if not s:
+        return ""
+    # First sentence — split on ". " not bare ".", to avoid breaking on "Inc."
+    dot = s.find(". ")
+    if 0 < dot <= max_chars:
+        return s[:dot + 1]
+    if len(s) <= max_chars:
+        return s
+    return s[:max_chars - 1].rstrip() + "…"
+
+
 def _scalar(row, key, fallback=0):
     """Pull a single value from a row that might be a dict or a tuple."""
     if row is None:
@@ -701,13 +723,16 @@ def get_chart():
                     i.interaction_id,
                     i.interaction_date,
                     i.{metric} AS score,
+                    i.interaction_overall_assessment AS summary,
                     p.project_name,
-                    (u.user_first_name || ' ' || u.user_last_name) AS respondent_name
+                    (u.user_first_name || ' ' || u.user_last_name) AS respondent_name,
+                    (cu.user_first_name || ' ' || cu.user_last_name) AS caller_name
                 FROM interactions i
                 JOIN projects p ON p.project_id = i.project_id
                 {phone_routing_join}
                 {locations_join}
-                LEFT JOIN users u ON u.user_id = i.respondent_user_id
+                LEFT JOIN users u  ON u.user_id  = i.respondent_user_id
+                LEFT JOIN users cu ON cu.user_id = i.caller_user_id
                 WHERE {where_clause}
                 ORDER BY i.interaction_date ASC, i.interaction_id ASC
             """
@@ -726,6 +751,8 @@ def get_chart():
                     "score":           score,
                     "project_name":    row.get("project_name"),
                     "respondent_name": row.get("respondent_name"),
+                    "caller_name":     row.get("caller_name"),
+                    "summary":         _truncate_summary(row.get("summary")),
                 })
                 labels.append(d_str)
                 data.append(score)
