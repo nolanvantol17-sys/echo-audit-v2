@@ -837,8 +837,8 @@ def register_routes(app):
                         db.q("""SELECT company_setting_key, company_setting_value
                                   FROM company_settings
                                  WHERE company_id = ?
-                                   AND company_setting_key LIKE 'ff_%'"""),
-                        (active_cid,),
+                                   AND company_setting_key LIKE ?"""),
+                        (active_cid, "ff_%"),
                     )
                     for r in cur.fetchall():
                         try:

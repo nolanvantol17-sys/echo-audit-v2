@@ -276,12 +276,15 @@ def is_feature_enabled(company_id, key, default=False):
         flags = {}
         conn = get_conn()
         try:
+            # NOTE: psycopg2 reads any '%' in the SQL string as a format
+            # specifier, so the LIKE pattern is passed as a parameter rather
+            # than inlined as 'ff_%' (which would blow up on substitution).
             rows = conn.execute(
                 q("""SELECT company_setting_key, company_setting_value
                        FROM company_settings
                       WHERE company_id = ?
-                        AND company_setting_key LIKE 'ff_%'"""),
-                (company_id,),
+                        AND company_setting_key LIKE ?"""),
+                (company_id, "ff_%"),
             ).fetchall()
             for r in rows:
                 try:
