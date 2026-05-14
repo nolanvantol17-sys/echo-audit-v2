@@ -263,15 +263,41 @@
       if (unmatched.length) {
         lines.push('<div style="margin-top:8px;"><strong>Unmatched (' +
                    unmatched.length + '):</strong></div>');
-        lines.push('<ul style="margin:4px 0 0 18px;font-size:0.85rem;">' +
+        // Each row gets a "🔗 Link" button so an admin can manually attach the
+        // Echo Audit location to a Mayfair property without re-running the full
+        // sync. The button carries location_id + location_name on data-* attrs;
+        // wireUnmatchedLinkButtons attaches the click handler after innerHTML.
+        lines.push('<ul style="margin:4px 0 0 0;padding:0;font-size:0.85rem;list-style:none;">' +
                    unmatched.slice(0, 20).map(function (u) {
-                     return '<li>' + EA.esc(u.location_name || ("#" + u.location_id)) +
-                            ' — ' + EA.esc(u.reason || "") + '</li>';
+                     var locName = u.location_name || ("#" + u.location_id);
+                     var locId   = u.location_id != null ? u.location_id : "";
+                     var btn = (locId !== "")
+                       ? ('<button type="button" class="btn btn-ghost btn-sm mayfair-link-btn" ' +
+                              'data-location-id="' + locId + '" ' +
+                              'data-location-name="' + EA.esc(locName) + '" ' +
+                              'style="margin-left:8px;">🔗 Link</button>')
+                       : "";
+                     return '<li style="display:flex;align-items:center;gap:6px;padding:3px 0;">' +
+                              '<span style="flex:1;">' +
+                                EA.esc(locName) + ' — ' + EA.esc(u.reason || "") +
+                              '</span>' +
+                              btn +
+                            '</li>';
                    }).join("") +
-                   (unmatched.length > 20 ? '<li>… and ' + (unmatched.length - 20) + ' more</li>' : '') +
+                   (unmatched.length > 20 ? '<li style="padding:3px 0;">… and ' + (unmatched.length - 20) + ' more</li>' : '') +
                    '</ul>');
       }
       wrap.innerHTML = lines.join("");
+      // Wire link buttons once the unmatched list is in the DOM.
+      wrap.querySelectorAll(".mayfair-link-btn").forEach(function (b) {
+        b.addEventListener("click", function () {
+          openMayfairLinkModal({
+            companyId:    Number(companyId),
+            locationId:   Number(b.dataset.locationId),
+            locationName: b.dataset.locationName || "",
+          });
+        });
+      });
     } catch (err) {
       wrap.innerHTML = '<div style="color:var(--danger);">' +
                        EA.esc(err.message || "Failed to load.") + '</div>';
@@ -307,6 +333,133 @@
       btn.disabled = false;
       btn.textContent = orig;
     }
+  }
+
+  // Modal that lets a super-admin attach an unmatched Echo Audit location
+  // to a Mayfair property. Search calls /mayfair/property-search (fuzzy
+  // matcher); on a hit we preview the match; Confirm calls /mayfair/link
+  // and refreshes the parent unmatched list (which filters out the now-
+  // linked row server-side).
+  function openMayfairLinkModal(ctx) {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.style.zIndex = "260";
+    overlay.innerHTML =
+      '<div class="modal-card" style="max-width:520px;">' +
+        '<div class="modal-header">Link to Mayfair property</div>' +
+        '<div class="modal-body">' +
+          '<p class="text-small muted" style="margin:0 0 12px;">' +
+            'Echo Audit location: <strong>' + EA.esc(ctx.locationName) + '</strong> ' +
+            '(#' + ctx.locationId + ')<br>' +
+            'Search Mayfair\'s Property Directory for a match. Try a shorter ' +
+            'or alternate name if the sync couldn\'t find it.' +
+          '</p>' +
+          '<div style="display:flex;gap:8px;margin-bottom:10px;">' +
+            '<input type="text" id="mayfair-link-q" class="field-input" ' +
+                   'placeholder="Property name…" style="flex:1;" ' +
+                   'value="' + EA.esc(ctx.locationName) + '">' +
+            '<button type="button" class="btn btn-primary btn-sm" id="mayfair-link-search">Search</button>' +
+          '</div>' +
+          '<div id="mayfair-link-result" class="text-small muted">' +
+            'Click Search to look up a match.' +
+          '</div>' +
+        '</div>' +
+        '<div class="modal-footer">' +
+          '<button type="button" class="btn btn-ghost" id="mayfair-link-cancel">Cancel</button>' +
+          '<button type="button" class="btn btn-primary" id="mayfair-link-confirm" disabled>Confirm link</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+
+    const qInput     = overlay.querySelector("#mayfair-link-q");
+    const searchBtn  = overlay.querySelector("#mayfair-link-search");
+    const resultDiv  = overlay.querySelector("#mayfair-link-result");
+    const cancelBtn  = overlay.querySelector("#mayfair-link-cancel");
+    const confirmBtn = overlay.querySelector("#mayfair-link-confirm");
+    let pendingMatch = null;
+
+    function close() {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    }
+    cancelBtn.addEventListener("click", close);
+    overlay.addEventListener("click", function (e) {
+      if (e.target === overlay) close();
+    });
+
+    async function doSearch() {
+      const name = (qInput.value || "").trim();
+      if (!name) {
+        resultDiv.innerHTML = '<span style="color:var(--warning);">Enter a property name.</span>';
+        return;
+      }
+      pendingMatch = null;
+      confirmBtn.disabled = true;
+      resultDiv.innerHTML = '<span class="muted">Searching Mayfair…</span>';
+      try {
+        const data = await EA.fetchJSON(
+          "/api/platform/mayfair/property-search?property_name=" +
+          encodeURIComponent(name)
+        );
+        const m = data.match;
+        if (!m) {
+          resultDiv.innerHTML =
+            '<span style="color:var(--warning);">No match. Try a different name.</span>';
+          return;
+        }
+        pendingMatch = m;
+        const addr = [m.PropertyAddress, m.PropertyCity, m.PropertyState]
+                       .filter(Boolean).join(", ");
+        resultDiv.innerHTML =
+          '<div style="padding:10px;background:var(--surface-2);' +
+                       'border:1px solid var(--border);border-radius:6px;">' +
+            '<div><strong>' + EA.esc(m.PropertyName || "(no name)") + '</strong> ' +
+              '<span class="muted">#' + EA.esc(String(m.PropertyId)) + '</span></div>' +
+            (addr ? '<div class="muted text-small">' + EA.esc(addr) + '</div>' : '') +
+            '<div style="margin-top:6px;font-size:0.85rem;">' +
+              '<strong>RM:</strong> ' + EA.esc(m.RMName || "—") +
+              (m.RMEmail ? ' &lt;' + EA.esc(m.RMEmail) + '&gt;' : '') +
+              (m.RMUserId != null
+                ? ' <span class="muted">(RMUserId ' + EA.esc(String(m.RMUserId)) + ')</span>'
+                : '') +
+            '</div>' +
+          '</div>';
+        confirmBtn.disabled = false;
+      } catch (err) {
+        resultDiv.innerHTML = '<span style="color:var(--danger);">' +
+                              EA.esc(err.message || "Search failed.") + '</span>';
+      }
+    }
+    searchBtn.addEventListener("click", doSearch);
+    qInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); doSearch(); }
+    });
+
+    confirmBtn.addEventListener("click", async function () {
+      if (!pendingMatch) return;
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = "Linking…";
+      try {
+        await EA.fetchJSON("/api/platform/mayfair/link", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            location_id:         ctx.locationId,
+            company_id:          ctx.companyId,
+            mayfair_property_id: pendingMatch.PropertyId,
+            mayfair_rm_user_id:  pendingMatch.RMUserId,
+          }),
+        });
+        close();
+        // Refresh the parent unmatched list — server filters out the
+        // now-linked row, so it disappears from view.
+        await loadMayfairLastRun(ctx.companyId);
+      } catch (err) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "Confirm link";
+        resultDiv.innerHTML = '<span style="color:var(--danger);">' +
+                              EA.esc(err.message || "Link failed.") + '</span>';
+      }
+    });
   }
 
   async function loadHealthStats() {
