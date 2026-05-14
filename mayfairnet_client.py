@@ -5,9 +5,14 @@ Wraps GET /api/zapier/* endpoints exposed by the PropertyMS app. Auth via
 X-Api-Key header; key sourced from MAYFAIRNET_API_KEY env var so it never
 lands in source control or logs.
 
-Reachable endpoints (as of 2026-05-06):
+Reachable endpoints (as of 2026-05-13):
   GET /api/zapier/health                          — no auth, liveness probe
-  GET /api/zapier/rmdirectory?propertyName=<str>  — RM/CM directory lookup
+  GET /api/zapier/rmdirectory?propertyName=<str>  — legacy RM/CM lookup
+  GET /api/properties/managers?propertyName=<str> — full property + manager
+                                                    record with stable IDs
+                                                    (PropertyId, RMUserId,
+                                                    CMUserId). Used by
+                                                    mayfair_sync.run_sync.
 
 This module is intentionally narrow. Use cases (matching properties to Echo
 Audit locations, surfacing RM/CM contact info on a grade page, etc.) build on
@@ -113,3 +118,40 @@ def get_rm_directory(property_name: str, clear_cache: bool = False) -> list[dict
             f"Expected list from /rmdirectory, got {type(result).__name__}"
         )
     return result
+
+
+def get_property_managers(property_name: str,
+                          clear_cache: bool = False) -> Optional[dict]:
+    """Look up the full property + manager record via the new Property
+    Directory API.
+
+    Returns the first match dict — Mayfair's response is an array but the
+    fuzzy-matcher returns one best hit. Returns None on 404 (no match) so
+    the caller can treat "not found" as a non-fatal case (sync logs it,
+    keeps going). All other errors raise MayfairnetError.
+
+    The match dict carries (verified 2026-05-13 against live prod data):
+      PropertyId, property_longname, property_shortname,
+      property_address/city/state/zip, property_units, property_status,
+      property_main_phone, property_email,
+      RMUserId, RMName, RMEmail, RMPhoneNumber1,
+      CMUserId, CMName, CMEmail, CMPhoneNumber1,
+      OwnerName, OwnerContact, OwnerEmail,
+      Market, TaxCredit, HAP, plus a few more.
+    """
+    params = {"propertyName": property_name}
+    if clear_cache:
+        params["clearCache"] = "true"
+    try:
+        result = _request("/api/properties/managers", params=params)
+    except MayfairnetError as exc:
+        if exc.status_code == 404:
+            return None
+        raise
+    if isinstance(result, list):
+        return result[0] if result else None
+    if isinstance(result, dict):
+        return result
+    raise MayfairnetError(
+        f"Expected list/dict from /properties/managers, got {type(result).__name__}"
+    )

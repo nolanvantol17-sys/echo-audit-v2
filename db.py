@@ -576,6 +576,45 @@ _ADDITIVE_MIGRATIONS = [
     """UPDATE companies SET company_email_domain = 'mayfairmgt.com'
         WHERE company_id = 25 AND company_email_domain IS NULL""",
 
+    # Sub-Task X: Mayfair Property Directory sync columns + audit table.
+    # Columns on locations + users are populated by mayfair_sync.run_sync.
+    # The audit table records each sync run (stats, errors, unmatched names).
+    # All additive + idempotent. Permission filtering ships in a follow-up
+    # commit that wires helpers.location_scope_for_user into the read paths.
+    "ALTER TABLE locations ADD COLUMN IF NOT EXISTS mayfair_property_id INTEGER",
+    "ALTER TABLE locations ADD COLUMN IF NOT EXISTS mayfair_rm_user_id INTEGER",
+    "ALTER TABLE locations ADD COLUMN IF NOT EXISTS locations_mayfair_synced_at TIMESTAMPTZ",
+    """CREATE UNIQUE INDEX IF NOT EXISTS uq_locations_mayfair_property_id
+         ON locations (mayfair_property_id)
+        WHERE mayfair_property_id IS NOT NULL""",
+    """CREATE INDEX IF NOT EXISTS idx_locations_mayfair_rm_user_id
+         ON locations (mayfair_rm_user_id)
+        WHERE mayfair_rm_user_id IS NOT NULL AND location_deleted_at IS NULL""",
+
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS mayfair_user_id INTEGER",
+    """CREATE UNIQUE INDEX IF NOT EXISTS uq_users_mayfair_user_id
+         ON users (mayfair_user_id)
+        WHERE mayfair_user_id IS NOT NULL AND user_deleted_at IS NULL""",
+
+    """CREATE TABLE IF NOT EXISTS mayfair_sync_runs (
+        mayfair_sync_run_id     SERIAL PRIMARY KEY,
+        company_id              INTEGER NOT NULL
+                                    REFERENCES companies (company_id) ON DELETE CASCADE,
+        msr_started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        msr_completed_at        TIMESTAMPTZ,
+        msr_status              TEXT NOT NULL DEFAULT 'running',
+        msr_locations_total     INTEGER NOT NULL DEFAULT 0,
+        msr_locations_matched   INTEGER NOT NULL DEFAULT 0,
+        msr_users_linked        INTEGER NOT NULL DEFAULT 0,
+        msr_unmatched           JSONB,
+        msr_error               TEXT,
+        msr_triggered_by_user_id INTEGER REFERENCES users (user_id) ON DELETE SET NULL,
+        CONSTRAINT chk_msr_status
+            CHECK (msr_status IN ('running','ok','failed','partial'))
+    )""",
+    """CREATE INDEX IF NOT EXISTS idx_mayfair_sync_runs_company_id_started_at
+         ON mayfair_sync_runs (company_id, msr_started_at DESC)""",
+
     # Sub-Task W: one-shot backfill of respondent_call_count.
     # Counter was historically maintained inside _upsert_respondent, which
     # under-counted some paths and over-counted re-grades. The link function

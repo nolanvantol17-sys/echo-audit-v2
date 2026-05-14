@@ -213,6 +213,15 @@ CREATE TABLE locations (
     status_id                INTEGER NOT NULL DEFAULT 1
                                  REFERENCES statuses (status_id) ON DELETE RESTRICT,
     location_engagement_date DATE,
+    -- Mayfair Property Directory API linkage. Populated by mayfair_sync.run_sync.
+    -- mayfair_property_id     = stable PropertyId from /api/properties/managers.
+    -- mayfair_rm_user_id      = Mayfair's RMUserId for this property (their
+    --                           internal user-table PK; we DON'T FK to it because
+    --                           Mayfair owns that ID space — we just store it).
+    -- locations_mayfair_synced_at = when this row last got fresh API data.
+    mayfair_property_id          INTEGER,
+    mayfair_rm_user_id           INTEGER,
+    locations_mayfair_synced_at  TIMESTAMPTZ,
     location_deleted_at      TIMESTAMPTZ,
     location_created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     location_updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -223,6 +232,12 @@ CREATE INDEX idx_locations_company_id        ON locations (company_id)
 CREATE INDEX idx_locations_status_id         ON locations (status_id);
 CREATE INDEX idx_locations_engagement_date   ON locations (location_engagement_date)
     WHERE location_deleted_at IS NULL;
+CREATE UNIQUE INDEX uq_locations_mayfair_property_id
+    ON locations (mayfair_property_id)
+    WHERE mayfair_property_id IS NOT NULL;
+CREATE INDEX idx_locations_mayfair_rm_user_id
+    ON locations (mayfair_rm_user_id)
+    WHERE mayfair_rm_user_id IS NOT NULL AND location_deleted_at IS NULL;
 
 CREATE OR REPLACE FUNCTION set_location_updated_at() RETURNS TRIGGER AS $$
 BEGIN NEW.location_updated_at = NOW(); RETURN NEW; END;
@@ -305,6 +320,12 @@ CREATE TABLE users (
                                    REFERENCES statuses (status_id) ON DELETE RESTRICT,
     user_must_change_password  BOOLEAN NOT NULL DEFAULT FALSE,
     user_last_login_at         TIMESTAMPTZ,
+    -- Mayfair Property Directory cross-reference. When this user is also a
+    -- Mayfair RM (or CM, later), this stores Mayfair's internal user-table
+    -- PK. Set by mayfair_sync.run_sync when an Echo Audit user's email
+    -- matches a Mayfair RM email. Permission filtering checks this column
+    -- to decide whether to scope a manager's data view to their properties.
+    mayfair_user_id            INTEGER,
     user_deleted_at            TIMESTAMPTZ,
     user_created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     user_updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -314,6 +335,9 @@ CREATE INDEX idx_users_user_role_id  ON users (user_role_id);
 CREATE INDEX idx_users_department_id ON users (department_id)
     WHERE department_id IS NOT NULL;
 CREATE INDEX idx_users_status_id     ON users (status_id);
+CREATE UNIQUE INDEX uq_users_mayfair_user_id
+    ON users (mayfair_user_id)
+    WHERE mayfair_user_id IS NOT NULL AND user_deleted_at IS NULL;
 
 CREATE OR REPLACE FUNCTION set_user_updated_at() RETURNS TRIGGER AS $$
 BEGIN NEW.user_updated_at = NOW(); RETURN NEW; END;
@@ -1132,3 +1156,33 @@ CREATE TABLE dashboard_insights (
     di_report_markdown    TEXT,
     di_generated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+
+
+-- ================================================================
+-- 34. mayfair_sync_runs  (Sub-Task X — Mayfair Property Directory sync audit)
+-- ================================================================
+-- One row per sync run kicked off via POST /api/platform/mayfair/sync (or a
+-- future scheduler). Each row captures the run's stats so the platform admin
+-- page can show "last sync: 4 minutes ago, 114/116 matched" without a recount.
+-- Unmatched property names land in msr_unmatched as JSONB so an admin can
+-- re-link them via the locations page.
+CREATE TABLE mayfair_sync_runs (
+    mayfair_sync_run_id    SERIAL PRIMARY KEY,
+    company_id             INTEGER NOT NULL
+                               REFERENCES companies (company_id) ON DELETE CASCADE,
+    msr_started_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    msr_completed_at       TIMESTAMPTZ,
+    msr_status             TEXT NOT NULL DEFAULT 'running',
+    msr_locations_total    INTEGER NOT NULL DEFAULT 0,
+    msr_locations_matched  INTEGER NOT NULL DEFAULT 0,
+    msr_users_linked       INTEGER NOT NULL DEFAULT 0,
+    msr_unmatched          JSONB,
+    msr_error              TEXT,
+    msr_triggered_by_user_id INTEGER REFERENCES users (user_id) ON DELETE SET NULL,
+    CONSTRAINT chk_msr_status
+        CHECK (msr_status IN ('running','ok','failed','partial'))
+);
+
+CREATE INDEX idx_mayfair_sync_runs_company_id_started_at
+    ON mayfair_sync_runs (company_id, msr_started_at DESC);

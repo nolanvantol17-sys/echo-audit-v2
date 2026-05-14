@@ -14,6 +14,7 @@
   <button type="button" class="platform-tab" data-tab="users">Users</button>
   <button type="button" class="platform-tab" data-tab="usage">Usage</button>
   <button type="button" class="platform-tab" data-tab="health">Health</button>
+  <button type="button" class="platform-tab" data-tab="mayfair">Mayfair Sync</button>
 </nav>
 
 {# ── Tab: Organizations ─────────────────────────────────── #}
@@ -89,6 +90,34 @@
   </div>
 </section>
 
+{# ── Tab: Mayfair Sync ──────────────────────────────────── #}
+<section class="platform-pane" data-pane="mayfair" hidden>
+  <div class="panel">
+    <div class="hstack-wrap" style="margin-bottom:10px;">
+      <div class="panel-title" style="margin:0;">Mayfair Property Directory Sync</div>
+    </div>
+    <p class="muted text-small" style="margin:0 0 12px 0;">
+      Pulls every property's Regional Manager from Mayfair's Property
+      Directory API and stamps Echo Audit's location records. Runs against
+      the org you pick below. Takes about 3 seconds per property
+      (~6 minutes for Mayfair Management's 116 properties).
+    </p>
+    <div class="filters-bar" style="margin-bottom:12px;">
+      <div class="field">
+        <label class="field-label" for="m-org">Organization</label>
+        <select id="m-org" class="field-select"><option value="">Choose…</option></select>
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" id="btn-mayfair-sync" disabled>
+        Sync now
+      </button>
+    </div>
+    <div id="mayfair-status-wrap"></div>
+    <div id="mayfair-last-run-wrap" style="margin-top:12px;">
+      <div class="muted text-small">Pick an org to see its last sync.</div>
+    </div>
+  </div>
+</section>
+
 {# ── Tab: Health ────────────────────────────────────────── #}
 <section class="platform-pane" data-pane="health" hidden>
   <div class="hstack-wrap" style="margin-bottom:12px;">
@@ -142,6 +171,15 @@
       $("#u-org").value = ""; $("#u-role").value = ""; $("#u-status").value = "";
       loadUsers();
     });
+
+    // Mayfair-sync wiring
+    $("#m-org").addEventListener("change", function () {
+      $("#btn-mayfair-sync").disabled = !this.value;
+      if (this.value) loadMayfairLastRun(this.value);
+      else $("#mayfair-last-run-wrap").innerHTML =
+            '<div class="muted text-small">Pick an org to see its last sync.</div>';
+    });
+    $("#btn-mayfair-sync").addEventListener("click", onMayfairSync);
   }
 
   function switchTab(name) {
@@ -175,18 +213,99 @@
     try {
       orgsCache = await EA.fetchJSON("/api/platform/orgs") || [];
       renderOrgs(orgsCache);
-      // Populate the user-filter org dropdown as soon as we know orgs.
-      const sel = $("#u-org");
-      if (sel && sel.options.length <= 1) {
-        orgsCache.forEach((o) => {
-          const opt = document.createElement("option");
-          opt.value = o.company_id;
-          opt.textContent = o.company_name;
-          sel.appendChild(opt);
-        });
-      }
+      // Populate the user-filter + mayfair-sync org dropdowns once orgs are
+      // known. Both dropdowns share the same option list.
+      [$("#u-org"), $("#m-org")].forEach((sel) => {
+        if (sel && sel.options.length <= 1) {
+          orgsCache.forEach((o) => {
+            const opt = document.createElement("option");
+            opt.value = o.company_id;
+            opt.textContent = o.company_name;
+            sel.appendChild(opt);
+          });
+        }
+      });
     } catch (err) {
       EA.showError($("#orgs-wrap"), err.message || "Failed to load organizations.");
+    }
+  }
+
+  // ══════════════════ MAYFAIR SYNC ══════════════════
+  async function loadMayfairLastRun(companyId) {
+    const wrap = $("#mayfair-last-run-wrap");
+    wrap.innerHTML = '<div class="muted text-small">Loading…</div>';
+    try {
+      const data = await EA.fetchJSON(
+        "/api/platform/mayfair/last-run?company_id=" + encodeURIComponent(companyId)
+      );
+      const r = data.last_run;
+      if (!r) {
+        wrap.innerHTML = '<div class="muted text-small">No sync has been run for this org yet.</div>';
+        return;
+      }
+      const unmatched = Array.isArray(r.msr_unmatched) ? r.msr_unmatched : [];
+      const matched   = r.msr_locations_matched || 0;
+      const total     = r.msr_locations_total || 0;
+      const pct       = total ? Math.round(100 * matched / total) : 0;
+      const lines = [
+        '<div><strong>Status:</strong> ' + EA.esc(r.msr_status) + '</div>',
+        '<div><strong>Started:</strong> ' + EA.esc(r.msr_started_at || "—") + '</div>',
+        '<div><strong>Completed:</strong> ' + EA.esc(r.msr_completed_at || "—") + '</div>',
+        '<div><strong>Properties matched:</strong> ' + matched + '/' + total +
+                  ' (' + pct + '%)</div>',
+        '<div><strong>Users linked to a Mayfair ID:</strong> ' +
+                  (r.msr_users_linked || 0) + '</div>',
+      ];
+      if (r.msr_error) {
+        lines.push('<div style="color:var(--danger);"><strong>Error:</strong> ' +
+                   EA.esc(r.msr_error) + '</div>');
+      }
+      if (unmatched.length) {
+        lines.push('<div style="margin-top:8px;"><strong>Unmatched (' +
+                   unmatched.length + '):</strong></div>');
+        lines.push('<ul style="margin:4px 0 0 18px;font-size:0.85rem;">' +
+                   unmatched.slice(0, 20).map(function (u) {
+                     return '<li>' + EA.esc(u.location_name || ("#" + u.location_id)) +
+                            ' — ' + EA.esc(u.reason || "") + '</li>';
+                   }).join("") +
+                   (unmatched.length > 20 ? '<li>… and ' + (unmatched.length - 20) + ' more</li>' : '') +
+                   '</ul>');
+      }
+      wrap.innerHTML = lines.join("");
+    } catch (err) {
+      wrap.innerHTML = '<div style="color:var(--danger);">' +
+                       EA.esc(err.message || "Failed to load.") + '</div>';
+    }
+  }
+
+  async function onMayfairSync() {
+    const companyId = $("#m-org").value;
+    if (!companyId) return;
+    const btn = $("#btn-mayfair-sync");
+    const status = $("#mayfair-status-wrap");
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = "Syncing… (this can take 5+ minutes)";
+    status.innerHTML = '<div class="muted text-small">Sync in progress. ' +
+                       'Keep this tab open. You\'ll see the result here.</div>';
+    try {
+      const summary = await EA.fetchJSON("/api/platform/mayfair/sync", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ company_id: Number(companyId) }),
+      });
+      status.innerHTML = '<div style="color:var(--success);">' +
+        'Sync ' + EA.esc(summary.status) + '. ' +
+        'Matched ' + summary.locations_matched + '/' + summary.locations_total +
+        ' properties in ' + summary.elapsed_seconds + 's.' +
+        '</div>';
+      await loadMayfairLastRun(companyId);
+    } catch (err) {
+      status.innerHTML = '<div style="color:var(--danger);">Sync failed: ' +
+                         EA.esc(err.message || String(err)) + '</div>';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
     }
   }
 

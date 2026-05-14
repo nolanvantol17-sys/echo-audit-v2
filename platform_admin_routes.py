@@ -716,3 +716,52 @@ def switch_org():
 def clear_org():
     session.pop("active_org_id", None)
     return jsonify({"ok": True})
+
+
+# ═══════════════════════════════════════════════════════════════
+# MAYFAIR PROPERTY DIRECTORY SYNC
+# ═══════════════════════════════════════════════════════════════
+# Triggers mayfair_sync.run_sync for a chosen tenant. Schema additions
+# (locations.mayfair_property_id / mayfair_rm_user_id, users.mayfair_user_id,
+# mayfair_sync_runs) ship in the same commit. Permission filtering that
+# *reads* these columns lands separately so we can ship sync first, eyeball
+# the data, then flip filtering on behind a feature flag.
+
+
+@platform_admin_bp.route("/mayfair/sync", methods=["POST"])
+@login_required
+@role_required("super_admin")
+def trigger_mayfair_sync():
+    """Run a synchronous sync for one tenant. Blocking — returns when done
+    (~3s per location). Body: {company_id: int}. The endpoint is intentionally
+    synchronous: the admin clicks, waits a few minutes, sees results. No
+    background thread, no polling. If we ever need async, we wrap with a
+    grade_jobs-style queue, but for 116 properties this is fine."""
+    from mayfair_sync import run_sync
+    body = _body()
+    try:
+        company_id = int(body.get("company_id"))
+    except (TypeError, ValueError):
+        return _err("company_id is required (integer)", 400)
+
+    try:
+        summary = run_sync(company_id, triggered_by_user_id=current_user.user_id)
+    except Exception as exc:
+        logger.exception("[mayfair_sync] run failed")
+        return _err(f"sync failed: {exc}", 500)
+    return jsonify(summary)
+
+
+@platform_admin_bp.route("/mayfair/last-run", methods=["GET"])
+@login_required
+@role_required("super_admin")
+def get_mayfair_last_run():
+    """Last sync row for the chosen tenant. Drives the 'last sync: 4m ago'
+    display on the platform admin page."""
+    from mayfair_sync import get_last_run
+    try:
+        company_id = int(request.args.get("company_id", ""))
+    except (TypeError, ValueError):
+        return _err("company_id query param is required", 400)
+    row = get_last_run(company_id)
+    return jsonify({"last_run": row})
