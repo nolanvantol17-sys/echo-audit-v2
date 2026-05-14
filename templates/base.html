@@ -130,16 +130,16 @@
          class="nav-link {% if is_team %}active{% endif %}" {{ _nsw }}>
         <span class="nav-icon">◉</span> Team
       </a>
+      <a href="{{ url_for('locations_page') }}"
+         class="nav-link {% if is_locations %}active{% endif %}" {{ _nsw }}>
+        <span class="nav-icon">⌂</span> Locations
+      </a>
       {% endif %}
 
       {% if user_role in ('admin', 'super_admin') %}
       <a href="{{ url_for('settings_page') }}"
          class="nav-link {% if is_settings %}active{% endif %}" {{ _nsw }}>
         <span class="nav-icon">⚙</span> Settings
-      </a>
-      <a href="{{ url_for('locations_page') }}"
-         class="nav-link {% if is_locations %}active{% endif %}" {{ _nsw }}>
-        <span class="nav-icon">⌂</span> Locations
       </a>
       <a href="{{ url_for('voip_page') }}"
          class="nav-link {% if is_voip %}active{% endif %}" {{ _nsw }}>

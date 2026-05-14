@@ -327,17 +327,22 @@ def is_feature_enabled(company_id, key, default=False):
     return result
 
 
-def location_scope_for_user(user_id, role, company_id):
-    """Return (sql_fragment, params) to scope an interactions query to the
-    locations the requesting user is authorized to see.
+def location_scope_for_user(user_id, role, company_id,
+                             column="i.interaction_location_id"):
+    """Return (sql_fragment, params) to scope a query to the locations the
+    requesting user is authorized to see.
 
-    Contract (all three return values are constants of this helper):
+    Contract:
       - sql_fragment is either "" (no restriction) or a SQL predicate that
-        assumes an `i.interaction_location_id` column is in scope of the
-        outer WHERE clause. Caller composes via:
+        assumes `<column>` is in scope of the outer WHERE clause. Caller
+        composes via:
             scope_sql, scope_params = location_scope_for_user(...)
             sql = f"... WHERE base ... {(' AND ' + scope_sql) if scope_sql else ''}"
             params = [..., *scope_params]
+      - `column` lets callers point the IN-clause at a different table
+        column. Defaults to `i.interaction_location_id` (the original
+        callers, all scoping interactions). For locations-list surfaces
+        pass `column="l.location_id"`.
 
     Rules (only apply when company_settings.ff_permission_filtering is on):
       - manager → restrict to locations.mayfair_rm_user_id = the requesting
@@ -351,12 +356,16 @@ def location_scope_for_user(user_id, role, company_id):
     When the flag is off → unrestricted for all roles (preserves today's
     behavior; this is the default).
 
-    Per-request cached on flask.g._rm_scope_cache.
+    Per-request cached on flask.g._rm_scope_cache keyed by (user_id, column)
+    so a single request that scopes both interactions and locations doesn't
+    serve the wrong fragment from cache.
     """
     if not is_feature_enabled(company_id, "ff_permission_filtering", default=False):
         return "", []
     if role != "manager":
         return "", []
+
+    cache_key = (user_id, column)
 
     # Manager (RM) — resolve their mayfair_user_id. Cache once per request.
     cache = None
@@ -367,8 +376,8 @@ def location_scope_for_user(user_id, role, company_id):
             if cache is None:
                 cache = {}
                 g._rm_scope_cache = cache
-            if user_id in cache:
-                return cache[user_id]
+            if cache_key in cache:
+                return cache[cache_key]
     except Exception:
         cache = None
 
@@ -393,14 +402,14 @@ def location_scope_for_user(user_id, role, company_id):
     if not mayfair_uid:
         logger.warning(
             "[location_scope] manager user_id=%s has no mayfair_user_id — "
-            "denying all interactions under ff_permission_filtering. "
+            "denying all rows under ff_permission_filtering. "
             "Run the Mayfair sync + confirm the user's email matches a "
             "Mayfair RM email.", user_id,
         )
         result = ("1=0", [])
     else:
         result = (
-            "i.interaction_location_id IN ("
+            f"{column} IN ("
             "SELECT location_id FROM locations "
             "WHERE mayfair_rm_user_id = ? AND location_deleted_at IS NULL"
             ")",
@@ -408,7 +417,7 @@ def location_scope_for_user(user_id, role, company_id):
         )
 
     if cache is not None:
-        cache[user_id] = result
+        cache[cache_key] = result
     return result
 
 

@@ -367,14 +367,22 @@ def reactivate_company(company_id):
 
 @api_bp.route("/locations", methods=["GET"])
 @login_required
-@role_required("admin", "super_admin")
+@role_required("manager", "admin", "super_admin")
 def list_locations():
     company_id, err = _require_company()
     if err: return err
 
+    # RM scope: when ff_permission_filtering is on, managers see only their
+    # assigned properties. Empty fragment for admin/super_admin.
+    scope_sql, scope_params = location_scope_for_user(
+        current_user.user_id, current_user.role, company_id,
+        column="l.location_id",
+    )
+    scope_clause = f" AND {scope_sql}" if scope_sql else ""
+
     conn = get_conn()
     try:
-        cur = conn.execute(q("""
+        cur = conn.execute(q(f"""
             SELECT l.location_id, l.location_name, l.location_phone,
                    l.location_engagement_date, l.status_id, s.status_name,
                    COALESCE(m.total_calls, 0)     AS total_calls,
@@ -400,9 +408,9 @@ def list_locations():
                    AND i.interaction_is_test = FALSE
                  GROUP BY i.interaction_location_id
             ) m ON m.location_id = l.location_id
-            WHERE l.company_id = ? AND l.location_deleted_at IS NULL
+            WHERE l.company_id = ? AND l.location_deleted_at IS NULL{scope_clause}
             ORDER BY l.location_name
-        """), (company_id, company_id))
+        """), (company_id, company_id, *scope_params))
         rows = _rows(cur)
         # AVG returns Decimal in PG; coerce to JSON-safe float (matches the
         # round(float(...), 1) pattern used elsewhere in this file).
@@ -431,14 +439,22 @@ def list_locations():
 
 @api_bp.route("/locations/<int:location_id>", methods=["GET"])
 @login_required
-@role_required("admin", "super_admin")
+@role_required("manager", "admin", "super_admin")
 def get_location(location_id):
     company_id, err = _require_company()
     if err: return err
 
+    # RM scope: collapses out-of-scope locations to a 404 for managers
+    # (same pattern as cross-tenant — don't leak existence).
+    scope_sql, scope_params = location_scope_for_user(
+        current_user.user_id, current_user.role, company_id,
+        column="l.location_id",
+    )
+    scope_clause = f" AND {scope_sql}" if scope_sql else ""
+
     conn = get_conn()
     try:
-        cur = conn.execute(q("""
+        cur = conn.execute(q(f"""
             SELECT l.location_id, l.location_name, l.location_phone,
                    l.location_engagement_date, l.status_id, s.status_name,
                    COALESCE(m.total_calls, 0)     AS total_calls,
@@ -466,8 +482,8 @@ def get_location(location_id):
                  GROUP BY i.interaction_location_id
             ) m ON m.location_id = l.location_id
             WHERE l.location_id = ? AND l.company_id = ?
-              AND l.location_deleted_at IS NULL
-        """), (company_id, location_id, location_id, company_id))
+              AND l.location_deleted_at IS NULL{scope_clause}
+        """), (company_id, location_id, location_id, company_id, *scope_params))
         r = _row_to_dict(cur.fetchone())
     finally:
         conn.close()
@@ -496,19 +512,26 @@ def get_location(location_id):
 
 @api_bp.route("/locations/<int:location_id>/calls", methods=["GET"])
 @login_required
-@role_required("admin", "super_admin")
+@role_required("manager", "admin", "super_admin")
 def list_location_calls(location_id):
     company_id, err = _require_company()
     if err: return err
 
+    # RM scope: same tenant + scope predicate against l.location_id so the
+    # ownership probe collapses to 404 for an out-of-scope manager.
+    scope_sql, scope_params = location_scope_for_user(
+        current_user.user_id, current_user.role, company_id,
+        column="l.location_id",
+    )
+    scope_clause = f" AND {scope_sql}" if scope_sql else ""
+
     conn = get_conn()
     try:
-        # Tenant scope: location must belong to the current company.
         own = conn.execute(
-            q("""SELECT 1 FROM locations
-                  WHERE location_id = ? AND company_id = ?
-                    AND location_deleted_at IS NULL"""),
-            (location_id, company_id),
+            q(f"""SELECT 1 FROM locations l
+                   WHERE l.location_id = ? AND l.company_id = ?
+                     AND l.location_deleted_at IS NULL{scope_clause}"""),
+            (location_id, company_id, *scope_params),
         ).fetchone()
         if own is None:
             return _err("Location not found", 404)
@@ -930,14 +953,21 @@ def get_location_intel(location_id):
     company_id, err = _require_company()
     if err: return err
 
+    # RM scope: only enforced when ff_permission_filtering is on AND the
+    # requester is a manager. Other roles are unaffected.
+    scope_sql, scope_params = location_scope_for_user(
+        current_user.user_id, current_user.role, company_id,
+        column="l.location_id",
+    )
+    scope_clause = f" AND {scope_sql}" if scope_sql else ""
+
     conn = get_conn()
     try:
-        # Tenant scope: location must belong to the current company.
         cur = conn.execute(
-            q("""SELECT location_id, location_name FROM locations
-                  WHERE location_id = ? AND company_id = ?
-                    AND location_deleted_at IS NULL"""),
-            (location_id, company_id),
+            q(f"""SELECT l.location_id, l.location_name FROM locations l
+                   WHERE l.location_id = ? AND l.company_id = ?
+                     AND l.location_deleted_at IS NULL{scope_clause}"""),
+            (location_id, company_id, *scope_params),
         )
         if cur.fetchone() is None:
             return _err("Location not found", 404)

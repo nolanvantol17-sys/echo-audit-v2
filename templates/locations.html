@@ -108,7 +108,11 @@
   <div>
     <div class="page-title">Locations</div>
     <div class="page-subtitle">
+      {% if user_role == 'manager' %}
+      Your assigned properties.
+      {% else %}
       Manage your office locations and the phone routings that map calls to them.
+      {% endif %}
     </div>
   </div>
 </div>
@@ -116,7 +120,9 @@
 <div id="locs-tabs" data-tabs>
   <div class="tabs">
     <button type="button" class="tab-btn" data-tab="locations">Locations</button>
+    {% if user_role != 'manager' %}
     <button type="button" class="tab-btn" data-tab="phone-routings">Phone Routings</button>
+    {% endif %}
   </div>
 
   <section class="tab-panel" data-tab-panel="locations">
@@ -129,6 +135,7 @@
     </section>
   </section>
 
+  {% if user_role != 'manager' %}
   <section class="tab-panel" data-tab-panel="phone-routings" hidden>
     <section class="panel" id="phone-routings-panel">
       <div id="phone-routings-mount">
@@ -137,11 +144,14 @@
       </div>
     </section>
   </section>
+  {% endif %}
 </div>
 
+{% if user_role != 'manager' %}
 {# ── Sticky action bar for multi-export. Lives at page level so it can
      overlay viewport bottom regardless of scroll position. Hidden until
-     ≥1 row checked. ── #}
+     ≥1 row checked. Admin/super-admin only — RMs don't have bulk-export
+     surface today; that's deferred until Carlos pins down RM permissions. ── #}
 <div id="loc-export-bar" class="loc-sticky-bar" hidden>
   <span class="selected-meta">
     <span id="loc-export-count">0</span> selected
@@ -152,6 +162,7 @@
     <button type="button" class="btn btn-primary btn-sm" id="loc-export-go">Export Selected</button>
   </div>
 </div>
+{% endif %}
 {% endblock %}
 
 {% block extra_js %}
@@ -162,6 +173,13 @@
   "use strict";
   const EA = window.EA;
   const $ = (s) => document.querySelector(s);
+
+  // Read-only "my properties" mode for RMs (manager role under
+  // ff_permission_filtering). Hides admin chrome: rollup export strip,
+  // Add/Bulk-upload, per-row Edit/Delete/Export, multi-select column,
+  // sticky export bar. RMs see the same stats columns + can click into
+  // detail pages. Deferred for richer RM UX: see Ship C-2 memory.
+  const IS_RM_READONLY = {{ 'true' if user_role == 'manager' else 'false' }};
 
   // Shared cache: Phone Routings need Locations for the location dropdown.
   // Could re-fetch per tab activation, but locations are small and stable
@@ -209,7 +227,8 @@
     const mount = document.getElementById("locations-mount");
     if (!mount) return;
 
-    mount.innerHTML =
+    // Admin chrome (rollup strip, Add button, bulk-upload) hidden for RMs.
+    const rollupStripHtml = IS_RM_READONLY ? "" :
       '<div class="loc-rollup-strip" id="loc-rollup-strip">' +
         '<span class="field-label">Project</span>' +
         '<select id="loc-rollup-project" class="field-select" disabled>' +
@@ -224,35 +243,43 @@
                 'title="Pick a project and campaign to enable export">' +
           '↓ Export Location Report' +
         '</button>' +
-      '</div>' +
+      '</div>';
+    const addBtnHtml = IS_RM_READONLY ? "" :
+      '<button type="button" class="btn btn-primary btn-sm" id="btn-add-location">Add location</button>';
+
+    mount.innerHTML =
+      rollupStripHtml +
       '<div class="loc-search-row">' +
         '<input type="search" id="loc-search" class="field-input loc-search-input" ' +
                'placeholder="Search by name or phone…">' +
         '<span class="loc-search-meta" id="loc-search-meta"></span>' +
         '<span class="spacer"></span>' +
-        '<button type="button" class="btn btn-primary btn-sm" id="btn-add-location">Add location</button>' +
+        addBtnHtml +
       '</div>' +
       '<div id="loc-table-container">' +
         '<div class="skeleton" style="height:18px;margin:8px 0;"></div>' +
         '<div class="skeleton" style="height:18px;margin:8px 0;"></div>' +
       '</div>' +
-      bulkUploadHtml();
+      (IS_RM_READONLY ? "" : bulkUploadHtml());
 
     document.getElementById("loc-search").addEventListener("input", function (e) {
       locationSearchTerm = e.target.value;
       renderLocationsTable();
     });
-    document.getElementById("btn-add-location").addEventListener("click", onAddLocation);
-    wireBulkUpload();
 
-    // Sticky export bar lives at the page level; wire its buttons once on
-    // first mount of the Locations tab.
-    document.getElementById("loc-export-clear").addEventListener("click", clearSelection);
-    document.getElementById("loc-export-go")   .addEventListener("click", onExportSelected);
+    if (!IS_RM_READONLY) {
+      document.getElementById("btn-add-location").addEventListener("click", onAddLocation);
+      wireBulkUpload();
 
-    // L-2 rollup export: wire button + kick off project loader.
-    document.getElementById("loc-rollup-export").addEventListener("click", onRollupExport);
-    loadRollupProjects();
+      // Sticky export bar lives at the page level; wire its buttons once on
+      // first mount of the Locations tab.
+      document.getElementById("loc-export-clear").addEventListener("click", clearSelection);
+      document.getElementById("loc-export-go")   .addEventListener("click", onExportSelected);
+
+      // L-2 rollup export: wire button + kick off project loader.
+      document.getElementById("loc-rollup-export").addEventListener("click", onRollupExport);
+      loadRollupProjects();
+    }
 
     loadLocations();
   }
@@ -288,10 +315,18 @@
       : (total + ' total');
 
     if (!total) {
+      // RMs see a less call-to-action message — they can't add properties;
+      // an empty list means admin hasn't linked any to them yet (or they
+      // have no mayfair_user_id linkage, which deny-alls them upstream).
+      const emptyMsg = IS_RM_READONLY
+        ? 'No properties assigned to you yet.'
+        : 'No locations yet. Add one to get started.';
+      const addBtn = IS_RM_READONLY ? "" :
+        '<button type="button" class="btn btn-primary btn-sm" id="btn-add-location-empty">Add location</button>';
       container.innerHTML =
         '<div class="empty-state">' +
-          '<div style="margin-bottom:10px;">No locations yet. Add one to get started.</div>' +
-          '<button type="button" class="btn btn-primary btn-sm" id="btn-add-location-empty">Add location</button>' +
+          '<div style="margin-bottom:10px;">' + emptyMsg + '</div>' +
+          addBtn +
         '</div>';
       const emptyBtn = document.getElementById("btn-add-location-empty");
       if (emptyBtn) emptyBtn.onclick = onAddLocation;
@@ -323,11 +358,22 @@
            (noAnsRate != null
              ? (' <span' + mutedStyle + '>(' + (noAnsRate * 100).toFixed(1) + '%)</span>')
              : ''));
+      // Admin chrome (checkbox column + per-row action buttons) drops out
+      // entirely for RMs — keeps the table layout clean instead of leaving
+      // empty cells.
+      const checkboxCell = IS_RM_READONLY ? "" :
+        '<td class="loc-table-checkbox-col">' +
+          '<input type="checkbox" class="loc-row-cb" data-id="' + l.location_id + '">' +
+        '</td>';
+      const actionCell = IS_RM_READONLY ? "" :
+        '<td style="text-align:right;">' +
+          '<button type="button" class="btn btn-ghost btn-sm loc-export" data-id="' + l.location_id + '" data-name="' + EA.esc(l.location_name) + '">↓ Export Calls</button>' +
+          '<button type="button" class="btn btn-ghost btn-sm loc-edit" data-id="' + l.location_id + '">Edit</button>' +
+          '<button type="button" class="btn btn-ghost btn-sm loc-delete" data-id="' + l.location_id + '">Delete</button>' +
+        '</td>';
       return (
         '<tr data-id="' + l.location_id + '">' +
-          '<td class="loc-table-checkbox-col">' +
-            '<input type="checkbox" class="loc-row-cb" data-id="' + l.location_id + '">' +
-          '</td>' +
+          checkboxCell +
           '<td><a href="/app/locations/' + l.location_id + '" class="loc-name-link">' +
             EA.esc(l.location_name) + '</a></td>' +
           '<td>' + EA.esc(l.location_phone || "—") + '</td>' +
@@ -341,52 +387,55 @@
           '<td style="text-align:right;">' + noAnsCell + '</td>' +
           '<td style="text-align:right;">' + avgPill + '</td>' +
           '<td>' + EA.esc(lastCall) + '</td>' +
-          '<td style="text-align:right;">' +
-            '<button type="button" class="btn btn-ghost btn-sm loc-export" data-id="' + l.location_id + '" data-name="' + EA.esc(l.location_name) + '">↓ Export Calls</button>' +
-            '<button type="button" class="btn btn-ghost btn-sm loc-edit" data-id="' + l.location_id + '">Edit</button>' +
-            '<button type="button" class="btn btn-ghost btn-sm loc-delete" data-id="' + l.location_id + '">Delete</button>' +
-          '</td>' +
+          actionCell +
         '</tr>'
       );
     }).join("");
+    const checkboxHeader = IS_RM_READONLY ? "" : '<th class="loc-table-checkbox-col"></th>';
+    const actionHeader   = IS_RM_READONLY ? "" : '<th></th>';
     container.innerHTML =
       '<table class="history-table"><thead><tr>' +
-        '<th class="loc-table-checkbox-col"></th>' +
+        checkboxHeader +
         '<th>Name</th><th>Phone</th><th>First contact</th>' +
         '<th style="text-align:right;">Total</th>' +
         '<th style="text-align:right;">Graded</th>' +
         '<th style="text-align:right;">No-answer</th>' +
         '<th style="text-align:right;">Avg score</th>' +
         '<th>Last call</th>' +
-        '<th></th>' +
+        actionHeader +
       '</tr></thead><tbody>' + rows + '</tbody></table>';
-    container.querySelectorAll(".loc-edit").forEach(function (b) {
-      b.onclick = function () { onEditLocation(b.dataset.id); };
-    });
-    container.querySelectorAll(".loc-delete").forEach(function (b) {
-      b.onclick = function () { onDeleteLocation(b.dataset.id); };
-    });
-    container.querySelectorAll(".loc-export").forEach(function (b) {
-      b.onclick = function () {
-        EA.BulkExportModal.open({
-          locationId:    parseInt(b.dataset.id, 10),
-          locationName:  b.dataset.name,
-          lockedProject: false,
-        });
-      };
-    });
-    // Reapply checked state from selectedIds (preserved across renders)
-    // and wire change listeners.
-    container.querySelectorAll(".loc-row-cb").forEach(function (cb) {
-      const id = parseInt(cb.dataset.id, 10);
-      cb.checked = selectedIds.has(id);
-      cb.addEventListener("change", function () {
-        if (cb.checked) selectedIds.add(id);
-        else            selectedIds.delete(id);
-        updateExportBar();
+    if (!IS_RM_READONLY) {
+      container.querySelectorAll(".loc-edit").forEach(function (b) {
+        b.onclick = function () { onEditLocation(b.dataset.id); };
       });
-    });
-    updateExportBar();
+      container.querySelectorAll(".loc-delete").forEach(function (b) {
+        b.onclick = function () { onDeleteLocation(b.dataset.id); };
+      });
+      container.querySelectorAll(".loc-export").forEach(function (b) {
+        b.onclick = function () {
+          EA.BulkExportModal.open({
+            locationId:    parseInt(b.dataset.id, 10),
+            locationName:  b.dataset.name,
+            lockedProject: false,
+          });
+        };
+      });
+    }
+    // Reapply checked state from selectedIds (preserved across renders)
+    // and wire change listeners. Skipped for RMs — no checkbox column,
+    // no sticky bar, no updateExportBar element.
+    if (!IS_RM_READONLY) {
+      container.querySelectorAll(".loc-row-cb").forEach(function (cb) {
+        const id = parseInt(cb.dataset.id, 10);
+        cb.checked = selectedIds.has(id);
+        cb.addEventListener("change", function () {
+          if (cb.checked) selectedIds.add(id);
+          else            selectedIds.delete(id);
+          updateExportBar();
+        });
+      });
+      updateExportBar();
+    }
   }
 
   async function onAddLocation() {
