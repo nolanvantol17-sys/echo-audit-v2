@@ -131,16 +131,26 @@ def _campaign_belongs_to_project(conn, campaign_id, project_id):
 
 
 def _get_interaction_in_company(conn, interaction_id, company_id):
-    """Return interaction row if its project belongs to this company.
+    """Return interaction row if its project belongs to this company AND the
+    current user's location_scope (RM filtering) lets them see it.
 
     Includes soft-deleted interactions for admin recovery paths; callers that
     want to exclude them must check interaction_deleted_at themselves.
+
+    Scope: when ff_permission_filtering is on and the requester is a
+    manager (RM), the row is only returned if its interaction_location_id
+    is in the RM's assigned set. Admins / super_admins / callers are
+    unaffected (scope helper returns empty fragment).
     """
+    scope_sql, scope_params = location_scope_for_user(
+        current_user.user_id, current_user.role, company_id,
+    )
+    extra = f" AND {scope_sql}" if scope_sql else ""
     cur = conn.execute(
-        q("""SELECT i.* FROM interactions i
+        q(f"""SELECT i.* FROM interactions i
              JOIN projects p ON p.project_id = i.project_id
-             WHERE i.interaction_id = ? AND p.company_id = ?"""),
-        (interaction_id, company_id),
+             WHERE i.interaction_id = ? AND p.company_id = ?{extra}"""),
+        (interaction_id, company_id, *scope_params),
     )
     return cur.fetchone()
 
@@ -1524,10 +1534,15 @@ def get_interaction(interaction_id):
     company_id, err = _require_company()
     if err: return err
 
+    scope_sql, scope_params = location_scope_for_user(
+        current_user.user_id, current_user.role, company_id,
+    )
+    scope_clause = f" AND {scope_sql}" if scope_sql else ""
+
     conn = get_conn()
     try:
         cur = conn.execute(
-            q("""
+            q(f"""
             SELECT
                 i.*,
                 p.project_name,
@@ -1547,9 +1562,9 @@ def get_interaction(interaction_id):
             LEFT JOIN users respondent ON respondent.user_id = i.respondent_user_id
             LEFT JOIN respondents r    ON r.respondent_id    = i.respondent_id
             WHERE i.interaction_id = ? AND p.company_id = ?
-              AND i.interaction_deleted_at IS NULL
+              AND i.interaction_deleted_at IS NULL{scope_clause}
             """),
-            (interaction_id, company_id),
+            (interaction_id, company_id, *scope_params),
         )
         row = _row_to_dict(cur.fetchone())
         if not row:
@@ -1826,15 +1841,20 @@ def get_audio(interaction_id):
     company_id, err = _require_company()
     if err: return err
 
+    scope_sql, scope_params = location_scope_for_user(
+        current_user.user_id, current_user.role, company_id,
+    )
+    scope_clause = f" AND {scope_sql}" if scope_sql else ""
+
     conn = get_conn()
     try:
         cur = conn.execute(
-            q("""SELECT i.interaction_audio_url, i.interaction_audio_data
+            q(f"""SELECT i.interaction_audio_url, i.interaction_audio_data
                  FROM interactions i
                  JOIN projects p ON p.project_id = i.project_id
                  WHERE i.interaction_id = ? AND p.company_id = ?
-                   AND i.interaction_deleted_at IS NULL"""),
-            (interaction_id, company_id),
+                   AND i.interaction_deleted_at IS NULL{scope_clause}"""),
+            (interaction_id, company_id, *scope_params),
         )
         row = cur.fetchone()
     finally:
