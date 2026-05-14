@@ -133,7 +133,7 @@
             <option value="super_admin">Super admin</option>
             {% endif %}
             <option value="caller" selected>Caller</option>
-            <option value="manager">Manager</option>
+            <option value="manager">Regional Manager</option>
             <option value="admin">Admin</option>
           </select>
         </label>
@@ -225,7 +225,7 @@
   const ROLE_OPTIONS = [
     ...(USER_ROLE === "super_admin" ? [{value:"super_admin", label:"Super admin"}] : []),
     {value:"admin",   label:"Admin"},
-    {value:"manager", label:"Manager"},
+    {value:"manager", label:"Regional Manager"},
     {value:"caller",  label:"Caller"},
   ];
 
@@ -275,7 +275,7 @@
     const name = [u.user_first_name, u.user_last_name].filter(Boolean).join(" ") || "—";
     const roleSlug = (u.role_name || "").replace(/_/g, "-");
     const rolePill = u.role_name
-      ? '<span class="role-pill role-' + u.role_name + ' role-' + roleSlug + '">' + EA.esc(u.role_name) + '</span>'
+      ? '<span class="role-pill role-' + u.role_name + ' role-' + roleSlug + '">' + EA.esc(EA.roleLabel(u.role_name)) + '</span>'
       : '<span class="muted text-small">—</span>';
     const statusSlug = (u.status_name || "").toLowerCase();
     const statusPill = '<span class="status-pill status-' + statusSlug + '">' +

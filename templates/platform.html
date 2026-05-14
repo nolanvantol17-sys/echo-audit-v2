@@ -54,7 +54,7 @@
           <option value="">All</option>
           <option value="super_admin">Super Admin</option>
           <option value="admin">Admin</option>
-          <option value="manager">Manager</option>
+          <option value="manager">Regional Manager</option>
           <option value="caller">Caller</option>
         </select>
       </div>
@@ -421,7 +421,7 @@
         '<td>' + EA.esc([u.user_first_name, u.user_last_name].filter(Boolean).join(" ") || "—") + '</td>' +
         '<td>' + EA.esc(u.user_email || "—") + '</td>' +
         '<td><span class="role-pill role-' + EA.esc(u.role_name || "") + '">' +
-          EA.esc(u.role_name || "—") + '</span></td>' +
+          EA.esc(u.role_name ? EA.roleLabel(u.role_name) : "—") + '</span></td>' +
         '<td>' + EA.esc(u.status_name || "—") + '</td>' +
       '</tr>'
     )).join("");
@@ -619,7 +619,7 @@
           '<td>' + EA.esc(u.user_email || "—") + '</td>' +
           '<td>' + EA.esc(u.company_name || "—") + '</td>' +
           '<td><span class="role-pill role-' + EA.esc(u.role_name || "") + '">' +
-            EA.esc(u.role_name || "—") + '</span></td>' +
+            EA.esc(u.role_name ? EA.roleLabel(u.role_name) : "—") + '</span></td>' +
           '<td><span class="status-pill ' + statusCls + '">' +
             EA.esc(u.status_name || "—") + '</span></td>' +
           '<td>' + EA.esc(EA.formatDate(u.user_created_at)) + '</td>' +

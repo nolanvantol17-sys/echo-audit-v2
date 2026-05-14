@@ -664,6 +664,20 @@
     }
   }
 
+  // Map internal role identifier → user-visible label. Keep identifiers
+  // stable (every role-gate in the codebase uses 'manager', 'admin' …);
+  // only the displayed string changes.
+  function roleLabel(roleName) {
+    if (!roleName) return "—";
+    switch (roleName) {
+      case "manager":     return "Regional Manager";
+      case "admin":       return "Admin";
+      case "super_admin": return "Super Admin";
+      case "caller":      return "Caller";
+      default:            return roleName;
+    }
+  }
+
   // Expose as a single namespace so template scripts can use them.
   window.EA = {
     fetchJSON:       fetchJSON,
@@ -686,5 +700,6 @@
     revealOncePassword: revealOncePassword,
     statusIdToName:  statusIdToName,
     statusIdToSlug:  statusIdToSlug,
+    roleLabel:       roleLabel,
   };
 })();
