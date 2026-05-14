@@ -1729,7 +1729,10 @@
   async function loadCallers() {
     const sel = $("#gf-caller");
     try {
-      const team = await EA.fetchJSON("/api/team");
+      // /api/team/callers is a dedicated feed for this dropdown: same shape
+      // as /api/team for admins, but scope-filtered to [self, AI Caller]
+      // for managers under ff_permission_filtering.
+      const team = await EA.fetchJSON("/api/team/callers");
       // Show active team members regardless of role (admins + super_admins
       // place shopping calls too). Skip inactive accounts — they can't
       // actually be the caller of a new call, and showing them in the
@@ -1744,7 +1747,13 @@
         o.textContent = (u.user_first_name || "") + " " + (u.user_last_name || "");
         sel.appendChild(o);
       });
-      if (window.__USER_ROLE === "caller" && window.__USER_ID) {
+      // Auto-select self for roles where there's only one sensible default:
+      //  - caller: their job is to BE the caller, never anyone else
+      //  - manager: /api/team for RMs returns just [self, AI Caller] under
+      //    ff_permission_filtering, so self is the obvious default; they can
+      //    still flip to AI Caller if they're scheduling a bot call.
+      if ((window.__USER_ROLE === "caller" || window.__USER_ROLE === "manager")
+          && window.__USER_ID) {
         sel.value = String(window.__USER_ID);
       }
     } catch (err) {

@@ -26,6 +26,7 @@ from audit_log import (
 from db import IS_POSTGRES, get_conn, q
 from helpers import (
     get_effective_company_id, phone_digits, verify_attribution_tenancy,
+    validate_caller_user_id_for_user,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,14 @@ def schedule_ai_shop():
     company_id = get_effective_company_id()
     if not company_id:
         return jsonify(error="No company context"), 403
+
+    # RM caller-scope: a manager can only schedule an AI-Caller call
+    # attributed to themselves or the company's AI Caller bot user.
+    ok, msg = validate_caller_user_id_for_user(
+        caller_user_id, current_user.user_id, current_user.role, company_id,
+    )
+    if not ok:
+        return jsonify(error=msg), 403
 
     # ── Tenancy + phone resolution ────────────────────────────────
     conn = get_conn()

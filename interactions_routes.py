@@ -39,6 +39,7 @@ from helpers import (
     increment_usage,
     load_active_hints,
     location_scope_for_user,
+    validate_caller_user_id_for_user,
 )
 from intel import compute_location_intel_async
 from performance_reports import update_performance_report_async
@@ -854,6 +855,14 @@ def submit_grade():
     respondent_user_id = request.form.get("respondent_user_id") or None
     interaction_date   = _parse_date(request.form.get("interaction_date"), date.today())
 
+    # RM caller-scope: a manager can only attribute the call to themselves
+    # or the company's AI Caller bot user. Other roles bypass.
+    ok, msg = validate_caller_user_id_for_user(
+        caller_user_id, current_user.user_id, current_user.role, company_id,
+    )
+    if not ok:
+        return _err(msg, 403)
+
     # location_id is required. The UI marks the location select required,
     # so a missing or non-integer value means a bypassed UI or a stale
     # browser. Reject loudly rather than silently writing a NULL row.
@@ -1101,6 +1110,13 @@ def log_no_answer():
             return _err("Invalid campaign_id", 400)
 
     caller_user_id = get("caller_user_id") or None
+    # RM caller-scope: a manager can only attribute the call to themselves
+    # or the company's AI Caller bot user. Other roles bypass.
+    ok, msg = validate_caller_user_id_for_user(
+        caller_user_id, current_user.user_id, current_user.role, company_id,
+    )
+    if not ok:
+        return _err(msg, 403)
     interaction_date = _parse_date(get("interaction_date"), date.today())
 
     # Optional live-recording timestamps (only sent when audio came from the

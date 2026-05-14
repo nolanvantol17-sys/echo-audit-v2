@@ -421,6 +421,99 @@ def location_scope_for_user(user_id, role, company_id,
     return result
 
 
+def ai_caller_user_id_for_company(company_id):
+    """Return the user_id of this company's AI Caller bot user, or None.
+
+    Convention: a single user_id per company with role='caller' and
+    name 'AI Caller'. There is no DB flag distinguishing the bot from
+    a human caller today — when this becomes load-bearing (e.g., we
+    need to disambiguate from a human named "AI Caller"), add
+    `companies.company_ai_caller_user_id` and migrate this lookup.
+
+    Per-request cached on flask.g._ai_caller_cache.
+    """
+    if not company_id:
+        return None
+
+    cache = None
+    try:
+        from flask import g, has_request_context
+        if has_request_context():
+            cache = getattr(g, "_ai_caller_cache", None)
+            if cache is None:
+                cache = {}
+                g._ai_caller_cache = cache
+            if company_id in cache:
+                return cache[company_id]
+    except Exception:
+        cache = None
+
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            q("""SELECT u.user_id FROM users u
+                 JOIN user_roles ur ON ur.user_role_id = u.user_role_id
+                 JOIN roles r       ON r.role_id        = ur.role_id
+                 JOIN departments d ON d.department_id  = u.department_id
+                 WHERE u.user_first_name = 'AI'
+                   AND u.user_last_name  = 'Caller'
+                   AND r.role_name       = 'caller'
+                   AND d.company_id      = ?
+                   AND u.user_deleted_at IS NULL
+                 LIMIT 1"""),
+            (company_id,),
+        )
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    result = None
+    if row is not None:
+        try:
+            result = row["user_id"]
+        except (KeyError, TypeError, IndexError):
+            result = row[0]
+
+    if cache is not None:
+        cache[company_id] = result
+    return result
+
+
+def validate_caller_user_id_for_user(caller_user_id, user_id, role,
+                                      company_id):
+    """Enforce caller-attribution scope on a submitted caller_user_id.
+
+    Today's rule (only under ff_permission_filtering, only for managers):
+      a manager may attribute a call to themselves or to the company's
+      AI Caller bot user — nothing else. Admins / super_admins / callers
+      bypass this check. Other tenants (flag off) bypass too.
+
+    Returns (ok: bool, err: str|None). caller_user_id may be None (form
+    field omitted) — that's fine for everyone, including managers.
+    """
+    if caller_user_id is None or caller_user_id == "":
+        return True, None
+    if not is_feature_enabled(company_id, "ff_permission_filtering", default=False):
+        return True, None
+    if role != "manager":
+        return True, None
+
+    try:
+        cid = int(caller_user_id)
+    except (TypeError, ValueError):
+        return False, "Invalid caller_user_id"
+
+    if cid == int(user_id):
+        return True, None
+
+    ai_uid = ai_caller_user_id_for_company(company_id)
+    if ai_uid is not None and cid == int(ai_uid):
+        return True, None
+
+    return False, ("As a Regional Manager you can only log calls as "
+                   "yourself or the AI Caller — pick one of those.")
+
+
 def increment_usage(company_id, service):
     """Increment both hourly and daily counters. No-op when company_id is None."""
     if not company_id:

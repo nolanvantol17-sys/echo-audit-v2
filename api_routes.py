@@ -32,6 +32,8 @@ from db import get_conn, q, IS_POSTGRES
 from helpers import (
     phone_digits, check_rate_limit, generate_temp_password,
     get_effective_company_id, increment_usage,
+    ai_caller_user_id_for_company,
+    is_feature_enabled,
     location_scope_for_user,
 )
 
@@ -2280,6 +2282,60 @@ def list_team():
         #    elevations) so the over-inclusion is negligible. Revisit when
         #    the per-tenant config refactor adds a proper company-scoped
         #    super_admin table.
+        cur = conn.execute(q(
+            _TEAM_SELECT +
+            " WHERE u.user_deleted_at IS NULL"
+            "   AND (d.company_id = ? OR r.role_name = 'super_admin')"
+            " ORDER BY u.user_created_at DESC"
+        ), (company_id,))
+        return jsonify(_rows(cur))
+    finally:
+        conn.close()
+
+
+# ── Caller-attribution dropdown feed (grade form) ─────────────
+# Dedicated endpoint for the "who placed this call?" select on /app/grade.
+# Open to managers because RMs need to grade their own calls — but the
+# response is scope-filtered when ff_permission_filtering is on so an RM
+# only sees themselves and the company's AI Caller bot. Admin / super_admin
+# see the same full list as /api/team would give.
+#
+# Why a separate endpoint and not a /api/team filter: /api/team has other
+# consumers (the team management page) that legitimately want the full
+# list; collapsing it for managers would break those surfaces.
+
+
+@api_bp.route("/team/callers", methods=["GET"])
+@login_required
+@role_required("manager", "admin", "super_admin")
+def list_team_callers():
+    company_id, err = _require_company()
+    if err: return err
+
+    # Manager + flag on → scope to [self, AI Caller bot only]
+    if (current_user.role == "manager"
+            and is_feature_enabled(company_id, "ff_permission_filtering",
+                                   default=False)):
+        allowed_ids = [int(current_user.user_id)]
+        ai_uid = ai_caller_user_id_for_company(company_id)
+        if ai_uid is not None:
+            allowed_ids.append(int(ai_uid))
+        placeholders = ",".join(["?"] * len(allowed_ids))
+        conn = get_conn()
+        try:
+            cur = conn.execute(q(
+                _TEAM_SELECT +
+                f" WHERE u.user_deleted_at IS NULL"
+                f"   AND u.user_id IN ({placeholders})"
+                f" ORDER BY u.user_id"
+            ), allowed_ids)
+            return jsonify(_rows(cur))
+        finally:
+            conn.close()
+
+    # Admin / super_admin / managers off-flag → same shape as /api/team.
+    conn = get_conn()
+    try:
         cur = conn.execute(q(
             _TEAM_SELECT +
             " WHERE u.user_deleted_at IS NULL"
