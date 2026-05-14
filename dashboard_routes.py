@@ -23,7 +23,7 @@ from dashboard_helpers import (
     _report_url_for, _roll_up_locations, _trend_for_calls,
 )
 from db import get_conn, q
-from helpers import get_effective_company_id
+from helpers import get_effective_company_id, location_scope_for_user
 from insights import compute_dashboard_insights_async, fetch_cached as fetch_insights_cached
 
 dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/api")
@@ -194,7 +194,20 @@ def get_dashboard():
     if campaign_ids:
         extra_where.append(f"i.campaign_id IN {_in_clause(len(campaign_ids))}")
         extra_params.extend(campaign_ids)
+    # Permission scope (ff_permission_filtering off → empty). Goes through
+    # the same WHERE-clause channel as the user-supplied filters above so
+    # every interactions read in this route picks it up by composition.
+    scope_sql, scope_params = location_scope_for_user(
+        current_user.user_id, current_user.role, company_id,
+    )
+    if scope_sql:
+        extra_where.append(scope_sql)
+        extra_params.extend(scope_params)
     extra_clause = (" AND " + " AND ".join(extra_where)) if extra_where else ""
+
+    # `scope_clause` is the scope predicate by itself, inlined into queries
+    # that don't ride on extra_clause (rolling trend, recent, activity strip).
+    scope_clause = (" AND " + scope_sql) if scope_sql else ""
 
     conn = get_conn()
     try:
@@ -317,7 +330,7 @@ def get_dashboard():
             # month, so early-in-the-month dashboards still surface trend
             # signal from the prior weeks).
             cur3 = conn.execute(
-                q("""SELECT
+                q(f"""SELECT
                         i.interaction_date,
                         i.interaction_overall_score
                      FROM interactions i
@@ -328,8 +341,9 @@ def get_dashboard():
                        AND i.status_id <> ?
                        AND i.interaction_overall_score IS NOT NULL
                        AND i.interaction_date >= ?
-                       AND i.respondent_id = ?"""),
-                (company_id, STATUS_NO_ANSWER, rolling_start, respondent_id),
+                       AND i.respondent_id = ?
+                       {scope_clause}"""),
+                tuple([company_id, STATUS_NO_ANSWER, rolling_start, respondent_id, *scope_params]),
             )
             trend = _trend_for_calls(_rows(cur3))
 
@@ -356,7 +370,7 @@ def get_dashboard():
         # resolves from respondents first, then from users (known-user path),
         # then from the legacy interaction_responder_name free-text column.
         cur = conn.execute(
-            q("""SELECT
+            q(f"""SELECT
                     i.interaction_id,
                     i.interaction_date,
                     i.interaction_call_start_time,
@@ -377,9 +391,10 @@ def get_dashboard():
                  LEFT JOIN respondents r   ON r.respondent_id   = i.respondent_id
                  WHERE p.company_id = ? AND i.interaction_deleted_at IS NULL
                    AND i.interaction_is_test = FALSE
+                   {scope_clause}
                  ORDER BY i.interaction_id DESC
                  LIMIT 8"""),
-            (company_id,),
+            tuple([company_id, *scope_params]),
         )
         recent = _rows(cur)
 
@@ -399,21 +414,23 @@ def get_dashboard():
         prior_start     = today - timedelta(days=13)
         prior_end       = today - timedelta(days=7)
         cur = conn.execute(
-            q("""SELECT COUNT(*) AS cnt FROM interactions i
+            q(f"""SELECT COUNT(*) AS cnt FROM interactions i
                  JOIN projects p ON p.project_id = i.project_id
                 WHERE p.company_id = ? AND i.interaction_deleted_at IS NULL
                   AND i.interaction_is_test = FALSE AND i.status_id <> ?
-                  AND i.interaction_date >= ?"""),
-            (company_id, STATUS_NO_ANSWER, this_week_start),
+                  AND i.interaction_date >= ?
+                  {scope_clause}"""),
+            tuple([company_id, STATUS_NO_ANSWER, this_week_start, *scope_params]),
         )
         this_week_count = _scalar(_row_to_dict(cur.fetchone()), "cnt", 0)
         cur = conn.execute(
-            q("""SELECT COUNT(*) AS cnt FROM interactions i
+            q(f"""SELECT COUNT(*) AS cnt FROM interactions i
                  JOIN projects p ON p.project_id = i.project_id
                 WHERE p.company_id = ? AND i.interaction_deleted_at IS NULL
                   AND i.interaction_is_test = FALSE AND i.status_id <> ?
-                  AND i.interaction_date >= ? AND i.interaction_date <= ?"""),
-            (company_id, STATUS_NO_ANSWER, prior_start, prior_end),
+                  AND i.interaction_date >= ? AND i.interaction_date <= ?
+                  {scope_clause}"""),
+            tuple([company_id, STATUS_NO_ANSWER, prior_start, prior_end, *scope_params]),
         )
         last_week_count = _scalar(_row_to_dict(cur.fetchone()), "cnt", 0)
 
@@ -541,6 +558,15 @@ def get_filters():
     if project_id:
         base_filters.append("i.project_id = ?")
         base_params.append(project_id)
+    # Permission scope (ff_permission_filtering off → empty). Drives the
+    # location dropdown options shown to the user; an RM should only see
+    # their locations in the multi-select.
+    scope_sql, scope_params = location_scope_for_user(
+        current_user.user_id, current_user.role, company_id,
+    )
+    if scope_sql:
+        base_filters.append(scope_sql)
+        base_params.extend(scope_params)
     where = " AND ".join(base_filters)
 
     conn = get_conn()
@@ -698,6 +724,18 @@ def get_chart():
     if campaign_ids:
         filters.append(f"i.campaign_id IN {_in_clause(len(campaign_ids))}")
         params.extend(campaign_ids)
+
+    # Permission scope (ff_permission_filtering off → empty). All chart
+    # branches build on `filters`/`params` so this lands in every view_by.
+    # Note: _company_avg_score below is deliberately NOT scoped — the
+    # threshold line is a peer benchmark, useful even for an RM seeing only
+    # their slice of the chart.
+    scope_sql, scope_params = location_scope_for_user(
+        current_user.user_id, current_user.role, company_id,
+    )
+    if scope_sql:
+        filters.append(scope_sql)
+        params.extend(scope_params)
 
     # Joins are now strictly for grouping/display, never for filtering.
     # view_by=phone_routing needs phr.phone_routing_name; view_by=location

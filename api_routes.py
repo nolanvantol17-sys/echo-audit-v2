@@ -32,6 +32,7 @@ from db import get_conn, q, IS_POSTGRES
 from helpers import (
     phone_digits, check_rate_limit, generate_temp_password,
     get_effective_company_id, increment_usage,
+    location_scope_for_user,
 )
 
 logger = logging.getLogger(__name__)
@@ -1818,6 +1819,15 @@ def get_project_summary(project_id):
     if campaign_ids:
         extra_filters.append(f"i.campaign_id IN {_in_clause(len(campaign_ids))}")
         extra_params.extend(campaign_ids)
+    # Permission scope (ff_permission_filtering off → empty). The shared
+    # extra_where rides on all 4 primary queries in this route, so adding
+    # it here lands in every aggregate / unanswered / recent / top-callers.
+    scope_sql, scope_params = location_scope_for_user(
+        current_user.user_id, current_user.role, company_id,
+    )
+    if scope_sql:
+        extra_filters.append(scope_sql)
+        extra_params.extend(scope_params)
     extra_where = (" AND " + " AND ".join(extra_filters)) if extra_filters else ""
 
     conn = get_conn()

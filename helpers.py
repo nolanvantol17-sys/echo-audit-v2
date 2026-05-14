@@ -6,6 +6,7 @@ Kept as a standalone module to avoid circular imports between the
 main app file and the blueprints.
 """
 
+import logging
 import re
 import secrets
 from datetime import datetime
@@ -15,6 +16,8 @@ from flask import session
 from flask_login import current_user
 
 from db import get_conn, q, IS_POSTGRES
+
+logger = logging.getLogger(__name__)
 
 
 def generate_temp_password():
@@ -256,6 +259,157 @@ def load_active_hints(company_id):
         return [r["th_term"] for r in rows]
     finally:
         conn.close()
+
+
+# ── Feature flags + permission filtering ───────────────────────
+# Feature flags ride on company_settings (EAV) with an `ff_` key prefix.
+# Convention: value "1" / "true" / "yes" / "on" = ON. Anything else = OFF.
+# Request-cached so a single page doesn't pay N DB roundtrips for repeated
+# flag checks across the call stack.
+
+
+def _truthy(v) -> bool:
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+def is_feature_enabled(company_id, key, default=False):
+    """Return True/False for a company-scoped feature flag.
+
+    Reads company_settings where company_setting_key = `key`. Missing rows
+    return `default`. Per-request cached on flask.g._ff_cache so the same
+    flag check across a route + helpers + template doesn't fan out into
+    multiple DB calls.
+
+    Safe to call outside a request context (CLI, sync jobs) — falls back
+    to a one-shot uncached read.
+    """
+    if not company_id:
+        return default
+
+    cache = None
+    cache_key = None
+    try:
+        from flask import g, has_request_context  # local import: avoid
+        # forcing Flask context at module import time on the CLI path.
+        if has_request_context():
+            cache = getattr(g, "_ff_cache", None)
+            if cache is None:
+                cache = {}
+                g._ff_cache = cache
+            cache_key = (company_id, key)
+            if cache_key in cache:
+                return cache[cache_key]
+    except Exception:
+        cache = None
+
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            q("""SELECT company_setting_value FROM company_settings
+                  WHERE company_id = ? AND company_setting_key = ?"""),
+            (company_id, key),
+        )
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        result = default
+    else:
+        try:
+            val = row["company_setting_value"]
+        except (KeyError, TypeError, IndexError):
+            val = row[0]
+        result = _truthy(val)
+
+    if cache is not None and cache_key is not None:
+        cache[cache_key] = result
+    return result
+
+
+def location_scope_for_user(user_id, role, company_id):
+    """Return (sql_fragment, params) to scope an interactions query to the
+    locations the requesting user is authorized to see.
+
+    Contract (all three return values are constants of this helper):
+      - sql_fragment is either "" (no restriction) or a SQL predicate that
+        assumes an `i.interaction_location_id` column is in scope of the
+        outer WHERE clause. Caller composes via:
+            scope_sql, scope_params = location_scope_for_user(...)
+            sql = f"... WHERE base ... {(' AND ' + scope_sql) if scope_sql else ''}"
+            params = [..., *scope_params]
+
+    Rules (only apply when company_settings.ff_permission_filtering is on):
+      - manager → restrict to locations.mayfair_rm_user_id = the requesting
+        user's users.mayfair_user_id. A manager who hasn't been linked to a
+        Mayfair RM (mayfair_user_id IS NULL) returns the deny-all fragment
+        '1=0' so they see nothing rather than the whole company. The remedy
+        is admin: run the Mayfair sync + confirm the user's email matches a
+        Mayfair RM email.
+      - admin, super_admin, caller → unrestricted (empty fragment).
+
+    When the flag is off → unrestricted for all roles (preserves today's
+    behavior; this is the default).
+
+    Per-request cached on flask.g._rm_scope_cache.
+    """
+    if not is_feature_enabled(company_id, "ff_permission_filtering", default=False):
+        return "", []
+    if role != "manager":
+        return "", []
+
+    # Manager (RM) — resolve their mayfair_user_id. Cache once per request.
+    cache = None
+    try:
+        from flask import g, has_request_context
+        if has_request_context():
+            cache = getattr(g, "_rm_scope_cache", None)
+            if cache is None:
+                cache = {}
+                g._rm_scope_cache = cache
+            if user_id in cache:
+                return cache[user_id]
+    except Exception:
+        cache = None
+
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            q("""SELECT mayfair_user_id FROM users
+                  WHERE user_id = ? AND user_deleted_at IS NULL"""),
+            (user_id,),
+        )
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    mayfair_uid = None
+    if row is not None:
+        try:
+            mayfair_uid = row["mayfair_user_id"]
+        except (KeyError, TypeError, IndexError):
+            mayfair_uid = row[0]
+
+    if not mayfair_uid:
+        logger.warning(
+            "[location_scope] manager user_id=%s has no mayfair_user_id — "
+            "denying all interactions under ff_permission_filtering. "
+            "Run the Mayfair sync + confirm the user's email matches a "
+            "Mayfair RM email.", user_id,
+        )
+        result = ("1=0", [])
+    else:
+        result = (
+            "i.interaction_location_id IN ("
+            "SELECT location_id FROM locations "
+            "WHERE mayfair_rm_user_id = ? AND location_deleted_at IS NULL"
+            ")",
+            [mayfair_uid],
+        )
+
+    if cache is not None:
+        cache[user_id] = result
+    return result
 
 
 def increment_usage(company_id, service):

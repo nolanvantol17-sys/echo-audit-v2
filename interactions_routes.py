@@ -38,6 +38,7 @@ from helpers import (
     get_effective_company_id,
     increment_usage,
     load_active_hints,
+    location_scope_for_user,
 )
 from intel import compute_location_intel_async
 from performance_reports import update_performance_report_async
@@ -1251,6 +1252,17 @@ def list_interactions():
         filters.append("i.interaction_overall_score IS NOT NULL")
         filters.append("i.interaction_overall_score <= ?")
         params.append(score_max)
+
+    # Permission scope (ff_permission_filtering off → empty). Applied AFTER
+    # any explicit ?location_id filter so the user can't widen their view by
+    # passing a location_id outside their scope — the intersection is the
+    # cap on what they can see.
+    scope_sql, scope_params = location_scope_for_user(
+        current_user.user_id, current_user.role, company_id,
+    )
+    if scope_sql:
+        filters.append(scope_sql)
+        params.extend(scope_params)
 
     where_clause = " AND ".join(filters)
     # Respondent display name priority:
