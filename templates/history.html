@@ -321,10 +321,11 @@
         }
         // Populate the campaign cascade for the deep-linked project so the
         // user lands with both filters interactable, not just project.
-        // loadHistory() is fired once at the end of init() — onProjectChange
-        // also calls loadHistory but the second is harmless, just one extra
-        // /api/interactions request on deep-link arrival.
-        await onProjectChange();
+        // Skip the loadHistory inside onProjectChange — init() fires its
+        // own loadHistory after URL-param hydration, and the cascade's
+        // unawaited fetch would race that one (and previously won the race
+        // with the wrong, unfiltered, URL).
+        await onProjectChange({ skipLoad: true });
       }
     } catch (_) { /* non-fatal */ }
   }
@@ -332,15 +333,19 @@
   // Cascading campaign loader. Fires when #f-project changes (or on
   // deep-link arrival). Repopulates #f-campaign from
   // /api/projects/<id>/campaigns; resets to "All campaigns" disabled when
-  // no project is picked. Always finishes by triggering loadHistory so the
-  // result set reflects the new (possibly cleared) campaign filter.
-  async function onProjectChange() {
+  // no project is picked. Triggers loadHistory at the end UNLESS opts.skipLoad
+  // is set — init() uses that flag to avoid a double-fetch race with the
+  // URL-param hydration block.
+  async function onProjectChange(opts) {
+    // Event listeners pass the Event object as the first arg; treat any
+    // non-plain-object (or missing skipLoad) as "load history at the end".
+    const skipLoad = !!(opts && opts.skipLoad === true);
     const projectId   = $("#f-project").value;
     const campaignSel = $("#f-campaign");
     if (!projectId) {
       campaignSel.innerHTML = '<option value="">All campaigns</option>';
       campaignSel.disabled  = true;
-      loadHistory();
+      if (!skipLoad) loadHistory();
       return;
     }
     campaignSel.innerHTML = '<option value="">Loading…</option>';
@@ -364,7 +369,7 @@
       campaignSel.innerHTML = '<option value="">Failed to load</option>';
       campaignSel.disabled  = true;
     }
-    loadHistory();
+    if (!skipLoad) loadHistory();
   }
 
   // ── Filters ──────────────────────────────────────────
