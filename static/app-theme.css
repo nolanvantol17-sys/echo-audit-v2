@@ -22,11 +22,12 @@
    ============================================================ */
 
 :root {
-  /* Surfaces */
-  --bg:             #FAF9F6;
+  /* Surfaces — cooler near-white (was warm cream) so the colored
+     background washes read more cleanly against the panels. */
+  --bg:             #F7F9FC;
   --surface:        #FFFFFF;
-  --surface-2:      #F2F0EA;
-  --surface-3:      #E9E6DD;
+  --surface-2:      #EFF2F7;
+  --surface-3:      #E4E9F1;
 
   /* Borders */
   --border:         rgba(29, 29, 31, 0.07);
@@ -72,9 +73,12 @@ html, body {
   font-feature-settings: "ss01", "ss02", "cv11";
   letter-spacing: -0.005em;
   color: var(--text);
+  /* Stronger color washes so the panel backdrop-filter has something to
+     refract. Without these, glass on light-on-light is invisible. */
   background:
-    radial-gradient(ellipse 1400px 700px at 15% -10%, rgba(0,113,227,0.08), transparent 55%),
-    radial-gradient(ellipse 1000px 600px at 100% 110%, rgba(255,210,90,0.06), transparent 55%),
+    radial-gradient(ellipse 1600px 900px at 8% -10%, rgba(0,113,227,0.18), transparent 55%),
+    radial-gradient(ellipse 1200px 800px at 100% 105%, rgba(255,120,140,0.16), transparent 55%),
+    radial-gradient(ellipse 900px 700px at 60% 40%, rgba(180,140,255,0.08), transparent 60%),
     var(--bg);
 }
 
@@ -211,15 +215,18 @@ a:hover { color: var(--accent-d); }
    ============================================================ */
 
 .panel {
-  background: rgba(255,255,255,0.78) !important;
+  /* Slightly more translucent so the background color washes tint the
+     panel — that's what reads as "frosted glass" on a light bg. */
+  background: rgba(255,255,255,0.62) !important;
   border: 1px solid var(--border) !important;
   border-radius: var(--radius) !important;
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(200%);
+  -webkit-backdrop-filter: blur(28px) saturate(200%);
   box-shadow:
-    0 1px 0 rgba(255,255,255,0.6) inset,
-    0 1px 3px rgba(29,29,31,0.04),
-    0 12px 32px rgba(29,29,31,0.05) !important;
+    0 1px 0 rgba(255,255,255,0.8) inset,
+    0 1px 2px rgba(29,29,31,0.04),
+    0 20px 48px -16px rgba(29,29,31,0.10),
+    0 4px 12px -2px rgba(29,29,31,0.06) !important;
 }
 .panel-title {
   color: var(--text) !important;
