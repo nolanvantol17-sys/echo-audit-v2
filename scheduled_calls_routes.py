@@ -82,6 +82,22 @@ def schedule_ai_shop():
         if err:
             return jsonify(error=err), 403
 
+        # Mandatory-campaign guard: if the project uses campaigns, an
+        # AI-Caller call must be attributed to one too (mirrors the
+        # submit_grade / log_no_answer guards in interactions_routes).
+        if campaign_id is None:
+            has_campaign = conn.execute(
+                q("""SELECT 1 FROM campaigns
+                     WHERE project_id = ? AND campaign_deleted_at IS NULL
+                     LIMIT 1"""),
+                (project_id,),
+            ).fetchone()
+            if has_campaign:
+                return jsonify(error=(
+                    "This project uses campaigns — pick the campaign this "
+                    "call belongs to before scheduling it."
+                )), 400
+
         # J-1: resolve voice_agent_id → voice_agent_elevenlabs_id. Reject
         # missing or inactive. NULL → fall through (initiate_call uses env
         # var fallback). Voice agents are globally scoped today, so no

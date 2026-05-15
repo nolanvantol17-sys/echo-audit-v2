@@ -1066,6 +1066,8 @@
     campaignCombo:     null,   // EA.Combobox handle, lifetime tied to project selection
     campaignProjectId: null,   // project_id whose campaigns are currently loaded
     campaignFetchSeq:  0,      // race guard for rapid project switches
+    projectHasCampaigns: false,// true once a campaign list with ≥1 item mounts;
+                               // gates the client-side mandatory-campaign check
 
     // Live recording
     liveRecordingBlob:    null,
@@ -1509,11 +1511,19 @@
       const items = (list || []).map(function (c) {
         return { id: c.campaign_id, label: c.campaign_name };
       });
-      const initial = (preferId !== null && items.find(
+      // Pre-select rules (fixes the month-boundary mis-attribution):
+      //   1. A valid stashed campaign from this session → use it.
+      //   2. Exactly ONE campaign → safe to auto-pick (no ambiguity).
+      //   3. Two or more campaigns → DO NOT auto-pick. The old behavior
+      //      auto-selected items[0] = "most recently used", which on a new
+      //      month is still last month's campaign → callers silently filed
+      //      May calls under April. Force a conscious choice instead.
+      const stashHit = preferId !== null && items.find(
         (it) => String(it.id) === String(preferId)
-      ))
+      );
+      const initial = stashHit
         ? preferId
-        : (items.length ? items[0].id : null);
+        : (items.length === 1 ? items[0].id : null);
       mountCampaignCombo(projectId, items, initial);
     } catch (err) {
       if (seq !== state.campaignFetchSeq) return;
@@ -1526,6 +1536,12 @@
     destroyCampaignCombo();
     const input = document.getElementById("gf-campaign");
     if (!input) return;
+    // Once a project is known to have campaigns, every submit must carry
+    // one (server enforces too). Drives campaignMissing() guard + the
+    // required-asterisk on the label.
+    state.projectHasCampaigns = items.length > 0;
+    var campLabel = document.querySelector("label[for='gf-campaign']");
+    if (campLabel) campLabel.classList.toggle("field-required", items.length > 0);
     state.campaignProjectId = projectId;
     state.campaignCombo = EA.Combobox.mount(input, {
       items: items,
@@ -1558,6 +1574,19 @@
     // Self-clear so callers don't have to remember. Mounting a new combo
     // re-assigns campaignProjectId; destroying always means "no project."
     state.campaignProjectId = null;
+    state.projectHasCampaigns = false;
+    var campLabel = document.querySelector("label[for='gf-campaign']");
+    if (campLabel) campLabel.classList.remove("field-required");
+  }
+
+  // Returns true when the active project uses campaigns but the user
+  // hasn't picked one. All submit paths consult this so a call can never
+  // again be silently filed under NULL/the wrong campaign — the root cause
+  // of the Mayfair May mis-attribution. Server enforces the same rule.
+  function campaignMissing() {
+    if (!state.projectHasCampaigns) return false;
+    var v = state.campaignCombo ? state.campaignCombo.getValue() : null;
+    return v === null || v === undefined || v === "";
   }
 
   // ── Location intel card ──────────────────────────────
@@ -2169,6 +2198,11 @@
       $("#form-hint").textContent = "Pick a project first.";
       return;
     }
+    if (campaignMissing()) {
+      $("#form-hint").textContent =
+        "This project uses campaigns — pick the campaign this call belongs to.";
+      return;
+    }
     const activeTab = state.activePanel || "upload";
 
     if (activeTab === "upload" && !state.audioFile) {
@@ -2419,6 +2453,11 @@
       $("#form-hint").textContent = "Pick a caller first.";
       return;
     }
+    if (campaignMissing()) {
+      $("#form-hint").textContent =
+        "This project uses campaigns — pick the campaign this call belongs to.";
+      return;
+    }
 
     // J-2: voice agent must be selected. Defensive — if loadVoiceAgents
     // came up empty (no active agents seeded), the dropdown is disabled
@@ -2609,6 +2648,10 @@
     const callDate   = $("#gf-date").value || new Date().toISOString().slice(0,10);
     if (!projectId)  { EA.toast("Pick a project first.",  "error"); return; }
     if (!locationId) { EA.toast("Pick a location first.", "error"); return; }
+    if (campaignMissing()) {
+      EA.toast("This project uses campaigns — pick one before logging this call.", "error");
+      return;
+    }
 
     const hasAudio   = !!(state.audioFile || state.liveRecordingBlob);
     const callerId   = $("#gf-caller").value || null;

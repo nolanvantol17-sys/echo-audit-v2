@@ -131,6 +131,25 @@ def _campaign_belongs_to_project(conn, campaign_id, project_id):
     return cur.fetchone() is not None
 
 
+def _project_has_campaigns(conn, project_id):
+    """True if the project has at least one live campaign.
+
+    When this is true, every new interaction MUST carry a campaign_id —
+    the frontend can silently drop it (async combo race, fetch error,
+    unmounted combo) and campaign was historically optional, which let
+    ~30 Mayfair May calls land on NULL / the wrong month. The submit
+    guards reject a missing campaign here so attribution can't silently
+    fail again. Projects with zero campaigns are unaffected.
+    """
+    cur = conn.execute(
+        q("""SELECT 1 FROM campaigns
+             WHERE project_id = ? AND campaign_deleted_at IS NULL
+             LIMIT 1"""),
+        (project_id,),
+    )
+    return cur.fetchone() is not None
+
+
 def _get_interaction_in_company(conn, interaction_id, company_id):
     """Return interaction row if its project belongs to this company AND the
     current user's location_scope (RM filtering) lets them see it.
@@ -937,6 +956,14 @@ def submit_grade():
         ):
             return _err("Invalid campaign_id for this project", 400)
 
+        # Mandatory-campaign guard: if this project uses campaigns, refuse to
+        # create an uncategorized interaction. Closes the silent-NULL leak.
+        if campaign_id is None and _project_has_campaigns(conn, project_id):
+            return _err(
+                "This project uses campaigns — pick the campaign this call "
+                "belongs to before submitting.", 400,
+            )
+
         # Resolve criteria: client-supplied wins over project rubric_group
         script_text = None
         context_text = None
@@ -1155,6 +1182,13 @@ def log_no_answer():
             conn, campaign_id, project_id
         ):
             return _err("Invalid campaign_id for this project", 400)
+        # Mandatory-campaign guard (mirrors submit_grade). No-answer logs
+        # were a big chunk of the mis-attributed Mayfair calls.
+        if campaign_id is None and _project_has_campaigns(conn, project_id):
+            return _err(
+                "This project uses campaigns — pick the campaign this call "
+                "belongs to before logging it.", 400,
+            )
         interaction_id = _insert_interaction_row(
             conn,
             project_id=project_id,
