@@ -1,0 +1,576 @@
+/* ============================================================
+   Echo Audit — drop-in theme
+   ------------------------------------------------------------
+   Load AFTER app.css. Pure visual override — no HTML or
+   Python changes required.
+
+   In templates/base.html, add this BELOW the existing
+   <link rel="stylesheet" href="...app.css...">:
+
+     <link rel="stylesheet"
+           href="{{ url_for('static', filename='app-theme.css') }}?v={{ static_v('app-theme.css') }}">
+
+   To roll back: remove that one <link> line.
+   ============================================================ */
+
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap");
+
+/* ============================================================
+   Tokens — overrides app.css's :root
+   Mood: Linen (cream) + blue accent
+   To switch to Midnight (dark), comment Linen and uncomment Midnight at bottom.
+   ============================================================ */
+
+:root {
+  /* Surfaces */
+  --bg:             #FAF9F6;
+  --surface:        #FFFFFF;
+  --surface-2:      #F2F0EA;
+  --surface-3:      #E9E6DD;
+
+  /* Borders */
+  --border:         rgba(29, 29, 31, 0.07);
+  --border-strong:  rgba(29, 29, 31, 0.14);
+
+  /* Text */
+  --text:           #1D1D1F;
+  --muted:          #6B6B70;
+  --muted-2:        #8E8E93;
+
+  /* Accent */
+  --accent:         #0071E3;
+  --accent-h:       #0079F2;
+  --accent-d:       #005AB8;
+  --accent-soft:    rgba(0, 113, 227, 0.10);
+  --accent-edge:    rgba(0, 113, 227, 0.30);
+  --primary:        #0071E3;          /* legacy alias used in some templates */
+
+  /* Semantic — used only on score/status pills */
+  --success:        #1E9E5F;
+  --success-bg:     rgba(30, 158, 95, 0.12);
+  --warning:        #C9711A;
+  --warning-bg:     rgba(201, 113, 26, 0.12);
+  --danger:         #D72C2C;
+  --danger-bg:      rgba(215, 44, 44, 0.10);
+
+  /* Geometry */
+  --radius:         12px;
+  --radius-sm:      8px;
+  --radius-lg:      18px;
+
+  /* Glass */
+  --glass:          rgba(255, 255, 255, 0.62);
+  --glass-strong:   rgba(255, 255, 255, 0.84);
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+
+html, body {
+  font-family: "Geist", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif !important;
+  font-feature-settings: "ss01", "ss02", "cv11";
+  letter-spacing: -0.005em;
+  color: var(--text);
+  background:
+    radial-gradient(ellipse 1400px 700px at 15% -10%, rgba(0,113,227,0.08), transparent 55%),
+    radial-gradient(ellipse 1000px 600px at 100% 110%, rgba(255,210,90,0.06), transparent 55%),
+    var(--bg);
+}
+
+a { color: var(--accent); }
+a:hover { color: var(--accent-d); }
+
+::selection { background: var(--accent-soft); color: var(--accent-d); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(29, 29, 31, 0.14);
+  border-radius: 8px; border: 2px solid var(--bg); background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(29, 29, 31, 0.26); background-clip: padding-box; }
+
+/* ============================================================
+   Sidebar
+   ============================================================ */
+
+.sidebar {
+  background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0.58)) !important;
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border-right: 1px solid var(--border) !important;
+}
+.sidebar-brand {
+  padding: 22px 22px 18px !important;
+  border-bottom: 1px solid var(--border) !important;
+}
+.sidebar-brand img { filter: none !important; }   /* drop the dark-mode invert */
+.sidebar-brand-text {
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+  text-transform: none !important;
+  color: var(--text);
+}
+
+.sidebar-section-label {
+  font-size: 11.5px !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  font-weight: 500 !important;
+  color: var(--muted-2);
+  padding: 18px 14px 8px !important;
+}
+
+.nav-link {
+  padding: 9px 14px !important;
+  border-radius: 10px !important;
+  font-size: 13.5px !important;
+  font-weight: 450 !important;
+  color: var(--text) !important;
+  transition: background 160ms !important;
+}
+.nav-link:hover {
+  background: rgba(29,29,31,0.05) !important;
+  text-decoration: none !important;
+}
+.nav-link.active {
+  background: rgba(0,113,227,0.10) !important;
+  color: var(--accent-d) !important;
+  border: 1px solid rgba(0,113,227,0.18);
+}
+.nav-link .nav-icon {
+  opacity: 1 !important;
+  color: var(--muted);
+}
+.nav-link.active .nav-icon { color: var(--accent); }
+
+/* ============================================================
+   Top bar
+   ============================================================ */
+
+.topbar {
+  background: var(--glass) !important;
+  backdrop-filter: blur(36px) saturate(180%);
+  -webkit-backdrop-filter: blur(36px) saturate(180%);
+  border-bottom: 1px solid var(--border) !important;
+  padding: 0 26px !important;
+}
+.org-name {
+  color: var(--text) !important;
+  font-weight: 500 !important;
+}
+.org-switcher {
+  border-radius: 999px !important;
+  background: rgba(29,29,31,0.04) !important;
+  border: 1px solid rgba(29,29,31,0.06) !important;
+  color: var(--text) !important;
+  padding: 6px 12px !important;
+}
+.org-switcher:hover { background: rgba(29,29,31,0.08) !important; border-color: rgba(29,29,31,0.14) !important; }
+.user-name { color: var(--text) !important; }
+
+.logout-btn {
+  border-radius: 999px !important;
+  background: rgba(29,29,31,0.04) !important;
+  border: 1px solid rgba(29,29,31,0.06) !important;
+  color: var(--muted) !important;
+  padding: 6px 14px !important;
+}
+.logout-btn:hover {
+  background: rgba(215,44,44,0.10) !important;
+  border-color: var(--danger) !important;
+  color: var(--danger) !important;
+}
+
+/* Project breadcrumb */
+.project-breadcrumb {
+  background: linear-gradient(90deg, rgba(0,113,227,0.10), transparent 60%) !important;
+  border-bottom: 1px solid var(--border) !important;
+  padding: 11px 24px !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+.project-breadcrumb a { color: var(--text) !important; }
+.project-breadcrumb a:hover { color: var(--accent) !important; }
+.exit-project-btn {
+  border-radius: 999px !important;
+  border-color: rgba(29,29,31,0.14) !important;
+  color: var(--muted) !important;
+}
+.exit-project-btn:hover { color: var(--text) !important; border-color: var(--text) !important; }
+
+/* ============================================================
+   Headings
+   ============================================================ */
+
+.page-title { letter-spacing: -0.02em !important; color: var(--text); }
+.page-subtitle, .page-sub { color: var(--muted) !important; }
+
+/* ============================================================
+   Panel = card
+   ============================================================ */
+
+.panel {
+  background: rgba(255,255,255,0.78) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.6) inset,
+    0 1px 3px rgba(29,29,31,0.04),
+    0 12px 32px rgba(29,29,31,0.05) !important;
+}
+.panel-title {
+  color: var(--text) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+}
+
+/* ============================================================
+   Buttons
+   ============================================================ */
+
+.btn {
+  border-radius: 999px !important;
+  font-weight: 500 !important;
+  letter-spacing: -0.005em !important;
+  transition: background 140ms, border-color 140ms, color 140ms, transform 120ms !important;
+}
+.btn:active { transform: scale(0.97); }
+
+.btn-primary {
+  background: linear-gradient(180deg, var(--accent-h), var(--accent)) !important;
+  border: 1px solid var(--accent-d) !important;
+  color: #FFFFFF !important;
+  box-shadow:
+    0 0.5px 0 rgba(255,255,255,0.30) inset,
+    0 4px 12px rgba(0,113,227,0.24);
+}
+.btn-primary:hover { background: linear-gradient(180deg, #1485F2, var(--accent-d)) !important; }
+
+.btn-ghost {
+  background: rgba(255,255,255,0.62) !important;
+  border: 1px solid var(--border-strong) !important;
+  color: var(--text) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.btn-ghost:hover {
+  background: rgba(255,255,255,0.92) !important;
+  border-color: rgba(29,29,31,0.18) !important;
+}
+
+.btn-danger {
+  background: var(--danger-bg) !important;
+  border: 1px solid rgba(215,44,44,0.30) !important;
+  color: var(--danger) !important;
+}
+.btn-danger:hover { background: rgba(215,44,44,0.18) !important; }
+
+/* ============================================================
+   Forms
+   ============================================================ */
+
+.field-label {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  color: var(--muted) !important;
+}
+.field-input, .field-select, input[type="text"], input[type="email"],
+input[type="password"], input[type="number"], input[type="date"],
+input[type="search"], input[type="tel"], select, textarea {
+  background: #FFFFFF !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 10px !important;
+  color: var(--text) !important;
+  padding: 9px 12px !important;
+  font-size: 14px !important;
+  transition: border-color 180ms, box-shadow 180ms !important;
+}
+.field-input:focus, .field-select:focus, input:focus, select:focus, textarea:focus {
+  border-color: var(--accent) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 4px rgba(0,113,227,0.14) !important;
+}
+.field-input::placeholder, input::placeholder, textarea::placeholder {
+  color: var(--muted-2) !important;
+}
+
+/* ============================================================
+   Tabs
+   ============================================================ */
+
+.tabs {
+  display: inline-flex !important;
+  gap: 2px !important;
+  padding: 4px !important;
+  background: rgba(29,29,31,0.05) !important;
+  border: 1px solid rgba(29,29,31,0.06) !important;
+  border-radius: 12px !important;
+}
+.tab-btn, .platform-tab {
+  border-radius: 9px !important;
+  border-bottom: none !important;
+  padding: 7px 14px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  color: var(--muted) !important;
+  background: transparent !important;
+}
+.tab-btn:hover, .platform-tab:hover { color: var(--text) !important; }
+.tab-btn.active, .platform-tab.active {
+  background: #FFFFFF !important;
+  color: var(--text) !important;
+  border: none !important;
+  box-shadow: 0 1px 2px rgba(29,29,31,0.06), 0 1px 0 rgba(255,255,255,0.6) inset !important;
+}
+
+/* ============================================================
+   Score & status pills
+   ============================================================ */
+
+.score-pill {
+  border-radius: 8px !important;
+  padding: 3px 9px !important;
+  font-family: "Geist Mono", monospace !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.01em !important;
+  min-width: 44px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border: 1px solid;
+}
+.score-pill.good, .score-pill[data-band="good"] {
+  background: var(--success-bg); border-color: rgba(30,158,95,0.30); color: var(--success);
+}
+.score-pill.warn, .score-pill[data-band="warn"] {
+  background: var(--warning-bg); border-color: rgba(201,113,26,0.30); color: var(--warning);
+}
+.score-pill.bad, .score-pill[data-band="bad"] {
+  background: var(--danger-bg); border-color: rgba(215,44,44,0.30); color: var(--danger);
+}
+.score-pill.no-answer {
+  background: rgba(29,29,31,0.05); border-color: rgba(29,29,31,0.06); color: var(--muted);
+}
+.status-pill {
+  border-radius: 999px !important;
+  padding: 2px 10px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  background: rgba(29,29,31,0.05) !important;
+  border: 1px solid rgba(29,29,31,0.06) !important;
+  color: var(--muted) !important;
+}
+
+/* ============================================================
+   Tables
+   ============================================================ */
+
+.history-table, table.data-table {
+  background: transparent !important;
+}
+.history-table th, table.data-table th {
+  font-size: 11px !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  font-weight: 500 !important;
+  color: var(--muted) !important;
+  background: transparent !important;
+  border-bottom: 1px solid var(--border) !important;
+  padding: 12px 14px !important;
+}
+.history-table td, table.data-table td {
+  padding: 13px 14px !important;
+  border-bottom: 1px solid var(--border) !important;
+  color: var(--text);
+}
+.history-table tr.clickable:hover, .history-table tbody tr:hover { background: rgba(29,29,31,0.03) !important; }
+
+/* ============================================================
+   Filters
+   ============================================================ */
+
+.filters-bar { background: transparent !important; }
+
+/* ============================================================
+   Modals & dialogs
+   ============================================================ */
+
+.modal-overlay, .ea-overlay-backdrop {
+  background: rgba(255,255,255,0.30) !important;
+  backdrop-filter: blur(12px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(160%) !important;
+}
+.modal, .ea-overlay {
+  border-radius: 20px !important;
+  background: rgba(255,255,255,0.84) !important;
+  border: 1px solid rgba(29,29,31,0.10) !important;
+  backdrop-filter: blur(40px) saturate(200%) !important;
+  -webkit-backdrop-filter: blur(40px) saturate(200%) !important;
+  box-shadow:
+    0 0.5px 0 rgba(255,255,255,0.6) inset,
+    0 24px 60px rgba(29,29,31,0.14) !important;
+  color: var(--text);
+}
+
+/* ============================================================
+   Flash messages
+   ============================================================ */
+
+.flash-msg {
+  border-radius: 12px !important;
+  background: rgba(255,255,255,0.84) !important;
+  border: 1px solid var(--border-strong) !important;
+  color: var(--text) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+.flash-msg.success { border-color: rgba(30,158,95,0.35); }
+.flash-msg.error, .flash-msg.danger { border-color: rgba(215,44,44,0.35); }
+
+/* ============================================================
+   Active Jobs dock — bottom-right pill
+   ============================================================ */
+
+.ajd-pill {
+  border-radius: 999px !important;
+  padding: 10px 16px !important;
+  background: var(--glass-strong) !important;
+  border: 1px solid rgba(29,29,31,0.10) !important;
+  backdrop-filter: blur(32px) saturate(200%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(200%) !important;
+  box-shadow: 0 8px 28px rgba(29,29,31,0.12) !important;
+  color: var(--text) !important;
+}
+.ajd-pill:hover { transform: translateY(-1px); }
+.ajd-pill-dot { background: var(--accent) !important; box-shadow: 0 0 0 4px rgba(0,113,227,0.18); }
+.ajd-pill-count, .ajd-pill-label { color: var(--text) !important; }
+
+.ajd-panel {
+  border-radius: 18px !important;
+  background: rgba(255,255,255,0.84) !important;
+  border: 1px solid rgba(29,29,31,0.10) !important;
+  backdrop-filter: blur(40px) saturate(200%) !important;
+  -webkit-backdrop-filter: blur(40px) saturate(200%) !important;
+  box-shadow: 0 24px 70px rgba(29,29,31,0.20) !important;
+  color: var(--text);
+}
+.ajd-panel-header, .ajd-panel-title { color: var(--text) !important; }
+
+/* ============================================================
+   Impersonation banner
+   ============================================================ */
+
+.impersonation-banner {
+  background: linear-gradient(90deg, rgba(215,44,44,0.14), rgba(215,44,44,0.06)) !important;
+  border-bottom: 1px solid rgba(215,44,44,0.35) !important;
+  color: var(--text) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* ============================================================
+   Skeleton (loading)
+   ============================================================ */
+
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 0%, rgba(255,255,255,0.4) 50%, var(--surface-2) 100%) !important;
+  background-size: 200% 100% !important;
+  border-radius: 8px !important;
+}
+
+/* ============================================================
+   <details> / collapsibles
+   ============================================================ */
+
+details.collapsible, details.settings-section, details.report-location {
+  background: rgba(255,255,255,0.78) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  margin-bottom: 12px;
+  padding: 0 !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+details.collapsible > summary,
+details.settings-section > summary,
+details.report-location > summary {
+  padding: 16px 22px !important;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+  color: var(--text);
+  display: flex; align-items: center; gap: 12px;
+}
+details.collapsible > summary::-webkit-details-marker,
+details.settings-section > summary::-webkit-details-marker { display: none; }
+details.collapsible[open] > summary,
+details.settings-section[open] > summary { border-bottom: 1px solid var(--border); }
+.collapsible-body { padding: 18px 22px !important; }
+
+/* ============================================================
+   Toggles (checkbox switches in Settings → Grading)
+   ============================================================ */
+
+.toggle-sw {
+  position: relative; display: inline-block; width: 40px; height: 22px;
+}
+.toggle-sw input { display: none; }
+.toggle-sw .slider {
+  position: absolute; inset: 0;
+  background: rgba(29,29,31,0.15);
+  border-radius: 999px;
+  transition: background 160ms;
+  cursor: pointer;
+}
+.toggle-sw .slider::before {
+  content: "";
+  position: absolute; top: 2px; left: 2px;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.20);
+  transition: left 160ms;
+}
+.toggle-sw input:checked + .slider { background: var(--accent); }
+.toggle-sw input:checked + .slider::before { left: 20px; }
+
+/* ============================================================
+   Code/mono numerals
+   ============================================================ */
+
+.text-mono, .num, [class*="-mono"], code, kbd {
+  font-family: "Geist Mono", "JetBrains Mono", "SF Mono", monospace !important;
+  font-feature-settings: "tnum";
+}
+
+/* ============================================================
+   MIDNIGHT mode — uncomment to switch the whole app to dark
+   ------------------------------------------------------------
+   Replace the :root block at the top of this file with the
+   following, OR add `data-mood="midnight"` to <html> in
+   base.html and uncomment the block below.
+   ============================================================ */
+/*
+html[data-mood="midnight"] {
+  --bg:             #0A0E1A;
+  --surface:        #0F1424;
+  --surface-2:      #161D31;
+  --surface-3:      #1F2840;
+  --border:         rgba(255,255,255,0.07);
+  --border-strong:  rgba(255,255,255,0.16);
+  --text:           #F4F6FB;
+  --muted:          #7984A5;
+  --muted-2:        #525B79;
+  --accent:         #6FB0FF;
+  --accent-h:       #92C3FF;
+  --accent-d:       #3D8AE0;
+  --accent-soft:    rgba(111,176,255,0.14);
+  --glass:          rgba(15,20,36,0.55);
+  --glass-strong:   rgba(15,20,36,0.78);
+}
+*/
