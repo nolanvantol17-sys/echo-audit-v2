@@ -1287,6 +1287,12 @@ def list_interactions():
     if args.get("respondent_user_id"):
         filters.append("i.respondent_user_id = ?")
         params.append(args["respondent_user_id"])
+    if args.get("respondent_id"):
+        # Detected-external-person path (respondents table). This is the
+        # common Secret-Shopping case — respondent_user_id is NULL there,
+        # so the history page's Respondent filter keys on respondent_id.
+        filters.append("i.respondent_id = ?")
+        params.append(args["respondent_id"])
     if args.get("from_date"):
         filters.append("i.interaction_date >= ?")
         params.append(args["from_date"])

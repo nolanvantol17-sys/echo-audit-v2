@@ -121,6 +121,12 @@
       </select>
     </div>
     <div class="field">
+      <label class="field-label" for="f-caller">Caller</label>
+      <select id="f-caller" class="field-select">
+        <option value="">All</option>
+      </select>
+    </div>
+    <div class="field">
       <label class="field-label" for="f-from">From</label>
       <input id="f-from" type="date" class="field-input">
     </div>
@@ -268,7 +274,8 @@
     hydrate("from_date",          "#f-from");
     hydrate("to_date",            "#f-to");
     hydrate("status_id",          "#f-status");
-    hydrate("respondent_user_id", "#f-respondent");
+    hydrate("respondent_id",      "#f-respondent");
+    hydrate("caller_user_id",     "#f-caller");
     hydrate("score_max",          "#f-score-max");
     // campaign_id only hydrates if a project_id was also pre-applied
     // (campaigns dropdown is populated by the project cascade); otherwise
@@ -379,7 +386,7 @@
     // Project gets a dedicated handler (cascades into Campaign before
     // re-fetching). Everything else uses the shared change → loadHistory.
     $("#f-project").addEventListener("change", onProjectChange);
-    ["#f-location","#f-from","#f-to","#f-score-max","#f-status","#f-respondent","#f-include-test","#f-campaign"]
+    ["#f-location","#f-from","#f-to","#f-score-max","#f-status","#f-respondent","#f-caller","#f-include-test","#f-campaign"]
       .forEach(function (sel) {
         const el = document.querySelector(sel);
         if (el) el.addEventListener("change", loadHistory);
@@ -387,7 +394,7 @@
 
     $("#btn-clear-filters").addEventListener("click", function () {
       ["#f-search","#f-from","#f-to","#f-score-max"].forEach(function (s) { $(s).value = ""; });
-      ["#f-location","#f-project","#f-status","#f-respondent","#f-campaign"].forEach(function (s) { $(s).value = ""; });
+      ["#f-location","#f-project","#f-status","#f-respondent","#f-caller","#f-campaign"].forEach(function (s) { $(s).value = ""; });
       // Clearing project also resets the campaign dropdown back to its
       // "(pick a project first)" disabled state.
       const camp = $("#f-campaign");
@@ -420,7 +427,8 @@
     if ($("#f-from").value)     qs.set("from_date", $("#f-from").value);
     if ($("#f-to").value)       qs.set("to_date", $("#f-to").value);
     if ($("#f-status").value)   qs.set("status_id", $("#f-status").value);
-    if ($("#f-respondent").value) qs.set("respondent_user_id", $("#f-respondent").value);
+    if ($("#f-respondent").value) qs.set("respondent_id", $("#f-respondent").value);
+    if ($("#f-caller").value) qs.set("caller_user_id", $("#f-caller").value);
     if ($("#f-score-max").value !== "") qs.set("score_max", $("#f-score-max").value);
     const incTest = document.getElementById("f-include-test");
     if (incTest && incTest.checked) qs.set("include_test", "1");
@@ -441,27 +449,33 @@
       state.all = rows;
       state.shown = Math.min(PAGE_SIZE, rows.length);
 
-      populateRespondentFilter(rows);
+      populateEntityFilter("#f-respondent", rows, "respondent_id", "respondent_name");
+      populateEntityFilter("#f-caller",     rows, "caller_user_id", "caller_name");
       render();
     } catch (err) {
       EA.showError(wrap, err.message || "Failed to load history");
     }
   }
 
-  // Populate the respondent dropdown from unique names in the current result
-  // set. Preserves the current selection if it's still present.
-  function populateRespondentFilter(rows) {
-    const sel = $("#f-respondent");
+  // Populate a filter dropdown from the unique (id, name) pairs present in
+  // the current result set. Used for both Respondent and Caller. Preserves
+  // the current selection if it's still present after the refresh.
+  //
+  // Respondent keys on respondent_id (the detected-external-person identity
+  // in the respondents table) — NOT respondent_user_id, which is null for
+  // Secret-Shopping respondents and previously left this dropdown empty.
+  function populateEntityFilter(selId, rows, idKey, nameKey) {
+    const sel = $(selId);
     const currentVal = sel.value;
     const seen = new Map();
     rows.forEach(function (r) {
-      if (r.respondent_user_id && r.respondent_name && !seen.has(r.respondent_user_id)) {
-        seen.set(r.respondent_user_id, r.respondent_name);
+      if (r[idKey] && r[nameKey] && !seen.has(r[idKey])) {
+        seen.set(r[idKey], r[nameKey]);
       }
     });
     sel.innerHTML = '<option value="">All</option>';
     Array.from(seen.entries())
-      .sort(function (a, b) { return a[1].localeCompare(b[1]); })
+      .sort(function (a, b) { return String(a[1]).localeCompare(String(b[1])); })
       .forEach(function (entry) {
         const o = document.createElement("option");
         o.value = entry[0];
