@@ -94,6 +94,14 @@
       EA.toast("Missing project for export.", "error"); return;
     }
 
+    // Scoped mode: launched from a project dashboard that passed its live
+    // filter scope. The dashboard IS the filter UI here — we hide the
+    // campaign picker, show the scope read-only, and inherit it onto the
+    // export (with an escape hatch to ignore it and grab the full archive).
+    const dashScope  = (opts.scope !== undefined) ? String(opts.scope) : null;
+    const scoped     = dashScope !== null;
+    const scopeLabel = opts.scopeLabel || "";
+
     const state = {
       projectId:     lockedProject ? opts.projectId : null,
       includeNoAns:  true,
@@ -103,7 +111,18 @@
       allCampaigns:         true,    // default: All campaigns checked
       campaignIds:          [],      // selected individual campaign IDs
       includeUncategorized: false,   // selected the "Uncategorized" pseudo-row
+      ignoreScope:          false,   // escape hatch: export entire history
     };
+
+    // Merge the inherited dashboard scope onto an export/preflight param
+    // set, unless the user ticked "ignore filters". No-op when not scoped.
+    function applyScope(params) {
+      if (!scoped || state.ignoreScope || !dashScope) return params;
+      new URLSearchParams(dashScope).forEach(function (v, k) {
+        params.set(k, v);
+      });
+      return params;
+    }
 
     const body = document.createElement("div");
     const pickerHtml = lockedProject
@@ -244,6 +263,7 @@
         if (state.campaignIds.length)   params.set("campaign_ids", state.campaignIds.join(","));
         if (state.includeUncategorized) params.set("include_uncategorized", "1");
       }
+      applyScope(params);
       try {
         const res = await EA.fetchJSON(
           "/api/locations/" + locationId + "/export/preflight?" + params.toString()
@@ -281,7 +301,36 @@
 
     _setDownloadEnabled(body, false);
 
-    if (lockedProject) {
+    if (lockedProject && scoped) {
+      // Dashboard-scoped: no campaign picker (the scope carries campaign +
+      // every other filter). Show the scope read-only + an escape hatch,
+      // then preflight straight away.
+      const cblock = body.querySelector('[data-role="campaigns-block"]');
+      if (cblock) cblock.remove();
+      const banner = document.createElement("div");
+      banner.style.cssText =
+        "margin-bottom:14px;padding:10px 12px;border-radius:6px;" +
+        "background:var(--surface-2,#F4EFE7);font-size:0.875rem;";
+      banner.innerHTML =
+        '<div style="margin-bottom:6px;">Exporting <strong>your current ' +
+          'dashboard view</strong>' +
+          (scopeLabel
+            ? ': <span class="muted">' + EA.esc(scopeLabel) + '</span>'
+            : ' <span class="muted">(all calls — no filters active)</span>') +
+        '</div>' +
+        '<label style="display:flex;align-items:center;gap:8px;font-weight:normal;' +
+          'cursor:pointer;color:var(--muted,#7A6F62);">' +
+          '<input type="checkbox" data-role="ignore-scope"> ' +
+          'Ignore filters — export this location’s entire history' +
+        '</label>';
+      body.insertBefore(banner, body.firstChild);
+      banner.querySelector('[data-role="ignore-scope"]')
+        .addEventListener("change", function (e) {
+          state.ignoreScope = e.target.checked;
+          refresh();
+        });
+      refresh();
+    } else if (lockedProject) {
       refreshCampaigns().then(refresh);
     } else {
       try {
@@ -328,6 +377,7 @@
       if (state.campaignIds.length)   params.set("campaign_ids", state.campaignIds.join(","));
       if (state.includeUncategorized) params.set("include_uncategorized", "1");
     }
+    applyScope(params);
     const url = "/api/locations/" + locationId + "/export?" + params.toString();
 
     const overlay = EA.showOverlay("Building your export — this may take up to a minute…");

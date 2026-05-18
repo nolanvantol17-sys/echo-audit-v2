@@ -1578,22 +1578,66 @@ def list_project_locations(project_id):
     company_id, err = _require_company()
     if err: return err
 
+    # Scope the per-location counts to the dashboard filters the caller is
+    # viewing (same param vocabulary as /api/dashboard + the bulk-export
+    # endpoints) so the "Total calls" column matches exactly what an
+    # Export-by-Location download will produce. No params → all-time.
+    def _ids(name):
+        out = []
+        for tok in (request.args.get(name) or "").split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            try:
+                out.append(int(tok))
+            except (TypeError, ValueError):
+                pass
+        return out
+
+    extra, eparams = [], []
+    df, dt = request.args.get("date_from"), request.args.get("date_to")
+    if df:
+        extra.append("i.interaction_date >= ?"); eparams.append(df)
+    if dt:
+        extra.append("i.interaction_date <= ?"); eparams.append(dt)
+    _loc = _ids("location_ids")
+    if _loc:
+        extra.append(f"i.interaction_location_id IN ({','.join(['?']*len(_loc))})")
+        eparams.extend(_loc)
+    _cal = _ids("caller_ids")
+    if _cal:
+        extra.append(f"i.caller_user_id IN ({','.join(['?']*len(_cal))})")
+        eparams.extend(_cal)
+    _camp = _ids("campaign_ids")
+    if _camp:
+        extra.append(f"i.campaign_id IN ({','.join(['?']*len(_camp))})")
+        eparams.extend(_camp)
+    _pr = _ids("phone_routing_ids")
+    if _pr:
+        extra.append(
+            f"EXISTS (SELECT 1 FROM projects p WHERE p.project_id = i.project_id "
+            f"AND p.phone_routing_id IN ({','.join(['?']*len(_pr))}))"
+        )
+        eparams.extend(_pr)
+    extra_clause = (" AND " + " AND ".join(extra)) if extra else ""
+
     conn = get_conn()
     try:
         if not _get_project(conn, project_id, company_id):
             return _err("Project not found", 404)
 
         cur = conn.execute(
-            q("""SELECT loc.location_id, loc.location_name,
+            q(f"""SELECT loc.location_id, loc.location_name,
                         COUNT(i.interaction_id) AS interaction_count
                  FROM interactions i
                  JOIN locations loc ON loc.location_id = i.interaction_location_id
                  WHERE i.project_id = ?
                    AND i.interaction_deleted_at IS NULL
                    AND loc.location_deleted_at IS NULL
+                   {extra_clause}
                  GROUP BY loc.location_id, loc.location_name
                  ORDER BY loc.location_name"""),
-            (project_id,),
+            (project_id, *eparams),
         )
         return jsonify(_rows(cur))
     finally:

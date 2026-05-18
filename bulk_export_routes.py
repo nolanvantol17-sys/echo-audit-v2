@@ -105,6 +105,61 @@ def _resolve_campaign_filter(args):
     return ids, inc_unc, "AND (" + " OR ".join(parts) + ")", params
 
 
+def _resolve_dashboard_scope(args):
+    """Mirror the project-dashboard interaction filters so a scoped export
+    yields EXACTLY the calls behind the dashboard the user is looking at.
+
+    Campaign is intentionally NOT handled here — it rides on the existing
+    `campaign_ids` param via _resolve_campaign_filter (same param name the
+    dashboard sends), so it needs no new code. This covers the remaining
+    dimensions, using SQL identical to dashboard_routes.get_dashboard():
+    date range, location, caller, phone routing. Permission scope is moot —
+    this endpoint is admin/super_admin only and they are never RM-scoped.
+
+    Returns (where_snippet, params); snippet is "" or "AND a AND b ...".
+    """
+    def _ids(name):
+        out = []
+        for tok in (args.get(name) or "").split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            try:
+                out.append(int(tok))
+            except (TypeError, ValueError):
+                pass
+        return out
+
+    parts, params = [], []
+    df, dt = args.get("date_from"), args.get("date_to")
+    if df:
+        parts.append("i.interaction_date >= ?"); params.append(df)
+    if dt:
+        parts.append("i.interaction_date <= ?"); params.append(dt)
+    loc_ids = _ids("location_ids")
+    if loc_ids:
+        ph = ",".join(["?"] * len(loc_ids))
+        parts.append(f"i.interaction_location_id IN ({ph})"); params.extend(loc_ids)
+    cal_ids = _ids("caller_ids")
+    if cal_ids:
+        ph = ",".join(["?"] * len(cal_ids))
+        parts.append(f"i.caller_user_id IN ({ph})"); params.extend(cal_ids)
+    pr_ids = _ids("phone_routing_ids")
+    if pr_ids:
+        ph = ",".join(["?"] * len(pr_ids))
+        # Project is fixed for this export, and phone_routing lives on the
+        # project — EXISTS keeps it self-contained (no extra JOIN), matching
+        # the dashboard's `p.phone_routing_id IN (...)` semantics.
+        parts.append(
+            f"EXISTS (SELECT 1 FROM projects p "
+            f"WHERE p.project_id = i.project_id AND p.phone_routing_id IN ({ph}))"
+        )
+        params.extend(pr_ids)
+    if not parts:
+        return "", []
+    return "AND " + " AND ".join(parts), params
+
+
 # ── GET /api/locations/<id>/export/preflight ──
 
 @bulk_export_bp.route("/locations/<int:location_id>/export/preflight", methods=["GET"])
@@ -125,6 +180,7 @@ def export_preflight(location_id):
     statuses = _resolve_status_set(request.args)
     placeholders = ",".join(["?"] * len(statuses))
     _, _, camp_where, camp_params = _resolve_campaign_filter(request.args)
+    scope_where, scope_params = _resolve_dashboard_scope(request.args)
 
     conn = get_conn()
     try:
@@ -165,8 +221,9 @@ def export_preflight(location_id):
                     AND i.interaction_deleted_at IS NULL
                     AND i.interaction_is_test = FALSE
                     AND i.status_id IN ({placeholders})
-                    {camp_where}"""),
-            [location_id, project_id, *statuses, *camp_params],
+                    {camp_where}
+                    {scope_where}"""),
+            [location_id, project_id, *statuses, *camp_params, *scope_params],
         ).fetchone()
     finally:
         conn.close()
@@ -274,6 +331,7 @@ def export_location_bulk(location_id):
     statuses = _resolve_status_set(request.args)
     placeholders = ",".join(["?"] * len(statuses))
     campaign_ids, inc_unc, camp_where, camp_params = _resolve_campaign_filter(request.args)
+    scope_where, scope_params = _resolve_dashboard_scope(request.args)
     include_summary = request.args.get("include_summary") == "1"
 
     succeeded_ids = []
@@ -326,8 +384,9 @@ def export_location_bulk(location_id):
                     AND i.interaction_is_test = FALSE
                     AND i.status_id IN ({placeholders})
                     {camp_where}
+                    {scope_where}
                   ORDER BY i.interaction_date DESC, i.interaction_id DESC"""),
-            [location_id, project_id, *statuses, *camp_params],
+            [location_id, project_id, *statuses, *camp_params, *scope_params],
         ).fetchall()
 
         if not rows:

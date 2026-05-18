@@ -226,6 +226,29 @@
   let campaignsHandle = null;
   let campaignsMounted = false;
   let exportLocsLoaded = false;
+  // Latest dashboard filter scope. {} == all-time, which is exactly the
+  // hub's boot state (defaultDatePreset:"all"), so the export matches the
+  // view even before the user touches a filter. Updated on every change.
+  let currentScope = {};
+
+  // Dashboard filterState → query params. Single source of truth shared by
+  // the /summary refetch, the scoped locations list, and the export modal,
+  // so all three always agree on "what the user is looking at".
+  function scopeParams(fs) {
+    const p = new URLSearchParams();
+    if (!fs) return p;
+    if (fs.date_from) p.set("date_from", fs.date_from);
+    if (fs.date_to)   p.set("date_to",   fs.date_to);
+    if (fs.location_ids && fs.location_ids.length)
+      p.set("location_ids", fs.location_ids.join(","));
+    if (fs.caller_ids && fs.caller_ids.length)
+      p.set("caller_ids", fs.caller_ids.join(","));
+    if (fs.phone_routing_ids && fs.phone_routing_ids.length)
+      p.set("phone_routing_ids", fs.phone_routing_ids.join(","));
+    if (fs.campaign_ids && fs.campaign_ids.length)
+      p.set("campaign_ids", fs.campaign_ids.join(","));
+    return p;
+  }
 
   async function init() {
     $("#btn-start-grading").href = "/app/grade?project_id=" + PROJECT_ID;
@@ -291,19 +314,8 @@
   // (above) — the widget skips its initial onChange to avoid a duplicate
   // boot fetch.
   async function onWidgetFilterChange(filterState) {
-    const params = new URLSearchParams();
-    if (filterState.date_from) params.set("date_from", filterState.date_from);
-    if (filterState.date_to)   params.set("date_to",   filterState.date_to);
-    if (filterState.location_ids.length)
-      params.set("location_ids",      filterState.location_ids.join(","));
-    if (filterState.caller_ids.length)
-      params.set("caller_ids",        filterState.caller_ids.join(","));
-    if (filterState.phone_routing_ids.length)
-      params.set("phone_routing_ids", filterState.phone_routing_ids.join(","));
-    if (filterState.campaign_ids.length)
-      params.set("campaign_ids",      filterState.campaign_ids.join(","));
-
-    const qs = params.toString();
+    currentScope = filterState || {};
+    const qs = scopeParams(currentScope).toString();
     const url = "/api/projects/" + PROJECT_ID + "/summary" + (qs ? ("?" + qs) : "");
     try {
       const s = await EA.fetchJSON(url);
@@ -314,62 +326,101 @@
     } catch (err) {
       EA.toast(err.message || "Failed to refresh project data.", "error");
     }
+    // Keep the Export-by-Location panel in lock-step with the filters so
+    // its per-location counts never disagree with what an export yields.
+    const det = document.getElementById("export-locations-mount");
+    const dParent = det && det.closest("details");
+    if (exportLocsLoaded && dParent && dParent.open) loadExportLocations();
   }
 
   // ── Export by Location (Dashboard tab, admin-only) ──────
-  // Lazy-loaded on first <details> open. Pattern matches the lazy-mount
-  // used by the Rubric / Campaigns tabs — no fetch unless the user expands.
+  // Reloads on every <details> open AND whenever filters change while open
+  // (see onWidgetFilterChange) so the per-location counts — and the export
+  // they launch — always reflect the current dashboard scope.
   function wireExportByLocation() {
     const wrap = document.getElementById("export-locations-mount");
     if (!wrap) return;
     const detEl = wrap.closest("details");
     if (!detEl) return;
-    detEl.addEventListener("toggle", async function () {
-      if (!detEl.open || exportLocsLoaded) return;
-      exportLocsLoaded = true;
-      try {
-        const locs = await EA.fetchJSON("/api/projects/" + PROJECT_ID + "/locations");
-        if (!locs.length) {
-          wrap.innerHTML = '<div class="empty-state">' +
-            'No interactions yet for this project.' +
-          '</div>';
-          return;
-        }
-        const projectName = (state.summary && state.summary.project_name)
-          || ("Project #" + PROJECT_ID);
-        wrap.innerHTML =
-          '<table class="history-table"><thead><tr>' +
-            '<th>Location</th><th style="text-align:right;">Total calls</th>' +
-            '<th style="text-align:right;">Action</th>' +
-          '</tr></thead><tbody>' +
-          locs.map(function (l) {
-            return '<tr>' +
-              '<td>' + EA.esc(l.location_name) + '</td>' +
-              '<td style="text-align:right;">' + (l.interaction_count || 0) + '</td>' +
-              '<td style="text-align:right;">' +
-                '<button type="button" class="btn btn-ghost btn-sm export-loc-btn" ' +
-                  'data-id="' + l.location_id + '" ' +
-                  'data-name="' + EA.esc(l.location_name) + '">↓ Export Calls</button>' +
-              '</td>' +
-            '</tr>';
-          }).join("") +
-          '</tbody></table>';
-        wrap.querySelectorAll(".export-loc-btn").forEach(function (btn) {
-          btn.addEventListener("click", function () {
-            EA.BulkExportModal.open({
-              locationId:    parseInt(btn.dataset.id, 10),
-              locationName:  btn.dataset.name,
-              lockedProject: true,
-              projectId:     PROJECT_ID,
-              projectName:   projectName,
-            });
+    detEl.addEventListener("toggle", function () {
+      if (detEl.open) loadExportLocations();
+    });
+  }
+
+  async function loadExportLocations() {
+    const wrap = document.getElementById("export-locations-mount");
+    if (!wrap) return;
+    exportLocsLoaded = true;
+    const qs = scopeParams(currentScope).toString();
+    try {
+      const locs = await EA.fetchJSON(
+        "/api/projects/" + PROJECT_ID + "/locations" + (qs ? ("?" + qs) : "")
+      );
+      if (!locs.length) {
+        wrap.innerHTML = '<div class="empty-state">' +
+          'No calls match the current dashboard filters.' +
+        '</div>';
+        return;
+      }
+      const projectName = (state.summary && state.summary.project_name)
+        || ("Project #" + PROJECT_ID);
+      wrap.innerHTML =
+        '<table class="history-table"><thead><tr>' +
+          '<th>Location</th><th style="text-align:right;">Calls in view</th>' +
+          '<th style="text-align:right;">Action</th>' +
+        '</tr></thead><tbody>' +
+        locs.map(function (l) {
+          return '<tr>' +
+            '<td>' + EA.esc(l.location_name) + '</td>' +
+            '<td style="text-align:right;">' + (l.interaction_count || 0) + '</td>' +
+            '<td style="text-align:right;">' +
+              '<button type="button" class="btn btn-ghost btn-sm export-loc-btn" ' +
+                'data-id="' + l.location_id + '" ' +
+                'data-name="' + EA.esc(l.location_name) + '">↓ Export Calls</button>' +
+            '</td>' +
+          '</tr>';
+        }).join("") +
+        '</tbody></table>';
+      wrap.querySelectorAll(".export-loc-btn").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          EA.BulkExportModal.open({
+            locationId:    parseInt(btn.dataset.id, 10),
+            locationName:  btn.dataset.name,
+            lockedProject: true,
+            projectId:     PROJECT_ID,
+            projectName:   projectName,
+            // Inherit the live dashboard scope — the modal shows it
+            // read-only and the export honours it exactly.
+            scope:         scopeParams(currentScope).toString(),
+            scopeLabel:    describeScope(currentScope),
           });
         });
-      } catch (err) {
-        wrap.innerHTML = '<div class="section-error">' +
-          EA.esc(err.message || "Failed to load locations.") + '</div>';
-      }
-    });
+      });
+    } catch (err) {
+      wrap.innerHTML = '<div class="section-error">' +
+        EA.esc(err.message || "Failed to load locations.") + '</div>';
+    }
+  }
+
+  // Plain-English summary of the active scope for the export modal banner.
+  function describeScope(fs) {
+    if (!fs) return "";
+    const bits = [];
+    if (fs.campaign_ids && fs.campaign_ids.length)
+      bits.push(fs.campaign_ids.length === 1
+        ? "1 campaign" : fs.campaign_ids.length + " campaigns");
+    if (fs.date_from || fs.date_to)
+      bits.push((fs.date_from || "earliest") + " → " + (fs.date_to || "latest"));
+    if (fs.location_ids && fs.location_ids.length)
+      bits.push(fs.location_ids.length + " location" +
+        (fs.location_ids.length === 1 ? "" : "s"));
+    if (fs.caller_ids && fs.caller_ids.length)
+      bits.push(fs.caller_ids.length + " caller" +
+        (fs.caller_ids.length === 1 ? "" : "s"));
+    if (fs.phone_routing_ids && fs.phone_routing_ids.length)
+      bits.push(fs.phone_routing_ids.length + " phone routing" +
+        (fs.phone_routing_ids.length === 1 ? "" : "s"));
+    return bits.join(" · ");
   }
 
   // ── Tabs (Dashboard / Rubric / Campaigns) ────────────────
