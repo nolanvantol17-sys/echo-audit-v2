@@ -433,13 +433,9 @@ def get_dashboard():
             tuple([company_id, STATUS_NO_ANSWER, prior_start, prior_end, *scope_params]),
         )
         last_week_count = _scalar(_row_to_dict(cur.fetchone()), "cnt", 0)
-
-        if last_week_count > 0:
-            delta_pct = round(((this_week_count - last_week_count) / last_week_count) * 100, 1)
-        elif this_week_count > 0:
-            delta_pct = None  # infinite growth from zero — undefined, render as "—"
-        else:
-            delta_pct = 0.0
+        # Week-over-Week % intentionally removed — a percentage on a tiny
+        # denominator produced whiplash figures in a prime stat slot. The
+        # two raw counts below remain as a plain activity pulse.
 
         return jsonify({
             "stat_cards": {
@@ -453,7 +449,6 @@ def get_dashboard():
             "activity": {
                 "this_week": this_week_count,
                 "last_week": last_week_count,
-                "delta_pct": delta_pct,
             },
             "leaderboard":        leaderboard,
             "recent_interactions": recent,

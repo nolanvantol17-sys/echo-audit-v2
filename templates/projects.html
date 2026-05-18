@@ -261,9 +261,6 @@
   .dash-activity .stat-card { padding: 14px 16px; }
   .dash-activity .stat-label { font-size: 0.78rem; }
   .dash-activity .stat-value { font-size: 1.7rem; }
-  .activity-delta.up   { color: var(--success); }
-  .activity-delta.down { color: var(--danger); }
-  .activity-delta.flat { color: var(--muted); }
   @media (max-width: 768px) {
     .dash-activity { grid-template-columns: 1fr; }
     .dash-activity .stat-value { font-size: 1.4rem; }
@@ -329,10 +326,6 @@
   <div class="stat-card">
     <span class="stat-label">Calls Last Week</span>
     <span class="stat-value" id="activity-last-week">—</span>
-  </div>
-  <div class="stat-card">
-    <span class="stat-label">Week-over-Week</span>
-    <span class="stat-value activity-delta" id="activity-delta">—</span>
   </div>
 </div>
 

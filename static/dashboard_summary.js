@@ -193,7 +193,6 @@
     activity = activity || {};
     const thisWeek = activity.this_week == null ? 0 : activity.this_week;
     const lastWeek = activity.last_week == null ? 0 : activity.last_week;
-    const delta    = activity.delta_pct;
 
     const setText = (id, text) => {
       const el = document.getElementById(id);
@@ -201,22 +200,9 @@
     };
     setText("activity-this-week", thisWeek);
     setText("activity-last-week", lastWeek);
-
-    const deltaEl = document.getElementById("activity-delta");
-    if (deltaEl) {
-      let text, cls;
-      if (delta === null || delta === undefined) {
-        text = "—"; cls = "flat";
-      } else if (delta > 0) {
-        text = "↑ " + delta + "%"; cls = "up";
-      } else if (delta < 0) {
-        text = "↓ " + Math.abs(delta) + "%"; cls = "down";
-      } else {
-        text = "→ 0%"; cls = "flat";
-      }
-      deltaEl.textContent = text;
-      deltaEl.className = "stat-value activity-delta " + cls;
-    }
+    // Week-over-Week % removed — a ratio on a tiny denominator was whiplash
+    // noise in a prime stat slot. The two raw counts stay as an activity
+    // pulse. (Backend no longer computes delta_pct.)
     wrap.hidden = false;
   }
 
