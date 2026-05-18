@@ -1275,46 +1275,64 @@ def list_interactions():
     if args.get("include_test") != "1":
         filters.append("i.interaction_is_test = FALSE")
 
-    if args.get("project_id"):
+    # Multi-select filters: the history page sends comma-separated id lists
+    # (location_ids, campaign_ids, caller_user_ids, respondent_ids,
+    # status_ids). Singular forms are still honored for backward-compat with
+    # dashboard-widget deep-links and the project-hub link.
+    def _ids(*names):
+        for nm in names:
+            raw = (args.get(nm) or "").strip()
+            if raw:
+                out = [t.strip() for t in raw.split(",") if t.strip()]
+                if out:
+                    return out
+        return []
+
+    def _in(col, ids):
+        filters.append(f"{col} IN ({','.join(['?'] * len(ids))})")
+        params.extend(ids)
+
+    if args.get("project_id"):                       # project stays single
         filters.append("i.project_id = ?")
         params.append(args["project_id"])
-    if args.get("campaign_id"):
-        filters.append("i.campaign_id = ?")
-        params.append(args["campaign_id"])
-    if args.get("caller_user_id"):
-        filters.append("i.caller_user_id = ?")
-        params.append(args["caller_user_id"])
-    if args.get("respondent_user_id"):
+    camp_ids = _ids("campaign_ids", "campaign_id")
+    if camp_ids:
+        _in("i.campaign_id", camp_ids)
+    caller_ids = _ids("caller_user_ids", "caller_user_id")
+    if caller_ids:
+        _in("i.caller_user_id", caller_ids)
+    if args.get("respondent_user_id"):               # legacy known-user path
         filters.append("i.respondent_user_id = ?")
         params.append(args["respondent_user_id"])
-    if args.get("respondent_id"):
-        # Detected-external-person path (respondents table). This is the
-        # common Secret-Shopping case — respondent_user_id is NULL there,
-        # so the history page's Respondent filter keys on respondent_id.
-        filters.append("i.respondent_id = ?")
-        params.append(args["respondent_id"])
-    if args.get("respondent_unnamed") == "1":
-        # QA bucket: every call where the AI couldn't catch a name.
-        # respondents.respondent_name stores the literal 'Name Not Detected'
-        # in that case. The history Respondent filter collapses all such
-        # respondents into one selectable entry that maps to this flag
-        # (instead of ~30 separate "Name Not Detected" rows in the dropdown).
-        filters.append("TRIM(r.respondent_name) = ?")
-        params.append("Name Not Detected")
+    # Respondent: detected-external-person ids (respondents table — the
+    # common Secret-Shopping case where respondent_user_id is NULL) and the
+    # "Name Not Detected" QA bucket are OR-combined so a user can pick
+    # several named respondents AND/OR the unnamed bucket in one go.
+    resp_ids = _ids("respondent_ids", "respondent_id")
+    resp_unnamed = args.get("respondent_unnamed") == "1"
+    if resp_ids or resp_unnamed:
+        parts = []
+        if resp_ids:
+            parts.append(f"i.respondent_id IN ({','.join(['?'] * len(resp_ids))})")
+            params.extend(resp_ids)
+        if resp_unnamed:
+            parts.append("TRIM(r.respondent_name) = ?")
+            params.append("Name Not Detected")
+        filters.append("(" + " OR ".join(parts) + ")")
     if args.get("from_date"):
         filters.append("i.interaction_date >= ?")
         params.append(args["from_date"])
     if args.get("to_date"):
         filters.append("i.interaction_date <= ?")
         params.append(args["to_date"])
-    if args.get("status_id"):
-        filters.append("i.status_id = ?")
-        params.append(args["status_id"])
-    if args.get("location_id"):
-        # Filter by the per-call stamped location (source of truth) so
-        # all-locations projects surface here too.
-        filters.append("i.interaction_location_id = ?")
-        params.append(args["location_id"])
+    status_ids = _ids("status_ids", "status_id")
+    if status_ids:
+        _in("i.status_id", status_ids)
+    # Filter by the per-call stamped location (source of truth) so
+    # all-locations projects surface here too.
+    loc_ids = _ids("location_ids", "location_id")
+    if loc_ids:
+        _in("i.interaction_location_id", loc_ids)
     if args.get("q"):
         filters.append("LOWER(i.interaction_transcript) LIKE LOWER(?)")
         params.append(f"%{args['q']}%")

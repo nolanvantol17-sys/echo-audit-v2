@@ -97,10 +97,10 @@
       <input id="f-search" type="text" class="field-input" placeholder="Search transcript…">
     </div>
     <div class="field">
-      <label class="field-label" for="f-location">Location</label>
-      <select id="f-location" class="field-select">
-        <option value="">All Locations</option>
-      </select>
+      <label class="field-label">Location</label>
+      <button type="button" id="f-location" class="ea-ms-btn">
+        <span class="ea-ms-label">All Locations</span><span class="ea-ms-caret">▾</span>
+      </button>
     </div>
     <div class="field">
       <label class="field-label" for="f-project">Project</label>
@@ -109,22 +109,22 @@
       </select>
     </div>
     <div class="field">
-      <label class="field-label" for="f-campaign">Campaign</label>
-      <select id="f-campaign" class="field-select" disabled>
-        <option value="">All campaigns</option>
-      </select>
+      <label class="field-label">Campaign</label>
+      <button type="button" id="f-campaign" class="ea-ms-btn">
+        <span class="ea-ms-label">All Campaigns</span><span class="ea-ms-caret">▾</span>
+      </button>
     </div>
     <div class="field">
-      <label class="field-label" for="f-respondent">Respondent</label>
-      <select id="f-respondent" class="field-select">
-        <option value="">All</option>
-      </select>
+      <label class="field-label">Respondent</label>
+      <button type="button" id="f-respondent" class="ea-ms-btn">
+        <span class="ea-ms-label">All Respondents</span><span class="ea-ms-caret">▾</span>
+      </button>
     </div>
     <div class="field">
-      <label class="field-label" for="f-caller">Caller</label>
-      <select id="f-caller" class="field-select">
-        <option value="">All</option>
-      </select>
+      <label class="field-label">Caller</label>
+      <button type="button" id="f-caller" class="ea-ms-btn">
+        <span class="ea-ms-label">All Callers</span><span class="ea-ms-caret">▾</span>
+      </button>
     </div>
     <div class="field">
       <label class="field-label" for="f-from">From</label>
@@ -140,15 +140,10 @@
              class="field-input" placeholder="e.g. 6.5">
     </div>
     <div class="field">
-      <label class="field-label" for="f-status">Status</label>
-      <select id="f-status" class="field-select">
-        <option value="">All</option>
-        <option value="43">Graded</option>
-        <option value="44">No answer</option>
-        <option value="45">Pending</option>
-        <option value="42">Grading</option>
-        <option value="40">Transcribing</option>
-      </select>
+      <label class="field-label">Status</label>
+      <button type="button" id="f-status" class="ea-ms-btn">
+        <span class="ea-ms-label">All Statuses</span><span class="ea-ms-caret">▾</span>
+      </button>
     </div>
     <div class="field" style="display:flex;flex-direction:column;justify-content:flex-end;">
       <label class="field-label" style="visibility:hidden;">Test</label>
@@ -206,6 +201,7 @@
 <script defer src="{{ url_for('static', filename='audio_player.js') }}?v={{ static_v('audio_player.js') }}"></script>
 <script defer src="{{ url_for('static', filename='interaction_view.js') }}?v={{ static_v('interaction_view.js') }}"></script>
 <script defer src="{{ url_for('static', filename='interaction_panel.js') }}?v={{ static_v('interaction_panel.js') }}"></script>
+<script defer src="{{ url_for('static', filename='multiselect.js') }}?v={{ static_v('multiselect.js') }}"></script>
 <script>
 (function () {
   "use strict";
@@ -227,6 +223,10 @@
     callerOpts: new Map(),       // caller_user_id -> caller_name
     respondentOpts: new Map(),   // respondent_id  -> "Name — Property"
     respondentHasUnnamed: false, // sticky once any undetected-name row seen
+    ms: {},                      // EA.MultiSelect handles: location/campaign/
+                                 // respondent/caller/status (Project stays a
+                                 // single <select> — it anchors the campaign
+                                 // cascade).
   };
 
   // Multi-select state. Persisted across renders/filter changes/pagination;
@@ -241,7 +241,23 @@
   const $ = function (s) { return document.querySelector(s); };
 
   // ── Bootstrap ────────────────────────────────────────
+  function setupMultiSelects() {
+    const reload = function () { loadHistory(); };
+    state.ms.location   = EA.MultiSelect.create($("#f-location"),   { allLabel: "All Locations",   onChange: reload });
+    state.ms.campaign   = EA.MultiSelect.create($("#f-campaign"),   { allLabel: "All Campaigns",   onChange: reload });
+    state.ms.respondent = EA.MultiSelect.create($("#f-respondent"), { allLabel: "All Respondents", onChange: reload });
+    state.ms.caller     = EA.MultiSelect.create($("#f-caller"),     { allLabel: "All Callers",     onChange: reload });
+    state.ms.status     = EA.MultiSelect.create($("#f-status"),     { allLabel: "All Statuses",    onChange: reload });
+    // Status is a fixed enum, not derived from rows.
+    state.ms.status.setItems([
+      { id: 43, name: "Graded" },      { id: 44, name: "No answer" },
+      { id: 45, name: "Pending" },     { id: 42, name: "Grading" },
+      { id: 40, name: "Transcribing" },
+    ]);
+  }
+
   async function init() {
+    setupMultiSelects();
     wireFilters();
     wireActionBar();
     refreshExportButtons();   // header button starts disabled (0 selected)
@@ -270,25 +286,33 @@
     // chart's date range / location / campaign / status pre-set so the
     // history view opens scoped to what the user clicked.
     const sp = new URLSearchParams(window.location.search);
-    function hydrate(paramKey, fieldSel) {
+    function hydrateInput(paramKey, fieldSel) {
       const v = sp.get(paramKey);
       if (v === null || v === "") return;
       const el = document.querySelector(fieldSel);
       if (el) el.value = v;
     }
-    hydrate("q",                  "#f-search");
-    hydrate("location_id",        "#f-location");
-    hydrate("from_date",          "#f-from");
-    hydrate("to_date",            "#f-to");
-    hydrate("status_id",          "#f-status");
-    hydrate("respondent_id",      "#f-respondent");
-    hydrate("caller_user_id",     "#f-caller");
-    hydrate("score_max",          "#f-score-max");
-    // campaign_id only hydrates if a project_id was also pre-applied
-    // (campaigns dropdown is populated by the project cascade); otherwise
-    // the value would be ignored anyway and we skip silently.
-    if (sp.get("project_id") && sp.get("campaign_id")) {
-      hydrate("campaign_id", "#f-campaign");
+    // Multi-select hydration: accept the plural id list or the singular
+    // legacy param (dashboard-widget deep-links still pass singular).
+    function hydrateMS(ms, pluralKey, singularKey) {
+      const v = sp.get(pluralKey) || sp.get(singularKey);
+      if (v === null || v === "" || v === undefined) return;
+      const ids = v.split(",").map(function (n) { return parseInt(n, 10); })
+                   .filter(Number.isFinite);
+      if (ids.length) ms.setSelection(ids);
+    }
+    hydrateInput("q",         "#f-search");
+    hydrateInput("from_date", "#f-from");
+    hydrateInput("to_date",   "#f-to");
+    hydrateInput("score_max", "#f-score-max");
+    hydrateMS(state.ms.location,   "location_ids",     "location_id");
+    hydrateMS(state.ms.status,     "status_ids",       "status_id");
+    hydrateMS(state.ms.respondent, "respondent_ids",   "respondent_id");
+    hydrateMS(state.ms.caller,     "caller_user_ids",  "caller_user_id");
+    // Campaign only hydrates if a project was also pre-applied (its options
+    // come from the project cascade); otherwise it'd be pruned anyway.
+    if (sp.get("project_id") && (sp.get("campaign_ids") || sp.get("campaign_id"))) {
+      hydrateMS(state.ms.campaign, "campaign_ids", "campaign_id");
     }
     if (sp.get("include_test") === "1") {
       const inc = document.getElementById("f-include-test");
@@ -301,13 +325,9 @@
   async function loadLocations() {
     try {
       const locations = await EA.fetchJSON("/api/locations");
-      const sel = $("#f-location");
-      (locations || []).forEach(function (l) {
-        const o = document.createElement("option");
-        o.value = l.location_id;
-        o.textContent = l.location_name;
-        sel.appendChild(o);
-      });
+      state.ms.location.setItems((locations || []).map(function (l) {
+        return { id: l.location_id, name: l.location_name };
+      }));
     } catch (_) { /* non-fatal — filter is optional */ }
   }
 
@@ -354,34 +374,21 @@
     // Event listeners pass the Event object as the first arg; treat any
     // non-plain-object (or missing skipLoad) as "load history at the end".
     const skipLoad = !!(opts && opts.skipLoad === true);
-    const projectId   = $("#f-project").value;
-    const campaignSel = $("#f-campaign");
+    const projectId = $("#f-project").value;
     if (!projectId) {
-      campaignSel.innerHTML = '<option value="">All campaigns</option>';
-      campaignSel.disabled  = true;
+      state.ms.campaign.setItems([]);   // no project → no campaign options
       if (!skipLoad) loadHistory();
       return;
     }
-    campaignSel.innerHTML = '<option value="">Loading…</option>';
-    campaignSel.disabled  = true;
     try {
       const camps = await EA.fetchJSON(
         "/api/projects/" + encodeURIComponent(projectId) + "/campaigns"
       );
-      if (!camps || !camps.length) {
-        campaignSel.innerHTML = '<option value="">(no campaigns)</option>';
-        campaignSel.disabled  = true;
-      } else {
-        campaignSel.innerHTML = '<option value="">All campaigns</option>' +
-          camps.map(function (c) {
-            return '<option value="' + c.campaign_id + '">' +
-                   EA.esc(c.campaign_name) + '</option>';
-          }).join("");
-        campaignSel.disabled = false;
-      }
+      state.ms.campaign.setItems((camps || []).map(function (c) {
+        return { id: c.campaign_id, name: c.campaign_name };
+      }));
     } catch (_) {
-      campaignSel.innerHTML = '<option value="">Failed to load</option>';
-      campaignSel.disabled  = true;
+      state.ms.campaign.setItems([]);
     }
     if (!skipLoad) loadHistory();
   }
@@ -392,8 +399,11 @@
 
     // Project gets a dedicated handler (cascades into Campaign before
     // re-fetching). Everything else uses the shared change → loadHistory.
+    // Project cascades into Campaign before re-fetching. The multi-selects
+    // reload via their own onChange. Only the plain inputs/checkbox below
+    // need a change → loadHistory binding.
     $("#f-project").addEventListener("change", onProjectChange);
-    ["#f-location","#f-from","#f-to","#f-score-max","#f-status","#f-respondent","#f-caller","#f-include-test","#f-campaign"]
+    ["#f-from","#f-to","#f-score-max","#f-include-test"]
       .forEach(function (sel) {
         const el = document.querySelector(sel);
         if (el) el.addEventListener("change", loadHistory);
@@ -401,12 +411,12 @@
 
     $("#btn-clear-filters").addEventListener("click", function () {
       ["#f-search","#f-from","#f-to","#f-score-max"].forEach(function (s) { $(s).value = ""; });
-      ["#f-location","#f-project","#f-status","#f-respondent","#f-caller","#f-campaign"].forEach(function (s) { $(s).value = ""; });
-      // Clearing project also resets the campaign dropdown back to its
-      // "(pick a project first)" disabled state.
-      const camp = $("#f-campaign");
-      camp.innerHTML = '<option value="">All campaigns</option>';
-      camp.disabled  = true;
+      $("#f-project").value = "";
+      ["location","campaign","respondent","caller","status"].forEach(function (k) {
+        state.ms[k].reset();
+      });
+      // Project cleared → campaign has no options until one is picked again.
+      state.ms.campaign.setItems([]);
       loadHistory();
     });
 
@@ -427,18 +437,27 @@
   function buildParams() {
     const qs = new URLSearchParams();
     const search = $("#f-search").value.trim();
-    if (search)                 qs.set("q", search);
-    if ($("#f-location").value) qs.set("location_id", $("#f-location").value);
-    if ($("#f-project").value)  qs.set("project_id", $("#f-project").value);
-    if ($("#f-campaign").value) qs.set("campaign_id", $("#f-campaign").value);
-    if ($("#f-from").value)     qs.set("from_date", $("#f-from").value);
-    if ($("#f-to").value)       qs.set("to_date", $("#f-to").value);
-    if ($("#f-status").value)   qs.set("status_id", $("#f-status").value);
-    const rv = $("#f-respondent").value;
-    if (rv === RESP_UNNAMED)  qs.set("respondent_unnamed", "1");
-    else if (rv)              qs.set("respondent_id", rv);
-    if ($("#f-caller").value) qs.set("caller_user_id", $("#f-caller").value);
+    if (search)                qs.set("q", search);
+    if ($("#f-project").value) qs.set("project_id", $("#f-project").value);
+    if ($("#f-from").value)    qs.set("from_date", $("#f-from").value);
+    if ($("#f-to").value)      qs.set("to_date", $("#f-to").value);
     if ($("#f-score-max").value !== "") qs.set("score_max", $("#f-score-max").value);
+
+    const setIds = function (ms, key) {
+      const g = ms.get();
+      if (!g.all && g.ids.length) qs.set(key, g.ids.join(","));
+      return g;
+    };
+    setIds(state.ms.location, "location_ids");
+    setIds(state.ms.campaign, "campaign_ids");
+    setIds(state.ms.caller,   "caller_user_ids");
+    setIds(state.ms.status,   "status_ids");
+    const re = state.ms.respondent.get();
+    if (!re.all && re.ids.length) {
+      const real = re.ids.filter(function (n) { return n !== RESP_UNNAMED_ID; });
+      if (real.length) qs.set("respondent_ids", real.join(","));
+      if (re.ids.indexOf(RESP_UNNAMED_ID) !== -1) qs.set("respondent_unnamed", "1");
+    }
     const incTest = document.getElementById("f-include-test");
     if (incTest && incTest.checked) qs.set("include_test", "1");
     return qs;
@@ -459,53 +478,41 @@
       state.shown = Math.min(PAGE_SIZE, rows.length);
 
       populateRespondentFilter(rows);
-      populateEntityFilter("#f-caller", rows, "caller_user_id", "caller_name", state.callerOpts);
+      populateCallerFilter(rows);
       render();
     } catch (err) {
       EA.showError(wrap, err.message || "Failed to load history");
     }
   }
 
-  // Populate a filter dropdown from a persistent (id -> name) store that
-  // accumulates across loads. Merges the current rows in, never removes —
-  // so filtering by this field (which leaves only matching rows) can't
-  // collapse the dropdown to the single selected option. Used for Caller.
-  function populateEntityFilter(selId, rows, idKey, nameKey, store) {
-    const sel = $(selId);
-    const currentVal = sel.value;
+  // Caller options accumulate in a persistent store across loads and never
+  // shrink, so filtering by caller (which narrows the result set to just
+  // them) can't collapse the option list. setItems() preserves the current
+  // selection and prunes nothing it shouldn't.
+  function populateCallerFilter(rows) {
+    const store = state.callerOpts;   // accumulated: caller_user_id -> name
     rows.forEach(function (r) {
-      if (r[idKey] && r[nameKey] && !store.has(r[idKey])) {
-        store.set(r[idKey], r[nameKey]);
+      if (r.caller_user_id && r.caller_name && !store.has(r.caller_user_id)) {
+        store.set(r.caller_user_id, r.caller_name);
       }
     });
-    sel.innerHTML = '<option value="">All</option>';
-    Array.from(store.entries())
+    const items = Array.from(store.entries())
       .sort(function (a, b) { return String(a[1]).localeCompare(String(b[1])); })
-      .forEach(function (entry) {
-        const o = document.createElement("option");
-        o.value = entry[0];
-        o.textContent = entry[1];
-        sel.appendChild(o);
-      });
-    // Restore prior selection if still valid
-    if (currentVal && store.has(parseInt(currentVal, 10))) sel.value = currentVal;
+      .map(function (e) { return { id: e[0], name: e[1] }; });
+    state.ms.caller.setItems(items);
   }
 
-  // Respondent dropdown — specialised because two display rules apply that
-  // Caller doesn't need:
+  // Respondent options — two display rules Caller doesn't need:
   //   1. Same name at different properties is genuinely different people
   //      (respondent_id is per-property). Append the property so the user
   //      can tell "Jennifer — Bella Terra" from "Jennifer — Metro 31".
   //   2. Calls where the AI couldn't catch a name are stored as the literal
-  //      "Name Not Detected" — collapse the ~30 of them into one selectable
-  //      QA entry (value "__unnamed__") instead of flooding the dropdown.
-  // Keys on respondent_id (the respondents-table identity); NOT
-  // respondent_user_id, which is null for Secret-Shopping respondents and
-  // previously left this dropdown empty.
-  const RESP_UNNAMED = "__unnamed__";
+  //      "Name Not Detected" — collapse them into one selectable QA entry
+  //      (sentinel id -1, mapped to ?respondent_unnamed=1 in buildParams).
+  // Keys on respondent_id (the respondents-table identity), accumulated and
+  // never shrunk (same anti-collapse contract as Caller).
+  const RESP_UNNAMED_ID = -1;
   function populateRespondentFilter(rows) {
-    const sel = $("#f-respondent");
-    const prev = sel.value;
     const named = state.respondentOpts;   // accumulated: respondent_id -> label
     rows.forEach(function (r) {
       const nm = (r.respondent_name || "").trim();
@@ -516,24 +523,13 @@
         named.set(r.respondent_id, loc ? nm + " — " + loc : nm);
       }
     });
-    sel.innerHTML = '<option value="">All</option>';
-    Array.from(named.entries())
+    const items = Array.from(named.entries())
       .sort(function (a, b) { return a[1].localeCompare(b[1]); })
-      .forEach(function (entry) {
-        const o = document.createElement("option");
-        o.value = entry[0];
-        o.textContent = entry[1];
-        sel.appendChild(o);
-      });
+      .map(function (e) { return { id: e[0], name: e[1] }; });
     if (state.respondentHasUnnamed) {
-      const o = document.createElement("option");
-      o.value = RESP_UNNAMED;
-      o.textContent = "Name Not Detected (no name captured)";
-      sel.appendChild(o);
+      items.push({ id: RESP_UNNAMED_ID, name: "Name Not Detected (no name captured)" });
     }
-    // Restore prior selection if still valid
-    if (prev === RESP_UNNAMED && state.respondentHasUnnamed) sel.value = RESP_UNNAMED;
-    else if (prev && named.has(parseInt(prev, 10))) sel.value = prev;
+    state.ms.respondent.setItems(items);
   }
 
   // ── Render ──────────────────────────────────────────
