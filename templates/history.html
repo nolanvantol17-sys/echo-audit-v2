@@ -220,6 +220,13 @@
     canDelete: {{ 'true' if user_role in ('admin','super_admin') else 'false' }},
     canEditTestFlag: {{ 'true' if user_role in ('admin','super_admin') else 'false' }},
     debounceId: null,
+    // Filter-dropdown option stores. Accumulated across loads and never
+    // shrunk, so selecting a caller/respondent (which narrows the result
+    // set to just them) doesn't collapse the dropdown to that one option.
+    // The first unfiltered load returns every row, so these fill fully.
+    callerOpts: new Map(),       // caller_user_id -> caller_name
+    respondentOpts: new Map(),   // respondent_id  -> "Name — Property"
+    respondentHasUnnamed: false, // sticky once any undetected-name row seen
   };
 
   // Multi-select state. Persisted across renders/filter changes/pagination;
@@ -452,27 +459,27 @@
       state.shown = Math.min(PAGE_SIZE, rows.length);
 
       populateRespondentFilter(rows);
-      populateEntityFilter("#f-caller", rows, "caller_user_id", "caller_name");
+      populateEntityFilter("#f-caller", rows, "caller_user_id", "caller_name", state.callerOpts);
       render();
     } catch (err) {
       EA.showError(wrap, err.message || "Failed to load history");
     }
   }
 
-  // Populate a filter dropdown from the unique (id, name) pairs present in
-  // the current result set. Used for Caller. Preserves the current
-  // selection if it's still present after the refresh.
-  function populateEntityFilter(selId, rows, idKey, nameKey) {
+  // Populate a filter dropdown from a persistent (id -> name) store that
+  // accumulates across loads. Merges the current rows in, never removes —
+  // so filtering by this field (which leaves only matching rows) can't
+  // collapse the dropdown to the single selected option. Used for Caller.
+  function populateEntityFilter(selId, rows, idKey, nameKey, store) {
     const sel = $(selId);
     const currentVal = sel.value;
-    const seen = new Map();
     rows.forEach(function (r) {
-      if (r[idKey] && r[nameKey] && !seen.has(r[idKey])) {
-        seen.set(r[idKey], r[nameKey]);
+      if (r[idKey] && r[nameKey] && !store.has(r[idKey])) {
+        store.set(r[idKey], r[nameKey]);
       }
     });
     sel.innerHTML = '<option value="">All</option>';
-    Array.from(seen.entries())
+    Array.from(store.entries())
       .sort(function (a, b) { return String(a[1]).localeCompare(String(b[1])); })
       .forEach(function (entry) {
         const o = document.createElement("option");
@@ -481,7 +488,7 @@
         sel.appendChild(o);
       });
     // Restore prior selection if still valid
-    if (currentVal && seen.has(parseInt(currentVal, 10))) sel.value = currentVal;
+    if (currentVal && store.has(parseInt(currentVal, 10))) sel.value = currentVal;
   }
 
   // Respondent dropdown — specialised because two display rules apply that
@@ -499,12 +506,11 @@
   function populateRespondentFilter(rows) {
     const sel = $("#f-respondent");
     const prev = sel.value;
-    const named = new Map();           // respondent_id -> "Name — Property"
-    let hasUnnamed = false;
+    const named = state.respondentOpts;   // accumulated: respondent_id -> label
     rows.forEach(function (r) {
       const nm = (r.respondent_name || "").trim();
       if (!nm) return;
-      if (nm === "Name Not Detected") { hasUnnamed = true; return; }
+      if (nm === "Name Not Detected") { state.respondentHasUnnamed = true; return; }
       if (r.respondent_id && !named.has(r.respondent_id)) {
         const loc = (r.location_name || "").trim();
         named.set(r.respondent_id, loc ? nm + " — " + loc : nm);
@@ -519,14 +525,14 @@
         o.textContent = entry[1];
         sel.appendChild(o);
       });
-    if (hasUnnamed) {
+    if (state.respondentHasUnnamed) {
       const o = document.createElement("option");
       o.value = RESP_UNNAMED;
       o.textContent = "Name Not Detected (no name captured)";
       sel.appendChild(o);
     }
     // Restore prior selection if still valid
-    if (prev === RESP_UNNAMED && hasUnnamed) sel.value = RESP_UNNAMED;
+    if (prev === RESP_UNNAMED && state.respondentHasUnnamed) sel.value = RESP_UNNAMED;
     else if (prev && named.has(parseInt(prev, 10))) sel.value = prev;
   }
 
