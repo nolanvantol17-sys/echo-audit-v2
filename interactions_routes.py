@@ -1293,6 +1293,14 @@ def list_interactions():
         # so the history page's Respondent filter keys on respondent_id.
         filters.append("i.respondent_id = ?")
         params.append(args["respondent_id"])
+    if args.get("respondent_unnamed") == "1":
+        # QA bucket: every call where the AI couldn't catch a name.
+        # respondents.respondent_name stores the literal 'Name Not Detected'
+        # in that case. The history Respondent filter collapses all such
+        # respondents into one selectable entry that maps to this flag
+        # (instead of ~30 separate "Name Not Detected" rows in the dropdown).
+        filters.append("TRIM(r.respondent_name) = ?")
+        params.append("Name Not Detected")
     if args.get("from_date"):
         filters.append("i.interaction_date >= ?")
         params.append(args["from_date"])
