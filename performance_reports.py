@@ -73,6 +73,51 @@ def _rows(cur):
     return [_row_to_dict(r) for r in cur.fetchall()]
 
 
+# Canonical "counts toward a respondent's score" filter. IDENTICAL to the
+# Top Callers leaderboard (dashboard_routes.py) so the Performance Report
+# score ALWAYS equals the leaderboard score — single source of truth.
+#
+# The displayed score/count is DERIVED AT RENDER TIME from this, never read
+# from the stored pr_average_score/pr_call_count snapshot. The snapshot froze
+# at the last successful incremental AI update and never reflected later
+# regrades / soft-deletes / test-flags / respondent re-links — that staleness
+# was the score-mismatch bug. Deriving live self-heals with no backfill, the
+# same contract already used for the no-answer counts in the list view.
+_PR_SCORE_FILTER = (
+    "interaction_deleted_at IS NULL "
+    "AND interaction_is_test = FALSE "
+    "AND status_id <> 44 "                       # 44 = no-answer
+    "AND interaction_overall_score IS NOT NULL"
+)
+
+
+def _live_scores_by_key(conn, key_col, ids):
+    """{key: (avg_rounded_1, count)} over the canonical scored set.
+
+    key_col is 'respondent_id' (detected-respondent reports) or
+    'respondent_user_id' (known-user reports). Empty ids → {}.
+    """
+    ids = [i for i in (ids or []) if i is not None]
+    if not ids:
+        return {}
+    ph = ",".join(["?"] * len(ids))
+    cur = conn.execute(
+        q(f"""SELECT {key_col} AS k,
+                     AVG(interaction_overall_score) AS a,
+                     COUNT(*) AS n
+                FROM interactions
+               WHERE {key_col} IN ({ph})
+                 AND {_PR_SCORE_FILTER}
+               GROUP BY {key_col}"""),
+        list(ids),
+    )
+    out = {}
+    for r in _rows(cur):
+        a = r.get("a")
+        out[r["k"]] = (round(float(a), 1) if a is not None else None, r["n"])
+    return out
+
+
 # ═══════════════════════════════════════════════════════════════
 # GET /api/performance-reports   (list, grouped by location)
 # ═══════════════════════════════════════════════════════════════
@@ -225,6 +270,26 @@ def list_performance_reports():
         for r in rows:
             r["location_no_answer_count"] = no_answers_by_loc.get(r.get("location_id"), 0)
 
+        # Live-derive the score + call count (single source of truth ==
+        # Top Callers). Overwrites the stale stored snapshot. Two batched
+        # queries — one per subject keying — same render-time pattern as the
+        # no-answer counts above.
+        resp_live = _live_scores_by_key(
+            conn, "respondent_id",
+            {r["respondent_id"] for r in rows if r.get("respondent_id")},
+        )
+        user_live = _live_scores_by_key(
+            conn, "respondent_user_id",
+            {r["respondent_user_id"] for r in rows if r.get("respondent_user_id")},
+        )
+        for r in rows:
+            if r.get("respondent_id"):
+                avg, n = resp_live.get(r["respondent_id"], (None, 0))
+            else:
+                avg, n = user_live.get(r.get("respondent_user_id"), (None, 0))
+            r["pr_average_score"] = avg
+            r["pr_call_count"]    = n
+
         # Group the flat list into {location_name: [reports]}
         grouped = {}
         for r in rows:
@@ -281,10 +346,23 @@ def get_performance_report(performance_report_id):
                 except Exception:
                     pass
 
-        # Fetch summary of processed interactions for context in the UI.
-        ids = row.get("pr_processed_interaction_ids") or []
-        if isinstance(ids, list) and ids:
-            placeholders = ",".join(["?"] * len(ids))
+        # Live-derive score + count + the calls behind them, keyed by the
+        # subject — NOT the frozen pr_processed_interaction_ids. This makes
+        # the header score, the call count, the date range and the calls
+        # table all mutually consistent AND identical to Top Callers, and
+        # self-heal on regrade / soft-delete / test-flag / re-link.
+        # pr_data (the AI narrative) stays cached/incremental as designed.
+        if row.get("respondent_id"):
+            key_col, key_val = "respondent_id", row["respondent_id"]
+        else:
+            key_col, key_val = "respondent_user_id", row.get("subject_user_id")
+
+        live = _live_scores_by_key(conn, key_col, [key_val])
+        avg, n = live.get(key_val, (None, 0))
+        row["pr_average_score"] = avg
+        row["pr_call_count"]    = n
+
+        if key_val is not None:
             cur = conn.execute(
                 q(f"""SELECT interaction_id, interaction_date,
                              interaction_call_start_time,
@@ -294,11 +372,10 @@ def get_performance_report(performance_report_id):
                              interaction_strengths, interaction_weaknesses,
                              interaction_overall_assessment
                       FROM interactions
-                      WHERE interaction_id IN ({placeholders})
-                        AND interaction_deleted_at IS NULL
-                        AND interaction_is_test = FALSE
+                      WHERE {key_col} = ?
+                        AND {_PR_SCORE_FILTER}
                       ORDER BY interaction_date DESC, interaction_id DESC"""),
-                ids,
+                (key_val,),
             )
             row["interactions"] = _rows(cur)
         else:
