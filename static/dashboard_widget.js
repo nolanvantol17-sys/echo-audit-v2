@@ -691,38 +691,48 @@
         const company = (typeof t.company === "number" && isFinite(t.company)) ? t.company : null;
 
         ctx.save();
-        ctx.font = "11px Geist, Inter, sans-serif";
-        ctx.lineWidth = 1;
+        ctx.font = "600 11px Geist, Inter, sans-serif";
+        ctx.lineWidth = 2;
+
+        // Draw the value label on a translucent backing pill so it stays
+        // legible where the reference line crosses the chart's fill/data.
+        function drawLabel(text, x, y, align, lineColor) {
+          const padX = 5, padY = 3;
+          const w = ctx.measureText(text).width;
+          const bx = (align === "right") ? x - w - padX : x - padX;
+          ctx.fillStyle = "rgba(255,255,255,0.82)";
+          ctx.fillRect(bx, y - 11 - padY, w + padX * 2, 11 + padY * 2);
+          ctx.fillStyle = lineColor;
+          ctx.textAlign = align;
+          ctx.fillText(text, x, y - 4);
+        }
 
         if (company !== null) {
           const yC = scales.y.getPixelForValue(company);
-          ctx.strokeStyle = "rgba(156,145,131,0.55)";
-          ctx.setLineDash([2, 4]);
+          ctx.strokeStyle = "rgba(73,66,57,0.85)";
+          ctx.setLineDash([7, 4]);
           ctx.beginPath();
           ctx.moveTo(chartArea.left, yC);
           ctx.lineTo(chartArea.right, yC);
           ctx.stroke();
-          ctx.fillStyle = "rgba(156,145,131,0.95)";
-          ctx.textAlign = "left";
-          ctx.fillText("Company avg " + company.toFixed(2),
-                       chartArea.left + 6, yC - 4);
+          ctx.setLineDash([]);
+          drawLabel("Company avg " + company.toFixed(2),
+                    chartArea.left + 6, yC, "left", "rgba(73,66,57,1)");
         }
 
         if (view !== null) {
           const yV = scales.y.getPixelForValue(view);
-          ctx.strokeStyle = "rgba(74,128,118,0.85)";
-          ctx.setLineDash([5, 4]);
+          ctx.strokeStyle = "rgba(38,102,90,0.95)";
+          ctx.setLineDash([7, 4]);
           ctx.beginPath();
           ctx.moveTo(chartArea.left, yV);
           ctx.lineTo(chartArea.right, yV);
           ctx.stroke();
-          ctx.fillStyle = "rgba(74,128,118,1)";
-          ctx.textAlign = "right";
-          ctx.fillText("View avg " + view.toFixed(2),
-                       chartArea.right - 6, yV - 4);
+          ctx.setLineDash([]);
+          drawLabel("View avg " + view.toFixed(2),
+                    chartArea.right - 6, yV, "right", "rgba(38,102,90,1)");
         }
 
-        ctx.setLineDash([]);
         ctx.restore();
       },
     };
