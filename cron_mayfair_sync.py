@@ -71,21 +71,35 @@ def _alert(title: str, lines: list[str]) -> None:
     """Post a short message to the Teams incoming webhook. Never raises
     — a broken webhook must not also break the cron. Logs always, so
     there is a record even with no webhook configured."""
-    body = f"{title}\n" + "\n".join(f"  • {l}" for l in lines)
-    logger.warning("ALERT — %s", body.replace("\n", " | "))
+    logger.warning(
+        "ALERT — %s | %s", title, " | ".join(lines))
     url = (os.getenv("MS_TEAMS_WEBHOOK_URL") or "").strip()
     if not url:
         logger.warning("MS_TEAMS_WEBHOOK_URL unset — alert logged only.")
         return
     try:
-        # Simple MessageCard — renders in classic Teams connectors.
+        # Power Automate "Workflows" webhook (the current Microsoft path;
+        # classic O365 MessageCard connectors are deprecated). It expects
+        # a message envelope wrapping an Adaptive Card.
         requests.post(url, timeout=10, json={
-            "@type": "MessageCard",
-            "@context": "https://schema.org/extensions",
-            "summary": title,
-            "themeColor": "D98A00",
-            "title": f"Echo Audit — {title}",
-            "text": "  \n".join(f"- {l}" for l in lines),
+            "type": "message",
+            "attachments": [{
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "contentUrl": None,
+                "content": {
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "type": "AdaptiveCard",
+                    "version": "1.4",
+                    "body": [
+                        {"type": "TextBlock", "size": "Medium",
+                         "weight": "Bolder", "wrap": True,
+                         "text": f"Echo Audit — {title}"},
+                    ] + [
+                        {"type": "TextBlock", "wrap": True, "text": f"• {l}"}
+                        for l in lines
+                    ],
+                },
+            }],
         })
     except requests.RequestException as exc:
         logger.error("Teams webhook post failed: %s", exc)
