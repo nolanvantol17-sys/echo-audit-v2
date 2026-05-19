@@ -150,17 +150,33 @@ Read-only probe against both live endpoints using the `.env` credentials
   39 properties have no RM in the feed: "no-RM → what permission?" is now a
   data-backed product question for Carlos.
 
-## 7. Open questions
+## 7. Open questions — RESOLVED by product owner 2026-05-19
 
-| # | Question | Owner |
+| # | Question | Resolution |
 |---|---|---|
-| ~~Q1~~ | ~~Base URL / auth / env var?~~ **RESOLVED** — `MPL_API_BASE`/`MPL_API_KEY` in `.env`, `X-Api-Key` header, HTTP 200. | ✅ closed |
-| Q2 | Do we even persist the raw role-bucket columns in v1, or omit until the permission model is designed? | Carlos |
-| Q3 | Feed property with no matching `locations` row — auto-create, or report-only for human add? (Never-wipe says don't auto-delete; auto-create is the open half.) | Carlos |
-| Q4 | Disposition of Echo Audit rows the feed stops mentioning — status flag? which status? | Carlos |
-| Q5 | `active-users` Email vs `users.user_email` (UNIQUE + SSO login key): if the feed email differs from the SSO email, which wins? Source has 0 dup emails but 2 null emails. Never silently break a login. | Carlos |
-| ~~Q6~~ | ~~Pagination? Volume?~~ **RESOLVED** — no pagination, full-dump arrays, 123 properties / 464 users. | ✅ closed |
-| Q7 | LongName vs ShortName for `location_name` display? | Carlos |
+| ~~Q1~~ | Base URL / auth / env var? | ✅ `MPL_API_BASE`/`MPL_API_KEY` in `.env`, `X-Api-Key` header, HTTP 200. |
+| Q2 | Persist raw role-bucket columns in v1? | **Permission model deferred — build later.** Storage of raw buckets = remaining sub-decision (see §9 C1); leaning store-raw (cheap, avoids re-pulling history). Permission *logic* stays Carlos-blocked per [[feedback-access-levels-deferred-pending-carlos]]. |
+| Q3 | Feed property not in `locations` — auto-create or report? | ✅ **Auto-create**, flagged active. |
+| Q4 | Echo Audit row the feed stops mentioning — disposition? | ✅ **Properties: mark inactive, never delete.** Users: same intent, BUT must scope to feed-origin users only — see §9 C2 (Echo-Audit-native accounts like the AI Caller bot are never in the feed and must NOT be deactivated). |
+| Q5 | Feed Email vs `users.user_email` (= SSO login)? | ✅ **Existing login email is authoritative. Never overwrite it from the feed.** On mismatch: keep the login email, log for human review. Never break a sign-in. |
+| ~~Q6~~ | Pagination? Volume? | ✅ No pagination, full-dump arrays, 123 properties / 464 users. |
+| Q7 | LongName vs ShortName for display? | ✅ **YardiCode is the only unique identifier.** `LongName` → `location_name` (primary display). ShortName = optional compact label for tight UI spots only; never an identifier. |
+
+## 9. Remaining build sub-decisions (small, not blocking the spec)
+
+- **C1 — Store raw role buckets now?** Permission *logic* is deferred. The
+  open half: do we still persist the `*UserIds` CSV columns now (so history
+  exists when the permission model is built later) or omit them until then?
+  Recommendation: store raw (storage is trivial, re-deriving past role
+  membership later is impossible). Awaiting confirm.
+- **C2 — User-side inactivation scope (correctness landmine).** "Mark
+  inactive if absent from feed" is correct for *Mayfair-sourced* users only.
+  Echo Audit has native accounts that will NEVER appear in the feed — the
+  **AI Caller bot**, super-admins, any non-Mayfair user. Blanket
+  inactivation would deactivate the AI Caller bot and break automated
+  calling. **Resolution to confirm:** user-absence inactivation applies
+  ONLY to users with a `mayfair_user_id` (feed-origin); native accounts are
+  untouched. See [[followup-ai-caller-user-convention]].
 
 ## 8. Recommended sequence
 
@@ -178,6 +194,7 @@ Read-only probe against both live endpoints using the `.env` credentials
 5. **Permission mapping** — separate workstream, only after Carlos resolves
    §6. Not in this scope.
 
-Q1/Q6 (can we reach the API) + the validate gate are now **passed**. Steps
-3–4 are technically unblocked. Step 5 still waits on Carlos §6. Steps 3–4
-should still get a Carlos nod on Q3/Q4/Q7 first to avoid rework.
+Q1/Q6 + validate gate **passed**. Q2–Q5/Q7 **resolved by product owner
+2026-05-19** (§7). Steps 3–4 are now fully unblocked once §9 C1/C2 are
+confirmed (both have safe recommended defaults). Step 5 (permission model)
+remains a deferred separate workstream.
