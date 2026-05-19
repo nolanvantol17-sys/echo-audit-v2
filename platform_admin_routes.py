@@ -744,8 +744,18 @@ def trigger_mayfair_sync():
     except (TypeError, ValueError):
         return _err("company_id is required (integer)", 400)
 
+    # dry_run defaults to True: a request that omits it gets a no-write
+    # PREVIEW, never a silent commit. Only an explicit false commits.
+    dry_run = body.get("dry_run", True)
+    if isinstance(dry_run, str):
+        dry_run = dry_run.strip().lower() not in ("false", "0", "no", "")
+    else:
+        dry_run = bool(dry_run)
+
     try:
-        summary = run_sync(company_id, triggered_by_user_id=current_user.user_id)
+        summary = run_sync(company_id,
+                           triggered_by_user_id=current_user.user_id,
+                           dry_run=dry_run)
     except Exception as exc:
         logger.exception("[mayfair_sync] run failed")
         return _err(f"sync failed: {exc}", 500)
@@ -771,8 +781,12 @@ def get_mayfair_last_run():
         return _err("company_id query param is required", 400)
     row = get_last_run(company_id)
     if row:
-        unmatched = row.get("msr_unmatched") or []
-        if unmatched:
+        # Legacy fuzzy-sync rows stored msr_unmatched as a list of
+        # {location_id,...}; the new MPL sync stores a rich detail dict
+        # (passed through untouched). Only the list shape gets the
+        # since-linked filter below.
+        unmatched = row.get("msr_unmatched")
+        if isinstance(unmatched, list) and unmatched:
             loc_ids = [u.get("location_id") for u in unmatched
                        if u.get("location_id") is not None]
             if loc_ids:
