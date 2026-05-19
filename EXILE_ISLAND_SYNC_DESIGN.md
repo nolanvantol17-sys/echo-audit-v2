@@ -76,6 +76,17 @@ ALTER TABLE locations ADD COLUMN location_yardi_code TEXT;
 CREATE UNIQUE INDEX uq_locations_yardi_code
     ON locations (location_yardi_code)
     WHERE location_yardi_code IS NOT NULL;
+
+-- C1: raw role buckets, stored only (no permission logic — §9 C1)
+ALTER TABLE locations ADD COLUMN location_pm_user_ids TEXT;
+ALTER TABLE locations ADD COLUMN location_rm_user_ids TEXT;
+ALTER TABLE locations ADD COLUMN location_compliance_user_ids TEXT;
+ALTER TABLE locations ADD COLUMN location_onsite_user_ids TEXT;
+ALTER TABLE locations ADD COLUMN location_all_assigned_user_ids TEXT;
+
+-- C2/Q4: soft-inactivate marker for feed-origin rows absent from a pull
+ALTER TABLE locations ADD COLUMN location_inactive_since TIMESTAMP;
+ALTER TABLE users ADD COLUMN user_inactive_since TIMESTAMP;
 ```
 
 One-time backfill: match existing `locations` to feed properties to seed
@@ -84,7 +95,8 @@ acceptable** — a single supervised migration pass, output a review report of
 matches/misses for human sign-off, NOT an ongoing behavior. After backfill,
 all syncing is YardiCode-keyed.
 
-No `users` schema change (reuses `mayfair_user_id`).
+`users` reuses `mayfair_user_id` as the join key; the only `users` add is
+`user_inactive_since` (C2 soft-inactivation, scoped to feed-origin users).
 
 ## 5. Sync algorithm (v1)
 
@@ -162,21 +174,28 @@ Read-only probe against both live endpoints using the `.env` credentials
 | ~~Q6~~ | Pagination? Volume? | ✅ No pagination, full-dump arrays, 123 properties / 464 users. |
 | Q7 | LongName vs ShortName for display? | ✅ **YardiCode is the only unique identifier.** `LongName` → `location_name` (primary display). ShortName = optional compact label for tight UI spots only; never an identifier. |
 
-## 9. Remaining build sub-decisions (small, not blocking the spec)
+## 9. Build sub-decisions — RESOLVED 2026-05-19
 
-- **C1 — Store raw role buckets now?** Permission *logic* is deferred. The
-  open half: do we still persist the `*UserIds` CSV columns now (so history
-  exists when the permission model is built later) or omit them until then?
-  Recommendation: store raw (storage is trivial, re-deriving past role
-  membership later is impossible). Awaiting confirm.
-- **C2 — User-side inactivation scope (correctness landmine).** "Mark
-  inactive if absent from feed" is correct for *Mayfair-sourced* users only.
-  Echo Audit has native accounts that will NEVER appear in the feed — the
-  **AI Caller bot**, super-admins, any non-Mayfair user. Blanket
-  inactivation would deactivate the AI Caller bot and break automated
-  calling. **Resolution to confirm:** user-absence inactivation applies
-  ONLY to users with a `mayfair_user_id` (feed-origin); native accounts are
-  untouched. See [[followup-ai-caller-user-convention]].
+- **C1 — Store raw role buckets now? → YES.** Persist the `*UserIds` CSV
+  columns from day one (raw storage only; no permission logic). Storage is
+  trivial and past role membership is impossible to reconstruct later.
+  Schema delta: add `location_pm_user_ids`, `location_rm_user_ids`,
+  `location_compliance_user_ids`, `location_onsite_user_ids`,
+  `location_all_assigned_user_ids` (TEXT, raw CSV as delivered) to §4's
+  migration. NOT wired to any access model — inert until the deferred
+  permission workstream.
+- **C2 — User-side inactivation scope → feed-origin users ONLY.**
+  Auto-inactivation on feed-absence applies **only to users with a
+  non-NULL `mayfair_user_id`** (came from the feed). Echo-Audit-native
+  accounts — the **AI Caller bot** (see [[followup-ai-caller-user-convention]]),
+  super-admins, any non-Mayfair account — are explicitly excluded and never
+  touched by the sync. This is a hard guard in the sync's user pass, not a
+  nice-to-have: blanket inactivation would deactivate the AI Caller bot and
+  break automated calling.
+
+**Spec status: fully pinned. No open product or build questions remain.**
+Steps 3–4 (schema migration → property+user sync) are ready to build.
+Step 5 (permission model) remains a deferred separate workstream.
 
 ## 8. Recommended sequence
 
