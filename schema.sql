@@ -222,6 +222,19 @@ CREATE TABLE locations (
     mayfair_property_id          INTEGER,
     mayfair_rm_user_id           INTEGER,
     locations_mayfair_synced_at  TIMESTAMPTZ,
+    -- Exile Island / MPL bulk feed (property-directory). location_yardi_code
+    -- is the stable join key (YardiCode); the *_user_ids columns store the
+    -- raw role-bucket CSVs as delivered (NO permission logic wired — that is
+    -- a deferred separate workstream). location_inactive_since is set by the
+    -- sync when a feed-origin property stops appearing (never deleted).
+    -- See EXILE_ISLAND_SYNC_DESIGN.md.
+    location_yardi_code             TEXT,
+    location_pm_user_ids            TEXT,
+    location_rm_user_ids            TEXT,
+    location_compliance_user_ids    TEXT,
+    location_onsite_user_ids        TEXT,
+    location_all_assigned_user_ids  TEXT,
+    location_inactive_since         TIMESTAMP,
     location_deleted_at      TIMESTAMPTZ,
     location_created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     location_updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -238,6 +251,9 @@ CREATE UNIQUE INDEX uq_locations_mayfair_property_id
 CREATE INDEX idx_locations_mayfair_rm_user_id
     ON locations (mayfair_rm_user_id)
     WHERE mayfair_rm_user_id IS NOT NULL AND location_deleted_at IS NULL;
+CREATE UNIQUE INDEX uq_locations_yardi_code
+    ON locations (location_yardi_code)
+    WHERE location_yardi_code IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION set_location_updated_at() RETURNS TRIGGER AS $$
 BEGIN NEW.location_updated_at = NOW(); RETURN NEW; END;
@@ -326,6 +342,11 @@ CREATE TABLE users (
     -- matches a Mayfair RM email. Permission filtering checks this column
     -- to decide whether to scope a manager's data view to their properties.
     mayfair_user_id            INTEGER,
+    -- Exile Island / MPL active-users feed. Set by the sync when a
+    -- feed-origin user (mayfair_user_id NOT NULL) stops appearing in the
+    -- feed. Echo-Audit-native accounts (AI Caller bot, super-admins) are
+    -- never feed-origin and are never touched. See EXILE_ISLAND_SYNC_DESIGN.md.
+    user_inactive_since        TIMESTAMP,
     user_deleted_at            TIMESTAMPTZ,
     user_created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     user_updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()

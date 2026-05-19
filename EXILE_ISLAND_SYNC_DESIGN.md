@@ -205,15 +205,39 @@ Step 5 (permission model) remains a deferred separate workstream.
 2. ~~**Validate gate**~~ — **DONE 2026-05-19** (see §6b). Shapes/volume/
    pagination confirmed against the pasted models; all expected fields
    present, no surprises.
-3. **Schema migration:** add `location_yardi_code` + supervised backfill
-   with a human-reviewed match report. *(Unblocked — can start.)*
+3. ~~**Schema migration + supervised backfill**~~ — **DONE 2026-05-19**
+   (see §10). Schema columns added, 115/116 locations YardiCode-seeded,
+   snapshot-first + invariant-gated. `schema.sql` updated to match.
 4. **Build the property+user sync** (§5), snapshot-first, behind the
    existing `mayfair_sync_runs` reporting. Retire the fuzzy `/managers`
-   path + re-link UI.
-5. **Permission mapping** — separate workstream, only after Carlos resolves
-   §6. Not in this scope.
+   path + re-link UI. *(Next — unblocked.)*
+5. **Permission mapping** — separate workstream, only after the deferred
+   permission model is designed. Not in this scope.
 
-Q1/Q6 + validate gate **passed**. Q2–Q5/Q7 **resolved by product owner
-2026-05-19** (§7). Steps 3–4 are now fully unblocked once §9 C1/C2 are
-confirmed (both have safe recommended defaults). Step 5 (permission model)
-remains a deferred separate workstream.
+Q1/Q6 + validate gate **passed**. Q2–Q5/Q7 + C1/C2 **resolved 2026-05-19**.
+Step 3 **shipped**. Step 4 (the sync itself) is the next build. Step 5
+(permission model) remains a deferred separate workstream.
+
+## 10. Step 3 — shipped 2026-05-19
+
+Migration ran in-container, single atomic transaction, snapshot-first.
+
+- **Schema added** (additive, nullable, reversible): `locations` +
+  `location_yardi_code` (TEXT) with partial-unique index
+  `uq_locations_yardi_code`; raw role buckets `location_pm_user_ids`,
+  `location_rm_user_ids`, `location_compliance_user_ids`,
+  `location_onsite_user_ids`, `location_all_assigned_user_ids` (TEXT,
+  unpopulated — the step-4 sync fills them); `location_inactive_since`
+  (TIMESTAMP). `users` + `user_inactive_since` (TIMESTAMP). `schema.sql`
+  updated to match.
+- **Backfill:** 116 Mayfair (company 25) locations. 114 seeded by exact
+  `mayfair_property_id == feed PropertyId`; loc 74 (Weslaco Hills) by
+  approved 100%-exact-name match → YardiCode `134`. **115 seeded**, all
+  distinct. loc 33 (Huntsville Summit — no feed match) left NULL, flagged
+  for separate review. 9 feed properties match no location = future Q3
+  auto-create candidates (step 4).
+- **Safety:** backup table `backup_locations_yardi_backfill_20260519`
+  (full pre-image of `locations`). 7 invariants verified before commit
+  (rows_updated==115, seeded==115, all-distinct, loc33 NULL, loc74='134',
+  locations & users rowcounts unchanged). Commit only on all-pass.
+- **Drop the backup on/after 2026-06-18** (30-day retention).
