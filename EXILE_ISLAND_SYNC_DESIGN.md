@@ -321,6 +321,39 @@ local `.env`, NOT Railway. The first Preview cannot run until the two
 MPL vars are added to Railway. After that: Preview → human review
 (esp. loc 33, the email mismatches, the ~447 feed-only users) → Apply.
 
+## 12. Daily cron — scoped + signed off 2026-05-19
+
+No scheduler or alerting exists in the app today; the cron brings both.
+User decisions (AskUserQuestion, all recommended):
+
+- **Sanity gate:** the cron runs a **dry-run first**, inspects the plan,
+  and only commits if the delta is within safe thresholds. If
+  `properties_inactivated`, `properties_created`, or `users_inactivated`
+  exceed thresholds, it does **NOT** write — it holds (preview only),
+  logs, and alerts a human to review + Apply manually. Guards against a
+  bad feed day silently inactivating properties (invariants prove
+  structural safety, not delta sanity).
+- **Alerting:** Microsoft Teams incoming webhook
+  (`MS_TEAMS_WEBHOOK_URL` env var, user-created, added in Railway like
+  the MPL keys). Posts on **failure / hold / large-change only** — no
+  message on a clean normal run (avoid noise). Log-only fallback if the
+  var is unset.
+- **Schedule:** ~5 AM Central daily (`0 10 * * *` UTC ≈ 5 AM CDT /
+  4 AM CST — accept ±1 h DST drift; trivially changed in Railway).
+- **Defaults (no question, sensible):** auto-prune backup snapshot
+  tables older than 14 days (a daily Apply makes 2/day forever
+  otherwise); Mayfair-only (`company_id = 25`); multi-tenant later.
+
+**Mechanism:** a separate Railway **cron service** in the same project,
+same repo, start command `python cron_mayfair_sync.py`, cron schedule
+`0 10 * * *`. Needs the same env as web (`DATABASE_URL`, `MPL_API_BASE`,
+`MPL_API_KEY`, + `MS_TEAMS_WEBHOOK_URL`). New file `cron_mayfair_sync.py`
+reuses the tested `run_sync` (dry-run → gate → conditional real run →
+prune). Exit 0 for handled outcomes (success / hold / feed-down /
+invariant-rollback — all alerted via Teams); exit 1 only on an
+unexpected crash so Railway surfaces it. The manual Preview/Apply UI is
+unchanged; the gate lives only in the cron (manual path has a human).
+
 ## 10. Step 3 — shipped 2026-05-19
 
 Migration ran in-container, single atomic transaction, snapshot-first.
