@@ -218,6 +218,109 @@ Q1/Q6 + validate gate **passed**. Q2–Q5/Q7 + C1/C2 **resolved 2026-05-19**.
 Step 3 **shipped**. Step 4 (the sync itself) is the next build. Step 5
 (permission model) remains a deferred separate workstream.
 
+## 11. Step 4 — build plan (scoped + signed off 2026-05-19)
+
+User decisions (AskUserQuestion, 2026-05-19) — all three the recommended path:
+
+- **Phasing → supervised manual first, cron later.** Build the new
+  YardiCode-keyed sync wired to the *existing* platform-admin "Run sync"
+  button (synchronous, blocking, supervised — same UX as today). Daily cron
+  is a deliberate fast-follow, NOT in step 4, gated on: (a) several clean
+  manual runs reviewed, (b) `MPL_API_BASE`/`MPL_API_KEY` added to Railway env
+  (today local `.env` only — a recurring in-container job cannot run without
+  them).
+- **First run → dry-run preview first.** The new sync takes a `dry_run`
+  mode (default ON for the first execution). Dry-run computes the full plan
+  — would-create / would-update / would-inactivate, per row — and writes it
+  to the run summary WITHOUT mutating `locations`/`users`. User reviews,
+  then a `dry_run=false` run commits. Snapshot table + invariant gate +
+  transactional rollback still apply on the real run (defense in depth).
+- **Old fuzzy path → leave dormant one cycle.** New sync becomes the active
+  path. `mayfairnet_client.get_property_managers`, `/mayfair/property-search`,
+  `/mayfair/link`, and the re-link UI in `platform.html` stay in place but
+  unused, as a fallback. Retire in a separate follow-up commit once the new
+  sync is proven in prod (track as a followup memory).
+
+### Scope refinement (decided during build, 2026-05-19)
+
+- **Users are update-in-place + inactivate ONLY in v1 — NO auto-create.**
+  The feed carries 464 users; Echo Audit has 17 feed-origin users (the
+  provisioned RMs). Auto-creating the other ~447 would mint login-capable
+  accounts with SSO implications — that is the deferred provisioning/
+  permission workstream, not property sync. Q3 auto-create is resolved for
+  **properties only**; there is no locked decision to auto-create users.
+  The sync updates users it can match by `mayfair_user_id`, inactivates
+  feed-origin users absent from the feed, and **lists unmatched feed users
+  in the run plan** (count + IDs) for visibility — but inserts none. This
+  is conservative and reversible (a later run / the deferred workstream can
+  create them deliberately).
+
+### Build steps
+
+1. **New feed client** — add bulk-endpoint functions for the two MPL
+   endpoints. Separate from `mayfairnet_client.py` (different base URL +
+   key: `MPL_API_BASE`/`MPL_API_KEY`, `X-Api-Key` header). Read-only GETs,
+   plain JSON arrays, no pagination. Hard-fail (abort sync, touch nothing)
+   on unreachable / non-200 / empty / malformed — never sync a bad pull.
+2. **Rewrite `mayfair_sync.run_sync`** to the §5 algorithm with a
+   `dry_run` param. Users pass → properties pass → user-inactivation pass.
+   Same `mayfair_sync_runs` row lifecycle; extend the summary with
+   created / inactivated / email-mismatch / name-skipped counts + a
+   per-row plan list (for the dry-run review).
+3. **Hard guards (correctness landmines):** never write `user_email`;
+   skip null/empty feed email; user-inactivation scoped strictly to
+   `mayfair_user_id IS NOT NULL` (AI Caller bot + super-admins excluded);
+   never TRUNCATE/DELETE-by-absence; never key any write on a name.
+4. **Snapshot-first + invariant gate** (step-3 playbook): `backup_*_<date>`
+   pre-images, verify invariants (rowcounts sane, no unexpected
+   inactivations, SSO emails untouched, AI Caller bot untouched), commit
+   only on all-pass else rollback.
+5. **Platform-admin wiring:** the existing `/mayfair/sync` button passes
+   `dry_run`; the existing last-run panel renders the new plan/summary
+   fields. No new page.
+6. **Out of scope (creep guard):** `FullAddress`, `TeamsPhone`, permission/
+   role logic, the daily cron, retiring the old fuzzy path/UI.
+
+Open items the first run will surface (expected, not bugs): ~9 feed
+properties with no location → auto-create; loc 33 Huntsville Summit
+(YardiCode NULL) → would inactivate unless resolved first — flag in the
+dry-run review for a human call before the committing run.
+
+### Step 4 — BUILT 2026-05-19 (code complete, not yet run anywhere)
+
+Code written + self-reviewed + compiles; **zero git commits** (user
+commits/pushes on request); **never executed** (see blocker below).
+
+- **New:** `mpl_feed_client.py` — read-only bulk client, `MPL_API_BASE`/
+  `MPL_API_KEY`, hard-fails on unreachable/non-200/non-JSON/non-list/
+  **empty** (empty dump = treated as outage, never synced).
+- **Rewrote:** `mayfair_sync.run_sync(company_id, triggered_by_user_id,
+  dry_run=True)` — feed pull → users pass → properties pass → invariant
+  gate. dry_run rolls back (records plan only); real run snapshots
+  `backup_{locations,users}_exile_sync_<ts>`, gates on invariants,
+  commits only all-pass. Preserved `_stamp_location` + `get_last_run`
+  for the dormant re-link UI. Removed dead `_link_users`/`_live_locations`.
+- **Invariants:** users rowcount unchanged (no user auto-create);
+  locations delta == created; no `user_email` differs from snapshot;
+  no super_admin / AI-Caller / NULL-mayfair_user_id user newly
+  inactivated; every new location has YardiCode + right company (scoped
+  to snapshot-diff rows, not the broad `synced_at` set — a self-review
+  bug-fix).
+- **Route:** `/mayfair/sync` takes `dry_run` (defaults **True** — an
+  omitted flag previews, never silently commits). `get_last_run`'s
+  legacy unmatched-filter only fires on the old list shape.
+- **UI:** Preview (dry-run) + Apply buttons; Apply gated on a same-
+  session preview of that org + an explicit confirm; loud
+  "PREVIEW — nothing written" vs "Committed" banners; counts grid +
+  collapsible per-row plan. Zero DB-schema change (rich detail rides
+  the existing `msr_unmatched` JSONB).
+
+**Blocker to first run:** a dry-run still reads the DB (in-container
+only) AND needs the feed (`MPL_API_BASE`/`MPL_API_KEY`) — those live in
+local `.env`, NOT Railway. The first Preview cannot run until the two
+MPL vars are added to Railway. After that: Preview → human review
+(esp. loc 33, the email mismatches, the ~447 feed-only users) → Apply.
+
 ## 10. Step 3 — shipped 2026-05-19
 
 Migration ran in-container, single atomic transaction, snapshot-first.

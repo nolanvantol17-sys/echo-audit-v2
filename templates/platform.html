@@ -97,18 +97,24 @@
       <div class="panel-title" style="margin:0;">Mayfair Property Directory Sync</div>
     </div>
     <p class="muted text-small" style="margin:0 0 12px 0;">
-      Pulls every property's Regional Manager from Mayfair's Property
-      Directory API and stamps Echo Audit's location records. Runs against
-      the org you pick below. Takes about 3 seconds per property
-      (~6 minutes for Mayfair Management's 116 properties).
+      Reconciles Echo Audit's properties and Mayfair users against the MPL
+      bulk feed, matched on stable IDs (YardiCode / user ID — never names).
+      Updates in place, auto-creates new feed properties, and flags ones
+      that left the feed inactive — it never deletes. <strong>Preview</strong>
+      shows exactly what would change and writes nothing;
+      <strong>Apply</strong> commits behind a snapshot + safety checks.
     </p>
     <div class="filters-bar" style="margin-bottom:12px;">
       <div class="field">
         <label class="field-label" for="m-org">Organization</label>
         <select id="m-org" class="field-select"><option value="">Choose…</option></select>
       </div>
-      <button type="button" class="btn btn-primary btn-sm" id="btn-mayfair-sync" disabled>
-        Sync now
+      <button type="button" class="btn btn-primary btn-sm" id="btn-mayfair-preview" disabled>
+        Preview (dry run)
+      </button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-mayfair-apply" disabled
+              title="Run a preview first">
+        Apply changes
       </button>
     </div>
     <div id="mayfair-status-wrap"></div>
@@ -143,6 +149,9 @@
   let usageTimer = null;
   let orgsCache  = [];
   let activeTab  = "orgs";
+  // Gate "Apply" on a same-session preview of the same org: you can't
+  // commit a sync you haven't just looked at.
+  let mayfairPreviewedOrg = null;
 
   document.addEventListener("DOMContentLoaded", init);
   document.addEventListener("visibilitychange", onVisibilityChange);
@@ -174,12 +183,16 @@
 
     // Mayfair-sync wiring
     $("#m-org").addEventListener("change", function () {
-      $("#btn-mayfair-sync").disabled = !this.value;
+      $("#btn-mayfair-preview").disabled = !this.value;
+      // Apply stays locked until a preview has been run this session.
+      $("#btn-mayfair-apply").disabled = true;
+      mayfairPreviewedOrg = null;
       if (this.value) loadMayfairLastRun(this.value);
       else $("#mayfair-last-run-wrap").innerHTML =
             '<div class="muted text-small">Pick an org to see its last sync.</div>';
     });
-    $("#btn-mayfair-sync").addEventListener("click", onMayfairSync);
+    $("#btn-mayfair-preview").addEventListener("click", () => onMayfairSync(true));
+    $("#btn-mayfair-apply").addEventListener("click", () => onMayfairSync(false));
   }
 
   function switchTab(name) {
@@ -243,19 +256,93 @@
         wrap.innerHTML = '<div class="muted text-small">No sync has been run for this org yet.</div>';
         return;
       }
+      const detailObj = (r.msr_unmatched && !Array.isArray(r.msr_unmatched)
+                          && typeof r.msr_unmatched === "object")
+                          ? r.msr_unmatched : null;
       const unmatched = Array.isArray(r.msr_unmatched) ? r.msr_unmatched : [];
       const matched   = r.msr_locations_matched || 0;
       const total     = r.msr_locations_total || 0;
       const pct       = total ? Math.round(100 * matched / total) : 0;
-      const lines = [
+      const lines = [];
+
+      // New MPL sync: dry_run rolls everything back, so make it loud that
+      // nothing was written. A committed run gets the green confirmation.
+      if (detailObj) {
+        if (detailObj.dry_run) {
+          lines.push('<div style="padding:8px 10px;margin-bottom:8px;' +
+            'border:1px solid var(--warning,#d98a00);border-radius:6px;' +
+            'background:rgba(217,138,0,0.08);font-size:0.85rem;">' +
+            '<strong>PREVIEW — nothing was written.</strong> This is what ' +
+            'an Apply would do. Review it, then click “Apply changes”.</div>');
+        } else {
+          lines.push('<div style="padding:8px 10px;margin-bottom:8px;' +
+            'border:1px solid var(--success,#2e7d32);border-radius:6px;' +
+            'background:rgba(46,125,50,0.08);font-size:0.85rem;">' +
+            '<strong>Committed.</strong> Changes were written' +
+            (detailObj.backup_tag
+              ? ' (snapshot <code>' + EA.esc(detailObj.backup_tag) + '</code>).'
+              : '.') + '</div>');
+        }
+      }
+
+      lines.push(
         '<div><strong>Status:</strong> ' + EA.esc(r.msr_status) + '</div>',
         '<div><strong>Started:</strong> ' + EA.esc(r.msr_started_at || "—") + '</div>',
         '<div><strong>Completed:</strong> ' + EA.esc(r.msr_completed_at || "—") + '</div>',
         '<div><strong>Properties matched:</strong> ' + matched + '/' + total +
                   ' (' + pct + '%)</div>',
-        '<div><strong>Users linked to a Mayfair ID:</strong> ' +
-                  (r.msr_users_linked || 0) + '</div>',
-      ];
+        '<div><strong>Users updated:</strong> ' +
+                  (r.msr_users_linked || 0) + '</div>'
+      );
+
+      if (detailObj && detailObj.counts) {
+        const c = detailObj.counts;
+        const cell = (label, n) =>
+          '<div style="flex:1 1 140px;padding:6px 8px;border:1px solid ' +
+          'var(--border,#333);border-radius:6px;font-size:0.8rem;">' +
+          '<div style="opacity:0.7;">' + label + '</div>' +
+          '<div style="font-size:1.1rem;font-weight:600;">' + (n || 0) +
+          '</div></div>';
+        lines.push(
+          '<div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0;">' +
+          cell("Properties updated",   c.properties_updated) +
+          cell("Properties created",   c.properties_created) +
+          cell("Properties inactivated", c.properties_inactivated) +
+          cell("No-YardiCode (skipped)", c.properties_skipped_no_yardi) +
+          cell("Users updated",        c.users_updated) +
+          cell("Users inactivated",    c.users_inactivated) +
+          cell("Email mismatches",     c.users_email_mismatch) +
+          cell("Feed users w/o account", c.users_unmatched_feed) +
+          '</div>');
+
+        // Per-row plan — collapsed by section so a 447-row unmatched
+        // list doesn't bury the four numbers that matter.
+        const plan = detailObj.plan || {};
+        const dumpList = (title, arr) => {
+          if (!arr || !arr.length) return "";
+          const items = arr.slice(0, 50).map(
+            (x) => '<li style="padding:2px 0;">' +
+                   EA.esc(JSON.stringify(x)) + '</li>').join("");
+          const more = arr.length > 50
+            ? '<li style="padding:2px 0;">… and ' + (arr.length - 50) +
+              ' more</li>' : "";
+          return '<details style="margin-top:6px;"><summary style="' +
+            'cursor:pointer;font-size:0.85rem;"><strong>' + title +
+            '</strong> (' + arr.length + ')</summary>' +
+            '<ul style="margin:4px 0 0 0;padding-left:16px;font-size:0.78rem;' +
+            'list-style:disc;">' + items + more + '</ul></details>';
+        };
+        const pp = plan.properties || {}, pu = plan.users || {};
+        lines.push(
+          dumpList("Properties — create",     pp.create),
+          dumpList("Properties — inactivate", pp.inactivate),
+          dumpList("Properties — update",     pp.update),
+          dumpList("Properties — no YardiCode (review)", pp.skipped_no_yardi),
+          dumpList("Users — inactivate",      pu.inactivate),
+          dumpList("Users — email mismatch (review)", pu.email_mismatch),
+          dumpList("Users — in feed, no account", pu.unmatched_feed));
+      }
+
       if (r.msr_error) {
         lines.push('<div style="color:var(--danger);"><strong>Error:</strong> ' +
                    EA.esc(r.msr_error) + '</div>');
@@ -304,34 +391,61 @@
     }
   }
 
-  async function onMayfairSync() {
+  async function onMayfairSync(dryRun) {
     const companyId = $("#m-org").value;
     if (!companyId) return;
-    const btn = $("#btn-mayfair-sync");
-    const status = $("#mayfair-status-wrap");
-    btn.disabled = true;
-    const orig = btn.textContent;
-    btn.textContent = "Syncing… (this can take 5+ minutes)";
-    status.innerHTML = '<div class="muted text-small">Sync in progress. ' +
-                       'Keep this tab open. You\'ll see the result here.</div>';
+
+    // Apply is only reachable after a same-session preview of THIS org,
+    // and still asks for an explicit confirmation before it writes.
+    if (!dryRun) {
+      if (mayfairPreviewedOrg !== companyId) {
+        alert("Run a Preview for this org first, then Apply.");
+        return;
+      }
+      if (!confirm("Apply the previewed changes? This writes to the live " +
+                   "properties and users tables (a snapshot is taken and " +
+                   "the run rolls back if a safety check fails).")) {
+        return;
+      }
+    }
+
+    const preview = $("#btn-mayfair-preview");
+    const apply   = $("#btn-mayfair-apply");
+    const status  = $("#mayfair-status-wrap");
+    preview.disabled = true;
+    apply.disabled   = true;
+    status.innerHTML = '<div class="muted text-small">' +
+      (dryRun ? "Building preview" : "Applying changes") +
+      '… pulling the feed and reconciling. Keep this tab open.</div>';
     try {
       const summary = await EA.fetchJSON("/api/platform/mayfair/sync", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ company_id: Number(companyId) }),
+        body:    JSON.stringify({ company_id: Number(companyId),
+                                  dry_run: !!dryRun }),
       });
-      status.innerHTML = '<div style="color:var(--success);">' +
-        'Sync ' + EA.esc(summary.status) + '. ' +
-        'Matched ' + summary.locations_matched + '/' + summary.locations_total +
-        ' properties in ' + summary.elapsed_seconds + 's.' +
-        '</div>';
+      const colour = summary.status === "failed"
+        ? "var(--danger)" : "var(--success)";
+      status.innerHTML = '<div style="color:' + colour + ';">' +
+        (dryRun ? "Preview" : "Apply") + " " + EA.esc(summary.status) +
+        '. Matched ' + summary.locations_matched + '/' +
+        summary.locations_total + ' properties in ' +
+        summary.elapsed_seconds + 's.' +
+        (dryRun && summary.status !== "failed"
+          ? ' Review below, then Apply.' : '') + '</div>';
+      if (dryRun && summary.status !== "failed") {
+        mayfairPreviewedOrg = companyId;   // unlock Apply for this org
+      } else if (!dryRun) {
+        mayfairPreviewedOrg = null;        // re-preview before next apply
+      }
       await loadMayfairLastRun(companyId);
     } catch (err) {
-      status.innerHTML = '<div style="color:var(--danger);">Sync failed: ' +
-                         EA.esc(err.message || String(err)) + '</div>';
+      status.innerHTML = '<div style="color:var(--danger);">' +
+        (dryRun ? "Preview" : "Apply") + ' failed: ' +
+        EA.esc(err.message || String(err)) + '</div>';
     } finally {
-      btn.disabled = false;
-      btn.textContent = orig;
+      preview.disabled = !companyId;
+      apply.disabled   = (mayfairPreviewedOrg !== companyId);
     }
   }
 
