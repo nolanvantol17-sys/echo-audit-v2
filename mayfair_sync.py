@@ -36,8 +36,9 @@ Failure modes:
   - Feed unreachable / non-200 / empty / malformed: MPLFeedError →
     status='failed', zero writes, run row closed. A bad pull never wipes.
   - Invariant failure on a real run: full rollback, status='failed'.
-  - The dormant fuzzy path (_stamp_location, get_last_run) is preserved
-    for the platform-admin re-link UI during the one-cycle handover.
+
+The old fuzzy /api/properties/managers path and its manual re-link UI
+were fully retired 2026-05-19 once this sync was verified in production.
 """
 
 import json
@@ -581,21 +582,7 @@ def _verify_invariants(conn, company_id, loc_before, usr_before,
     return True, "ok"
 
 
-# ── run-row lifecycle + dormant re-link helper (preserved) ────
-
-
-def _stamp_location(conn, location_id, prop_id, rm_user_id):
-    """Preserved for the dormant platform-admin manual re-link UI
-    (/mayfair/link) during the one-cycle handover. Not used by the new
-    sync. Do not remove until the fuzzy path is formally retired."""
-    conn.execute(
-        q("""UPDATE locations
-                SET mayfair_property_id        = ?,
-                    mayfair_rm_user_id         = ?,
-                    locations_mayfair_synced_at = NOW()
-              WHERE location_id = ?"""),
-        (prop_id, rm_user_id, location_id),
-    )
+# ── run-row lifecycle ─────────────────────────────────────────
 
 
 def _open_run_row(conn, company_id, triggered_by_user_id) -> int:
