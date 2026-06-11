@@ -75,19 +75,15 @@
       // Grading settings block: who is graded + the optional reference script
       // the graded person should follow. Admins get editable controls; others
       // see a read-only view (and the script only if one is set).
-      const tRespSel = gradeTarget === "respondent" ? " selected" : "";
-      const tCallSel = gradeTarget === "caller" ? " selected" : "";
+      const pills = pillToggleHtml(!isAdmin);
       if (isAdmin) {
         return (
           '<div class="rubric-settings" data-role="rubric-settings">' +
             '<div class="panel-title">Grading settings</div>' +
-            '<label class="rubric-setting-row">' +
+            '<div class="rubric-setting-row">' +
               '<span class="rubric-setting-label">Who is being graded?</span>' +
-              '<select data-role="grade-target" class="input">' +
-                '<option value="respondent"' + tRespSel + '>The person who answered the call</option>' +
-                '<option value="caller"' + tCallSel + '>The person who placed the call</option>' +
-              '</select>' +
-            '</label>' +
+              pills +
+            '</div>' +
             '<div class="rubric-snapshot-note">Changing who is graded affects future grades only.</div>' +
             '<label class="rubric-setting-row rubric-setting-col">' +
               '<span class="rubric-setting-label">Script the graded person should follow ' +
@@ -105,10 +101,7 @@
           '</div>'
         );
       }
-      // Non-admin read-only view.
-      const targetText = gradeTarget === "caller"
-        ? "The person who placed the call"
-        : "The person who answered the call";
+      // Non-admin read-only view: same pills, disabled (active one highlighted).
       const scriptRo = referenceScript
         ? '<div class="rubric-setting-row rubric-setting-col">' +
             '<span class="rubric-setting-label">Script the graded person should follow</span>' +
@@ -120,9 +113,28 @@
           '<div class="panel-title">Grading settings</div>' +
           '<div class="rubric-setting-row">' +
             '<span class="rubric-setting-label">Who is being graded?</span>' +
-            '<span>' + targetText + '</span>' +
+            pills +
           '</div>' +
           scriptRo +
+        '</div>'
+      );
+    }
+
+    // Two-pill segmented toggle for grade target. `disabled` renders the
+    // read-only (non-admin) variant. Active pill = current gradeTarget.
+    function pillToggleHtml(disabled) {
+      const d = disabled ? " disabled" : "";
+      function pill(val, text) {
+        const active = gradeTarget === val;
+        return '<button type="button" class="pill' + (active ? " is-active" : "") +
+          '" data-target="' + val + '" aria-pressed="' + (active ? "true" : "false") +
+          '"' + d + '>' + text + '</button>';
+      }
+      return (
+        '<div class="pill-toggle" data-role="grade-target" role="group" ' +
+          'aria-label="Who is being graded">' +
+          pill("respondent", "The person who answered the call") +
+          pill("caller", "The person who placed the call") +
         '</div>'
       );
     }
@@ -293,23 +305,35 @@
       const addBtn = container.querySelector('[data-act="add-item"]');
       on(addBtn, "click", function () { if (view) view.addBlankRow(); });
 
-      // Grade-target toggle → PUT rg_grade_target on the rubric group.
-      const targetSel = container.querySelector('[data-role="grade-target"]');
-      on(targetSel, "change", async function () {
-        const prev = gradeTarget;
-        const next = targetSel.value;
-        if (next === prev) return;
-        try {
-          await EA.fetchJSON("/api/rubric-groups/" + rubricGroupId, {
-            method: "PUT", body: { rg_grade_target: next },
-          });
-          gradeTarget = next;
-          EA.toast("Updated who is being graded.", "success");
-          if (onChange) onChange();
-        } catch (err) {
-          targetSel.value = prev;  // revert UI to the persisted value
-          EA.toast(err.message || "Couldn't update grade target.", "error");
-        }
+      // Grade-target pill toggle → PUT rg_grade_target on the rubric group.
+      const targetWrap = container.querySelector('[data-role="grade-target"]');
+      const pillBtns = targetWrap
+        ? targetWrap.querySelectorAll('button[data-target]') : [];
+      function setActivePill(val) {
+        pillBtns.forEach(function (b) {
+          const isOn = b.getAttribute("data-target") === val;
+          b.classList.toggle("is-active", isOn);
+          b.setAttribute("aria-pressed", isOn ? "true" : "false");
+        });
+      }
+      pillBtns.forEach(function (btn) {
+        on(btn, "click", async function () {
+          const next = btn.getAttribute("data-target");
+          const prev = gradeTarget;
+          if (next === prev) return;
+          setActivePill(next);  // optimistic
+          try {
+            await EA.fetchJSON("/api/rubric-groups/" + rubricGroupId, {
+              method: "PUT", body: { rg_grade_target: next },
+            });
+            gradeTarget = next;
+            EA.toast("Updated who is being graded.", "success");
+            if (onChange) onChange();
+          } catch (err) {
+            setActivePill(prev);  // revert to persisted value
+            EA.toast(err.message || "Couldn't update grade target.", "error");
+          }
+        });
       });
 
       // Save script → PUT rg_reference_script on the rubric group.
