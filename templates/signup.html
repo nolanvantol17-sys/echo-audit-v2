@@ -6,22 +6,23 @@
   <title>Create Organization | {{ client_name or "Echo Audit" }}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
-      --bg:       #1A1F1F;
-      --surface:  #252B2B;
-      --surface-2:#2F3636;
-      --border:   rgba(236,230,217,0.12);
-      --text:     #ECE6D9;
-      --muted:    #9C9183;
-      --accent:   #4A8076;
-      --accent-h: #5E9389;
-      --radius:   10px;
+      color-scheme: light;
+      --bg:       #F6F7F9;
+      --surface:  #FFFFFF;
+      --surface-2:#F0F2F5;
+      --border:   rgba(16,24,40,0.12);
+      --text:     #101828;
+      --muted:    #475467;
+      --accent:   #4F46E5;
+      --accent-h: #4338CA;
+      --radius:   12px;
     }
     body {
-      font-family: 'Geist', 'Inter', system-ui, sans-serif;
+      font-family: 'Inter', system-ui, sans-serif;
       background: var(--bg); color: var(--text);
       min-height: 100vh; display: flex; align-items: center; justify-content: center;
       padding: 20px;
@@ -30,13 +31,13 @@
       width: 100%; max-width: 440px;
       background: var(--surface); border: 1px solid var(--border);
       border-radius: var(--radius); padding: 36px;
-      box-shadow: 0 8px 32px rgba(31,26,20,0.12);
+      box-shadow: 0 1px 3px rgba(16,24,40,0.07), 0 12px 32px -8px rgba(16,24,40,0.10);
     }
     .auth-logo {
       display: flex; align-items: center; justify-content: center;
       gap: 10px; margin-bottom: 28px;
     }
-    .auth-logo img { height: 44px; width: auto; filter: brightness(0) invert(1); }
+    .auth-logo img { height: 44px; width: auto; }
     .auth-logo-text { font-size: 1.1rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
     h1 { font-size: 1.15rem; font-weight: 700; margin-bottom: 6px; text-align: center; }
     .auth-subtitle { font-size: 0.82rem; color: var(--muted); text-align: center; margin-bottom: 24px; }
@@ -52,7 +53,7 @@
       outline: none; transition: border 0.15s, box-shadow 0.15s;
       margin-bottom: 16px;
     }
-    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(74,128,118,0.30); }
+    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,70,229,0.14); }
     .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .btn {
       display: block; width: 100%; padding: 12px; border-radius: 8px;
@@ -62,9 +63,9 @@
     .btn-primary { background: var(--accent); color: white; }
     .btn-primary:hover { background: var(--accent-h); }
     .error-msg {
-      background: rgba(255,92,74,0.18); border: 1px solid rgba(255,92,74,0.40);
+      background: rgba(217,45,32,0.08); border: 1px solid rgba(217,45,32,0.30);
       border-radius: 8px; padding: 10px 14px; margin-bottom: 16px;
-      font-size: 0.85rem; color: #7A3A35;
+      font-size: 0.85rem; color: #B42318;
     }
     .auth-footer { text-align: center; margin-top: 18px; font-size: 0.82rem; color: var(--muted); }
     .auth-footer a { color: var(--accent); text-decoration: none; font-weight: 600; }

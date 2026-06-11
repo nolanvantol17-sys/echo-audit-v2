@@ -70,7 +70,7 @@
     align-items: center;
     gap: 12px;
     z-index: 150;
-    box-shadow: 0 -4px 14px rgba(0,0,0,0.35);
+    box-shadow: 0 -4px 14px rgba(16,24,40,0.10);
   }
   .loc-sticky-bar[hidden]          { display: none; }
   .loc-sticky-bar .selected-meta   { font-weight: 500; }
@@ -923,7 +923,7 @@
     }
     (resp.warnings || []).forEach(function (w) {
       parts.push(
-        '<div style="color:#d97706; margin:4px 0;" class="text-small">' +
+        '<div style="color:var(--warning); margin:4px 0;" class="text-small">' +
         '⚠ Row ' + w.row + ' — ' + EA.esc(w.location_name || "") + ': ' +
         EA.esc(w.message || "") + '</div>'
       );

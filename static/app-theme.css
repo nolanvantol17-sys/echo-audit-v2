@@ -1,67 +1,72 @@
 /* ============================================================
-   Echo Audit — drop-in theme
+   Echo Audit — "Ledger" design system (drop-in theme)
    ------------------------------------------------------------
    Load AFTER app.css. Pure visual override — no HTML or
-   Python changes required.
+   Python changes required. To roll back: remove the
+   app-theme.css <link> from base.html.
 
-   In templates/base.html, add this BELOW the existing
-   <link rel="stylesheet" href="...app.css...">:
-
-     <link rel="stylesheet"
-           href="{{ url_for('static', filename='app-theme.css') }}?v={{ static_v('app-theme.css') }}">
-
-   To roll back: remove that one <link> line.
+   Design language: enterprise-professional. Inter for UI,
+   Geist Mono for data. One accent (indigo) on a quiet slate
+   neutral ramp. Flat white cards, hairline borders, restrained
+   elevation. No decorative gradients, no glass.
    ============================================================ */
-
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap");
 
 /* ============================================================
    Tokens — overrides app.css's :root
-   Mood: Linen (cream) + blue accent
-   To switch to Midnight (dark), comment Linen and uncomment Midnight at bottom.
    ============================================================ */
 
 :root {
-  /* Surfaces — cooler near-white (was warm cream) so the colored
-     background washes read more cleanly against the panels. */
-  --bg:             #F7F9FC;
+  color-scheme: light;
+
+  /* Surfaces */
+  --bg:             #F6F7F9;
   --surface:        #FFFFFF;
-  --surface-2:      #EFF2F7;
-  --surface-3:      #E4E9F1;
+  --surface-2:      #F0F2F5;
+  --surface-3:      #E7EAEF;
+  --surface-hover:  #F3F4F7;     /* consumed by grade.html keypad + future hovers */
 
   /* Borders */
-  --border:         rgba(29, 29, 31, 0.07);
-  --border-strong:  rgba(29, 29, 31, 0.14);
+  --border:         rgba(16, 24, 40, 0.08);
+  --border-strong:  rgba(16, 24, 40, 0.16);
 
   /* Text */
-  --text:           #1D1D1F;
-  --muted:          #6B6B70;
-  --muted-2:        #8E8E93;
+  --text:           #101828;
+  --muted:          #475467;
+  --muted-2:        #98A2B3;
 
-  /* Accent */
-  --accent:         #0071E3;
-  --accent-h:       #0079F2;
-  --accent-d:       #005AB8;
-  --accent-soft:    rgba(0, 113, 227, 0.10);
-  --accent-edge:    rgba(0, 113, 227, 0.30);
-  --primary:        #0071E3;          /* legacy alias used in some templates */
+  /* Accent — single indigo */
+  --accent:         #4F46E5;
+  --accent-h:       #4338CA;
+  --accent-d:       #3730A3;
+  --accent-soft:    rgba(79, 70, 229, 0.08);
 
-  /* Semantic — used only on score/status pills */
-  --success:        #1E9E5F;
-  --success-bg:     rgba(30, 158, 95, 0.12);
-  --warning:        #C9711A;
-  --warning-bg:     rgba(201, 113, 26, 0.12);
-  --danger:         #D72C2C;
-  --danger-bg:      rgba(215, 44, 44, 0.10);
+  /* Semantic — muted professional, AA on white */
+  --success:        #067647;
+  --success-bg:     rgba(6, 118, 71, 0.10);
+  --warning:        #B54708;
+  --warning-bg:     rgba(247, 144, 9, 0.12);
+  --danger:         #B42318;
+  --danger-bg:      rgba(217, 45, 32, 0.08);
+  --amber-bg:       rgba(247, 144, 9, 0.12);   /* settings.html consumer */
+  --amber-fg:       #B54708;
+
+  /* Typography */
+  --mono:           "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   /* Geometry */
-  --radius:         12px;
+  --radius:         10px;
   --radius-sm:      8px;
-  --radius-lg:      18px;
+  --radius-lg:      14px;
 
-  /* Glass */
-  --glass:          rgba(255, 255, 255, 0.62);
-  --glass-strong:   rgba(255, 255, 255, 0.84);
+  /* Elevation scale — ink-tinted, light-theme weights */
+  --shadow-xs:      0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-sm:      0 1px 3px rgba(16, 24, 40, 0.07), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-md:      0 8px 24px -6px rgba(16, 24, 40, 0.12);
+  --shadow-lg:      0 24px 48px -12px rgba(16, 24, 40, 0.18);
+
+  /* Legacy glass tokens still consumed by app.css selectors */
+  --glass:          rgba(255, 255, 255, 0.92);
+  --glass-strong:   #FFFFFF;
 }
 
 /* ============================================================
@@ -69,39 +74,36 @@
    ============================================================ */
 
 html, body {
-  font-family: "Geist", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif !important;
-  font-feature-settings: "ss01", "ss02", "cv11";
-  letter-spacing: -0.005em;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif !important;
+  font-feature-settings: "cv11";
+  letter-spacing: -0.006em;
   color: var(--text);
-  /* Stronger color washes so the panel backdrop-filter has something to
-     refract. Without these, glass on light-on-light is invisible. */
-  background:
-    radial-gradient(ellipse 1600px 900px at 8% -10%, rgba(0,113,227,0.18), transparent 55%),
-    radial-gradient(ellipse 1200px 800px at 100% 105%, rgba(255,120,140,0.16), transparent 55%),
-    radial-gradient(ellipse 900px 700px at 60% 40%, rgba(180,140,255,0.08), transparent 60%),
-    var(--bg);
+  background: var(--bg);   /* flat — no decorative washes */
 }
 
 a { color: var(--accent); }
-a:hover { color: var(--accent-d); }
+a:hover { color: var(--accent-h); }
 
-::selection { background: var(--accent-soft); color: var(--accent-d); }
+::selection { background: rgba(79, 70, 229, 0.16); color: var(--accent-d); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(29, 29, 31, 0.14);
+  background: rgba(16, 24, 40, 0.16);
   border-radius: 8px; border: 2px solid var(--bg); background-clip: padding-box;
 }
-::-webkit-scrollbar-thumb:hover { background: rgba(29, 29, 31, 0.26); background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(16, 24, 40, 0.28); background-clip: padding-box; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 /* ============================================================
    Sidebar
    ============================================================ */
 
 .sidebar {
-  background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0.58)) !important;
-  backdrop-filter: blur(28px) saturate(180%);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  background: var(--surface) !important;
   border-right: 1px solid var(--border) !important;
 }
 .sidebar-brand {
@@ -117,35 +119,36 @@ a:hover { color: var(--accent-d); }
 }
 
 .sidebar-section-label {
-  font-size: 11.5px !important;
-  letter-spacing: 0 !important;
-  text-transform: none !important;
-  font-weight: 500 !important;
+  font-size: 11px !important;
+  letter-spacing: 0.05em !important;
+  text-transform: uppercase !important;
+  font-weight: 600 !important;
   color: var(--muted-2);
   padding: 18px 14px 8px !important;
 }
 
 .nav-link {
-  padding: 9px 14px !important;
-  border-radius: 10px !important;
+  padding: 8px 12px !important;
+  border-radius: var(--radius-sm) !important;
   font-size: 13.5px !important;
-  font-weight: 450 !important;
-  color: var(--text) !important;
-  transition: background 160ms !important;
+  font-weight: 500 !important;
+  color: var(--muted) !important;
+  transition: background 140ms, color 140ms !important;
 }
 .nav-link:hover {
-  background: rgba(29,29,31,0.05) !important;
+  background: var(--surface-2) !important;
+  color: var(--text) !important;
   text-decoration: none !important;
 }
 .nav-link.active {
-  background: rgba(0,113,227,0.10) !important;
+  background: var(--accent-soft) !important;
   color: var(--accent-d) !important;
-  border: 1px solid rgba(0,113,227,0.18);
 }
 .nav-link .nav-icon {
   opacity: 1 !important;
-  color: var(--muted);
+  color: var(--muted-2);
 }
+.nav-link:hover .nav-icon  { color: var(--muted); }
 .nav-link.active .nav-icon { color: var(--accent); }
 
 /* ============================================================
@@ -153,9 +156,9 @@ a:hover { color: var(--accent-d); }
    ============================================================ */
 
 .topbar {
-  background: var(--glass) !important;
-  backdrop-filter: blur(36px) saturate(180%);
-  -webkit-backdrop-filter: blur(36px) saturate(180%);
+  background: rgba(255, 255, 255, 0.92) !important;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border) !important;
   padding: 0 26px !important;
 }
@@ -164,50 +167,48 @@ a:hover { color: var(--accent-d); }
   font-weight: 500 !important;
 }
 .org-switcher {
-  border-radius: 999px !important;
-  background: rgba(29,29,31,0.04) !important;
-  border: 1px solid rgba(29,29,31,0.06) !important;
+  border-radius: var(--radius-sm) !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--border-strong) !important;
   color: var(--text) !important;
-  padding: 6px 12px !important;
+  padding: 6px 10px !important;
 }
-.org-switcher:hover { background: rgba(29,29,31,0.08) !important; border-color: rgba(29,29,31,0.14) !important; }
+.org-switcher:hover { border-color: var(--muted-2) !important; }
 .user-name { color: var(--text) !important; }
 
 .logout-btn {
-  border-radius: 999px !important;
-  background: rgba(29,29,31,0.04) !important;
-  border: 1px solid rgba(29,29,31,0.06) !important;
+  border-radius: var(--radius-sm) !important;
+  background: transparent !important;
+  border: 1px solid var(--border-strong) !important;
   color: var(--muted) !important;
-  padding: 6px 14px !important;
+  padding: 6px 12px !important;
 }
 .logout-btn:hover {
-  background: rgba(215,44,44,0.10) !important;
+  background: var(--danger-bg) !important;
   border-color: var(--danger) !important;
   color: var(--danger) !important;
 }
 
 /* Project breadcrumb */
 .project-breadcrumb {
-  background: linear-gradient(90deg, rgba(0,113,227,0.10), transparent 60%) !important;
+  background: var(--accent-soft) !important;
   border-bottom: 1px solid var(--border) !important;
-  padding: 11px 24px !important;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  padding: 10px 24px !important;
 }
 .project-breadcrumb a { color: var(--text) !important; }
 .project-breadcrumb a:hover { color: var(--accent) !important; }
 .exit-project-btn {
-  border-radius: 999px !important;
-  border-color: rgba(29,29,31,0.14) !important;
+  border-radius: var(--radius-sm) !important;
+  border-color: var(--border-strong) !important;
   color: var(--muted) !important;
 }
-.exit-project-btn:hover { color: var(--text) !important; border-color: var(--text) !important; }
+.exit-project-btn:hover { color: var(--text) !important; border-color: var(--muted) !important; }
 
 /* ============================================================
    Headings
    ============================================================ */
 
-.page-title { letter-spacing: -0.02em !important; color: var(--text); }
+.page-title { letter-spacing: -0.02em !important; color: var(--text); font-weight: 650 !important; }
 .page-subtitle, .page-sub { color: var(--muted) !important; }
 
 /* ============================================================
@@ -215,18 +216,10 @@ a:hover { color: var(--accent-d); }
    ============================================================ */
 
 .panel {
-  /* Slightly more translucent so the background color washes tint the
-     panel — that's what reads as "frosted glass" on a light bg. */
-  background: rgba(255,255,255,0.62) !important;
+  background: var(--surface) !important;
   border: 1px solid var(--border) !important;
   border-radius: var(--radius) !important;
-  backdrop-filter: blur(28px) saturate(200%);
-  -webkit-backdrop-filter: blur(28px) saturate(200%);
-  box-shadow:
-    0 1px 0 rgba(255,255,255,0.8) inset,
-    0 1px 2px rgba(29,29,31,0.04),
-    0 20px 48px -16px rgba(29,29,31,0.10),
-    0 4px 12px -2px rgba(29,29,31,0.06) !important;
+  box-shadow: var(--shadow-xs) !important;
 }
 .panel-title {
   color: var(--text) !important;
@@ -235,45 +228,56 @@ a:hover { color: var(--accent-d); }
 }
 
 /* ============================================================
-   Buttons
+   Buttons — rounded rectangles, not pills
    ============================================================ */
 
 .btn {
-  border-radius: 999px !important;
+  border-radius: var(--radius-sm) !important;
   font-weight: 500 !important;
   letter-spacing: -0.005em !important;
-  transition: background 140ms, border-color 140ms, color 140ms, transform 120ms !important;
+  transition: background 140ms, border-color 140ms, color 140ms, box-shadow 140ms !important;
 }
-.btn:active { transform: scale(0.97); }
+.btn:active { transform: translateY(0.5px); }
 
 .btn-primary {
-  background: linear-gradient(180deg, var(--accent-h), var(--accent)) !important;
-  border: 1px solid var(--accent-d) !important;
+  background: var(--accent) !important;
+  border: 1px solid var(--accent) !important;
   color: #FFFFFF !important;
-  box-shadow:
-    0 0.5px 0 rgba(255,255,255,0.30) inset,
-    0 4px 12px rgba(0,113,227,0.24);
+  box-shadow: var(--shadow-xs), 0 0 0 0 transparent;
 }
-.btn-primary:hover { background: linear-gradient(180deg, #1485F2, var(--accent-d)) !important; }
+.btn-primary:hover {
+  background: var(--accent-h) !important;
+  border-color: var(--accent-h) !important;
+}
 
 .btn-ghost {
-  background: rgba(255,255,255,0.62) !important;
+  background: var(--surface) !important;
   border: 1px solid var(--border-strong) !important;
   color: var(--text) !important;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--shadow-xs);
 }
 .btn-ghost:hover {
-  background: rgba(255,255,255,0.92) !important;
-  border-color: rgba(29,29,31,0.18) !important;
+  background: var(--surface-2) !important;
+  border-color: var(--muted-2) !important;
 }
 
 .btn-danger {
   background: var(--danger-bg) !important;
-  border: 1px solid rgba(215,44,44,0.30) !important;
+  border: 1px solid rgba(217, 45, 32, 0.30) !important;
   color: var(--danger) !important;
 }
-.btn-danger:hover { background: rgba(215,44,44,0.18) !important; }
+.btn-danger:hover {
+  background: rgba(217, 45, 32, 0.16) !important;
+  border-color: var(--danger) !important;
+  color: var(--danger) !important;
+}
+
+.btn-success {
+  background: var(--success) !important;
+  border: 1px solid var(--success) !important;
+  color: #FFFFFF !important;
+}
+.btn-success:hover { background: #05603A !important; border-color: #05603A !important; }
 
 /* ============================================================
    Forms
@@ -289,39 +293,39 @@ a:hover { color: var(--accent-d); }
 .field-input, .field-select, input[type="text"], input[type="email"],
 input[type="password"], input[type="number"], input[type="date"],
 input[type="search"], input[type="tel"], select, textarea {
-  background: #FFFFFF !important;
+  background: var(--surface) !important;
   border: 1px solid var(--border-strong) !important;
-  border-radius: 10px !important;
+  border-radius: var(--radius-sm) !important;
   color: var(--text) !important;
-  padding: 9px 12px !important;
+  padding: 8px 12px !important;
   font-size: 14px !important;
-  transition: border-color 180ms, box-shadow 180ms !important;
+  transition: border-color 140ms, box-shadow 140ms !important;
 }
 .field-input:focus, .field-select:focus, input:focus, select:focus, textarea:focus {
   border-color: var(--accent) !important;
   outline: none !important;
-  box-shadow: 0 0 0 4px rgba(0,113,227,0.14) !important;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.14) !important;
 }
 .field-input::placeholder, input::placeholder, textarea::placeholder {
   color: var(--muted-2) !important;
 }
 
 /* ============================================================
-   Tabs
+   Tabs — segmented control
    ============================================================ */
 
 .tabs {
   display: inline-flex !important;
   gap: 2px !important;
-  padding: 4px !important;
-  background: rgba(29,29,31,0.05) !important;
-  border: 1px solid rgba(29,29,31,0.06) !important;
-  border-radius: 12px !important;
+  padding: 3px !important;
+  background: var(--surface-2) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
 }
 .tab-btn, .platform-tab {
-  border-radius: 9px !important;
+  border-radius: 6px !important;
   border-bottom: none !important;
-  padding: 7px 14px !important;
+  padding: 6px 14px !important;
   font-size: 13px !important;
   font-weight: 500 !important;
   color: var(--muted) !important;
@@ -329,10 +333,10 @@ input[type="search"], input[type="tel"], select, textarea {
 }
 .tab-btn:hover, .platform-tab:hover { color: var(--text) !important; }
 .tab-btn.active, .platform-tab.active {
-  background: #FFFFFF !important;
+  background: var(--surface) !important;
   color: var(--text) !important;
   border: none !important;
-  box-shadow: 0 1px 2px rgba(29,29,31,0.06), 0 1px 0 rgba(255,255,255,0.6) inset !important;
+  box-shadow: var(--shadow-xs) !important;
 }
 
 /* ============================================================
@@ -340,11 +344,12 @@ input[type="search"], input[type="tel"], select, textarea {
    ============================================================ */
 
 .score-pill {
-  border-radius: 8px !important;
+  border-radius: 6px !important;
   padding: 3px 9px !important;
-  font-family: "Geist Mono", monospace !important;
+  font-family: var(--mono) !important;
   font-weight: 600 !important;
   letter-spacing: 0.01em !important;
+  font-feature-settings: "tnum";
   min-width: 44px !important;
   display: inline-flex !important;
   align-items: center !important;
@@ -352,50 +357,137 @@ input[type="search"], input[type="tel"], select, textarea {
   border: 1px solid;
 }
 .score-pill.good, .score-pill[data-band="good"] {
-  background: var(--success-bg); border-color: rgba(30,158,95,0.30); color: var(--success);
+  background: var(--success-bg); border-color: rgba(6, 118, 71, 0.30); color: var(--success);
 }
 .score-pill.warn, .score-pill[data-band="warn"] {
-  background: var(--warning-bg); border-color: rgba(201,113,26,0.30); color: var(--warning);
+  background: var(--warning-bg); border-color: rgba(181, 71, 8, 0.30); color: var(--warning);
 }
 .score-pill.bad, .score-pill[data-band="bad"] {
-  background: var(--danger-bg); border-color: rgba(215,44,44,0.30); color: var(--danger);
+  background: var(--danger-bg); border-color: rgba(180, 35, 24, 0.30); color: var(--danger);
 }
-.score-pill.no-answer {
-  background: rgba(29,29,31,0.05); border-color: rgba(29,29,31,0.06); color: var(--muted);
+.score-pill.no-answer, .score-pill.gray {
+  background: var(--surface-2); border-color: var(--border); color: var(--muted);
 }
+
+/* Status pills — neutral base, explicit semantic variants
+   (the old theme flattened all variants to gray; restore meaning) */
 .status-pill {
   border-radius: 999px !important;
   padding: 2px 10px !important;
   font-size: 11px !important;
   font-weight: 500 !important;
-  background: rgba(29,29,31,0.05) !important;
-  border: 1px solid rgba(29,29,31,0.06) !important;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.status-pill.status-graded {
+  background: var(--success-bg); border-color: rgba(6, 118, 71, 0.25); color: var(--success);
+}
+.status-pill.status-pending, .status-pill.status-processing,
+.status-pill.status-awaiting_clarification, .status-pill.status-awaiting-clarification {
+  background: var(--warning-bg); border-color: rgba(181, 71, 8, 0.25); color: var(--warning);
+}
+.status-pill.status-failed {
+  background: var(--danger-bg); border-color: rgba(180, 35, 24, 0.25); color: var(--danger);
+}
+.status-pill.status-test {
+  background: var(--accent-soft); border-color: rgba(79, 70, 229, 0.25); color: var(--accent);
+}
+.status-pill.status-no_answer, .status-pill.status-no-answer,
+.status-pill.status-skipped, .status-pill.status-inactive {
+  background: var(--surface-2); border-color: var(--border); color: var(--muted);
+}
+.status-pill.status-active {
+  background: var(--success-bg); border-color: rgba(6, 118, 71, 0.25); color: var(--success);
+}
+
+/* Role pills — incl. the super_admin light-on-light fix */
+.role-pill {
+  border-radius: 999px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+}
+.role-pill.role-super_admin {
+  background: var(--accent-soft) !important;
+  border: 1px solid rgba(79, 70, 229, 0.25) !important;
+  color: var(--accent-d) !important;
+}
+.role-pill.role-admin {
+  background: var(--warning-bg) !important;
+  border: 1px solid rgba(181, 71, 8, 0.25) !important;
+  color: var(--warning) !important;
+}
+.role-pill.role-manager {
+  background: var(--success-bg) !important;
+  border: 1px solid rgba(6, 118, 71, 0.25) !important;
+  color: var(--success) !important;
+}
+.role-pill.role-caller {
+  background: var(--surface-2) !important;
+  border: 1px solid var(--border) !important;
   color: var(--muted) !important;
+}
+
+.regrade-badge {
+  background: var(--accent-soft) !important;
+  border: 1px solid rgba(79, 70, 229, 0.25) !important;
+  color: var(--accent) !important;
+  border-radius: 999px !important;
+}
+
+/* ============================================================
+   Banners & callouts (light-on-dark literals in app.css)
+   ============================================================ */
+
+.section-error {
+  background: var(--danger-bg) !important;
+  border: 1px solid rgba(180, 35, 24, 0.25) !important;
+  color: var(--danger) !important;
+  border-radius: var(--radius-sm) !important;
+}
+.flag-banner {
+  background: var(--warning-bg) !important;
+  border: 1px solid rgba(181, 71, 8, 0.25) !important;
+  color: var(--warning) !important;
+  border-radius: var(--radius-sm) !important;
+}
+.score-diff-banner {
+  background: var(--accent-soft) !important;
+  border: 1px solid rgba(79, 70, 229, 0.25) !important;
+  color: var(--accent-d) !important;
+  border-radius: var(--radius-sm) !important;
+}
+.temp-pw-banner {
+  background: var(--accent-soft) !important;
+  border: 1px solid rgba(79, 70, 229, 0.25) !important;
+  color: var(--text) !important;
+  border-radius: var(--radius-sm) !important;
 }
 
 /* ============================================================
    Tables
    ============================================================ */
 
-.history-table, table.data-table {
+.history-table, table.data-table, .recent-table {
   background: transparent !important;
 }
-.history-table th, table.data-table th {
+.history-table th, table.data-table th, .recent-table th {
   font-size: 11px !important;
-  text-transform: none !important;
-  letter-spacing: 0 !important;
-  font-weight: 500 !important;
-  color: var(--muted) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.04em !important;
+  font-weight: 600 !important;
+  color: var(--muted-2) !important;
   background: transparent !important;
   border-bottom: 1px solid var(--border) !important;
-  padding: 12px 14px !important;
+  padding: 10px 14px !important;
 }
-.history-table td, table.data-table td {
-  padding: 13px 14px !important;
+.history-table td, table.data-table td, .recent-table td {
+  padding: 12px 14px !important;
   border-bottom: 1px solid var(--border) !important;
   color: var(--text);
 }
-.history-table tr.clickable:hover, .history-table tbody tr:hover { background: rgba(29,29,31,0.03) !important; }
+.history-table tr.clickable:hover, .history-table tbody tr:hover,
+.recent-table tbody tr:hover { background: var(--surface-hover) !important; }
 
 /* ============================================================
    Filters
@@ -404,80 +496,109 @@ input[type="search"], input[type="tel"], select, textarea {
 .filters-bar { background: transparent !important; }
 
 /* ============================================================
-   Modals & dialogs
+   Modals & dialogs — BOTH scrim name-sets
+   (app.js / bulk_export_modal.js create .modal-backdrop /
+   .overlay-backdrop; history/locations create .modal-overlay)
    ============================================================ */
 
-.modal-overlay, .ea-overlay-backdrop {
-  background: rgba(255,255,255,0.30) !important;
-  backdrop-filter: blur(12px) saturate(160%) !important;
-  -webkit-backdrop-filter: blur(12px) saturate(160%) !important;
+.modal-overlay, .ea-overlay-backdrop,
+.modal-backdrop, .overlay-backdrop {
+  background: rgba(16, 24, 40, 0.45) !important;
+  backdrop-filter: blur(2px) !important;
+  -webkit-backdrop-filter: blur(2px) !important;
 }
 .modal, .ea-overlay {
-  border-radius: 20px !important;
-  background: rgba(255,255,255,0.84) !important;
-  border: 1px solid rgba(29,29,31,0.10) !important;
-  backdrop-filter: blur(40px) saturate(200%) !important;
-  -webkit-backdrop-filter: blur(40px) saturate(200%) !important;
-  box-shadow:
-    0 0.5px 0 rgba(255,255,255,0.6) inset,
-    0 24px 60px rgba(29,29,31,0.14) !important;
+  border-radius: var(--radius-lg) !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: var(--shadow-lg) !important;
   color: var(--text);
 }
+.overlay-card {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: var(--shadow-lg) !important;
+  color: var(--text) !important;
+}
+.overlay-spinner {
+  border-color: var(--surface-3) !important;
+  border-top-color: var(--accent) !important;
+}
+
+/* ============================================================
+   Toasts
+   ============================================================ */
+
+.toast-msg {
+  background: var(--surface) !important;
+  border: 1px solid var(--border-strong) !important;
+  color: var(--text) !important;
+  border-radius: var(--radius-sm) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+.toast-msg.toast-success { border-left: 3px solid var(--success) !important; }
+.toast-msg.toast-error   { border-left: 3px solid var(--danger) !important; color: var(--danger) !important; }
+.toast-msg.toast-info    { border-left: 3px solid var(--accent) !important; }
 
 /* ============================================================
    Flash messages
    ============================================================ */
 
 .flash-msg {
-  border-radius: 12px !important;
-  background: rgba(255,255,255,0.84) !important;
+  border-radius: var(--radius-sm) !important;
+  background: var(--surface) !important;
   border: 1px solid var(--border-strong) !important;
   color: var(--text) !important;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-xs);
 }
-.flash-msg.success { border-color: rgba(30,158,95,0.35); }
-.flash-msg.error, .flash-msg.danger { border-color: rgba(215,44,44,0.35); }
+.flash-msg.success { border-color: rgba(6, 118, 71, 0.35); }
+.flash-msg.error, .flash-msg.danger { border-color: rgba(180, 35, 24, 0.35); }
 
 /* ============================================================
-   Active Jobs dock — bottom-right pill
+   Active Jobs dock
    ============================================================ */
 
 .ajd-pill {
   border-radius: 999px !important;
   padding: 10px 16px !important;
-  background: var(--glass-strong) !important;
-  border: 1px solid rgba(29,29,31,0.10) !important;
-  backdrop-filter: blur(32px) saturate(200%) !important;
-  -webkit-backdrop-filter: blur(32px) saturate(200%) !important;
-  box-shadow: 0 8px 28px rgba(29,29,31,0.12) !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--border-strong) !important;
+  box-shadow: var(--shadow-md) !important;
   color: var(--text) !important;
 }
 .ajd-pill:hover { transform: translateY(-1px); }
-.ajd-pill-dot { background: var(--accent) !important; box-shadow: 0 0 0 4px rgba(0,113,227,0.18); }
+.ajd-pill-dot { background: var(--accent) !important; box-shadow: 0 0 0 4px var(--accent-soft); }
 .ajd-pill-count, .ajd-pill-label { color: var(--text) !important; }
 
 .ajd-panel {
-  border-radius: 18px !important;
-  background: rgba(255,255,255,0.84) !important;
-  border: 1px solid rgba(29,29,31,0.10) !important;
-  backdrop-filter: blur(40px) saturate(200%) !important;
-  -webkit-backdrop-filter: blur(40px) saturate(200%) !important;
-  box-shadow: 0 24px 70px rgba(29,29,31,0.20) !important;
+  border-radius: var(--radius-lg) !important;
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: var(--shadow-lg) !important;
   color: var(--text);
 }
 .ajd-panel-header, .ajd-panel-title { color: var(--text) !important; }
+.ajd-row { border-bottom: 1px solid var(--border) !important; color: var(--text) !important; }
+.ajd-pill-status.queued, .ajd-status.queued {
+  color: var(--accent) !important;
+}
 
 /* ============================================================
-   Impersonation banner
+   Impersonation banner (children hardcode #fff in app.css)
    ============================================================ */
 
 .impersonation-banner {
-  background: linear-gradient(90deg, rgba(215,44,44,0.14), rgba(215,44,44,0.06)) !important;
-  border-bottom: 1px solid rgba(215,44,44,0.35) !important;
+  background: var(--danger-bg) !important;
+  border-bottom: 1px solid rgba(180, 35, 24, 0.35) !important;
   color: var(--text) !important;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+}
+.impersonation-text strong { color: var(--danger) !important; }
+.impersonation-dot { background: var(--danger) !important; }
+.impersonation-stop {
+  background: var(--danger) !important;
+  color: #FFFFFF !important;
+  border: 1px solid var(--danger) !important;
+  border-radius: var(--radius-sm) !important;
 }
 
 /* ============================================================
@@ -485,9 +606,9 @@ input[type="search"], input[type="tel"], select, textarea {
    ============================================================ */
 
 .skeleton {
-  background: linear-gradient(90deg, var(--surface-2) 0%, rgba(255,255,255,0.4) 50%, var(--surface-2) 100%) !important;
+  background: linear-gradient(90deg, var(--surface-2) 0%, var(--surface-3) 50%, var(--surface-2) 100%) !important;
   background-size: 200% 100% !important;
-  border-radius: 8px !important;
+  border-radius: var(--radius-sm) !important;
 }
 
 /* ============================================================
@@ -495,13 +616,12 @@ input[type="search"], input[type="tel"], select, textarea {
    ============================================================ */
 
 details.collapsible, details.settings-section, details.report-location {
-  background: rgba(255,255,255,0.78) !important;
+  background: var(--surface) !important;
   border: 1px solid var(--border) !important;
   border-radius: var(--radius) !important;
   margin-bottom: 12px;
   padding: 0 !important;
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-xs);
 }
 details.collapsible > summary,
 details.settings-section > summary,
@@ -520,7 +640,7 @@ details.settings-section[open] > summary { border-bottom: 1px solid var(--border
 .collapsible-body { padding: 18px 22px !important; }
 
 /* ============================================================
-   Toggles (checkbox switches in Settings → Grading)
+   Toggle switch
    ============================================================ */
 
 .toggle-sw {
@@ -529,7 +649,7 @@ details.settings-section[open] > summary { border-bottom: 1px solid var(--border
 .toggle-sw input { display: none; }
 .toggle-sw .slider {
   position: absolute; inset: 0;
-  background: rgba(29,29,31,0.15);
+  background: var(--surface-3);
   border-radius: 999px;
   transition: background 160ms;
   cursor: pointer;
@@ -540,44 +660,57 @@ details.settings-section[open] > summary { border-bottom: 1px solid var(--border
   width: 18px; height: 18px;
   border-radius: 50%;
   background: #FFFFFF;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.20);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.20);
   transition: left 160ms;
 }
 .toggle-sw input:checked + .slider { background: var(--accent); }
 .toggle-sw input:checked + .slider::before { left: 20px; }
 
 /* ============================================================
-   Code/mono numerals
+   Pill toggle (grade-target segmented control)
    ============================================================ */
 
-.text-mono, .num, [class*="-mono"], code, kbd {
-  font-family: "Geist Mono", "JetBrains Mono", "SF Mono", monospace !important;
-  font-feature-settings: "tnum";
+.pill-toggle {
+  background: var(--surface-2) !important;
+  border: 1px solid var(--border) !important;
+}
+.pill-toggle .pill { color: var(--muted); }
+.pill-toggle .pill:hover:not(.is-active):not(:disabled) {
+  color: var(--text);
+  background: var(--surface-3);
+}
+.pill-toggle .pill.is-active {
+  background: var(--accent);
+  color: #FFFFFF;
 }
 
 /* ============================================================
-   MIDNIGHT mode — uncomment to switch the whole app to dark
-   ------------------------------------------------------------
-   Replace the :root block at the top of this file with the
-   following, OR add `data-mood="midnight"` to <html> in
-   base.html and uncomment the block below.
+   Clarifying-questions yes/no (selected state lacked a text color)
    ============================================================ */
-/*
-html[data-mood="midnight"] {
-  --bg:             #0A0E1A;
-  --surface:        #0F1424;
-  --surface-2:      #161D31;
-  --surface-3:      #1F2840;
-  --border:         rgba(255,255,255,0.07);
-  --border-strong:  rgba(255,255,255,0.16);
-  --text:           #F4F6FB;
-  --muted:          #7984A5;
-  --muted-2:        #525B79;
-  --accent:         #6FB0FF;
-  --accent-h:       #92C3FF;
-  --accent-d:       #3D8AE0;
-  --accent-soft:    rgba(111,176,255,0.14);
-  --glass:          rgba(15,20,36,0.55);
-  --glass-strong:   rgba(15,20,36,0.78);
+
+.cq-yesno-btn.selected {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: #FFFFFF !important;
 }
-*/
+
+/* ============================================================
+   Audio — native player must not be inverted on light
+   ============================================================ */
+
+audio.app-audio { filter: none !important; }
+
+/* ============================================================
+   Health/usage accents (platform admin)
+   ============================================================ */
+
+tr.row-flagged { background: var(--warning-bg) !important; }
+
+/* ============================================================
+   Mono / numerals
+   ============================================================ */
+
+.text-mono, .num, [class*="-mono"], code, kbd {
+  font-family: var(--mono) !important;
+  font-feature-settings: "tnum";
+}

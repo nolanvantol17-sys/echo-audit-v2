@@ -48,9 +48,9 @@
     border: 1px solid var(--border);
     color: var(--text);
   }
-  .pc-pill.good { background: rgba(168,232,71,0.22); border-color: rgba(168,232,71,0.50); color: var(--success); }
-  .pc-pill.warn { background: rgba(255,140,42,0.22); border-color: rgba(255,140,42,0.50); color: var(--warning); }
-  .pc-pill.bad  { background: rgba(255,92,74,0.15); border-color: rgba(255,92,74,0.50); color: var(--danger); }
+  .pc-pill.good { background: var(--success-bg); border-color: var(--success); color: var(--success); }
+  .pc-pill.warn { background: var(--warning-bg); border-color: var(--warning); color: var(--warning); }
+  .pc-pill.bad  { background: var(--danger-bg); border-color: var(--danger); color: var(--danger); }
   .project-card .pc-actions { display: flex; gap: 8px; margin-top: auto; padding-top: 12px; flex-wrap: wrap; }
   .project-card .pc-actions .btn { flex: 1 1 auto; }
   .project-card .pc-actions .btn-pc-delete {
@@ -61,8 +61,8 @@
   }
   .project-card .pc-actions .btn-pc-delete:hover {
     color: var(--danger);
-    border-color: rgba(255,92,74,0.50);
-    background: rgba(255,92,74,0.14);
+    border-color: var(--danger);
+    background: var(--danger-bg);
   }
   .project-card.fading-out {
     opacity: 0;
@@ -76,9 +76,9 @@
     padding: 2px 8px;
     border-radius: 999px;
     font-size: 0.72rem;
-    background: rgba(79,93,117,0.12);
+    background: var(--accent-soft);
     color: var(--accent);
-    border: 1px solid rgba(79,93,117,0.35);
+    border: 1px solid var(--accent);
     margin-left: 6px;
   }
 
@@ -95,7 +95,7 @@
   .wizard-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(31,26,20,0.82);
+    background: rgba(16,24,40,0.48);
     z-index: 150;
     display: flex;
     align-items: stretch;
@@ -113,7 +113,7 @@
     display: flex;
     flex-direction: column;
     max-height: calc(100vh - 56px);
-    box-shadow: 0 18px 60px rgba(0,0,0,0.55);
+    box-shadow: 0 18px 60px rgba(16,24,40,0.18);
   }
   .wizard-header {
     position: relative;
@@ -196,7 +196,7 @@
   .starter-card:hover { border-color: var(--border-strong); }
   .starter-card.active {
     border-color: var(--accent);
-    background: rgba(79,93,117,0.08);
+    background: var(--accent-soft);
   }
   .starter-icon  { font-size: 1.4rem; line-height: 1; }
   .starter-title { font-weight: 600; color: var(--text); font-size: 0.92rem; }
@@ -227,7 +227,7 @@
   .grade-target-choice input:checked ~ .gt-copy { color: var(--text); }
   .grade-target-choice label:has(input:checked) {
     border-color: var(--accent);
-    background: rgba(79,93,117,0.08);
+    background: var(--accent-soft);
   }
   .gt-copy-title { font-weight: 600; color: var(--text); font-size: 0.9rem; }
   .gt-copy-sub   { color: var(--muted); font-size: 0.8rem; margin-top: 2px; }
