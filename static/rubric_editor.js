@@ -133,8 +133,8 @@
       return (
         '<div class="pill-toggle" data-role="grade-target" role="group" ' +
           'aria-label="Who is being graded">' +
-          pill("respondent", "The person who answered the call") +
-          pill("caller", "The person who placed the call") +
+          pill("caller", "Caller") +
+          pill("respondent", "Respondent") +
         '</div>'
       );
     }
