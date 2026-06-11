@@ -29,10 +29,11 @@
   --border:         rgba(16, 24, 40, 0.08);
   --border-strong:  rgba(16, 24, 40, 0.16);
 
-  /* Text */
+  /* Text — muted-2 is #667085 (4.98:1 on white) because it's used as
+     real text (table headers, section labels, ticks); #98A2B3 fails AA. */
   --text:           #101828;
   --muted:          #475467;
-  --muted-2:        #98A2B3;
+  --muted-2:        #667085;
 
   /* Accent — single indigo */
   --accent:         #4F46E5;
@@ -43,12 +44,12 @@
   /* Semantic — muted professional, AA on white */
   --success:        #067647;
   --success-bg:     rgba(6, 118, 71, 0.10);
-  --warning:        #B54708;
+  --warning:        #9A3E06;   /* dark enough to stay AA on tinted/surface-2 contexts */
   --warning-bg:     rgba(247, 144, 9, 0.12);
   --danger:         #B42318;
   --danger-bg:      rgba(217, 45, 32, 0.08);
   --amber-bg:       rgba(247, 144, 9, 0.12);   /* settings.html consumer */
-  --amber-fg:       #B54708;
+  --amber-fg:       #9A3E06;
 
   /* Typography */
   --mono:           "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
@@ -63,10 +64,6 @@
   --shadow-sm:      0 1px 3px rgba(16, 24, 40, 0.07), 0 1px 2px rgba(16, 24, 40, 0.04);
   --shadow-md:      0 8px 24px -6px rgba(16, 24, 40, 0.12);
   --shadow-lg:      0 24px 48px -12px rgba(16, 24, 40, 0.18);
-
-  /* Legacy glass tokens still consumed by app.css selectors */
-  --glass:          rgba(255, 255, 255, 0.92);
-  --glass-strong:   #FFFFFF;
 }
 
 /* ============================================================
@@ -339,6 +336,18 @@ input[type="search"], input[type="tel"], select, textarea {
   box-shadow: var(--shadow-xs) !important;
 }
 
+/* platform.html's tab strip is a bare <nav> that app.css styles as an
+   underline row — restyle as the same segmented control as .tabs, else
+   the active white chip is invisible on the page background. */
+.platform-tabs {
+  display: inline-flex !important;
+  gap: 2px !important;
+  padding: 3px !important;
+  background: var(--surface-2) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+}
+
 /* ============================================================
    Score & status pills
    ============================================================ */
@@ -387,14 +396,16 @@ input[type="search"], input[type="tel"], select, textarea {
 .status-pill.status-awaiting_clarification, .status-pill.status-awaiting-clarification {
   background: var(--warning-bg); border-color: rgba(181, 71, 8, 0.25); color: var(--warning);
 }
-.status-pill.status-failed {
+/* 'failed' has no slug of its own — the VoIP queue maps failed states to
+   status-inactive, and app.css gave -inactive the danger treatment. */
+.status-pill.status-inactive {
   background: var(--danger-bg); border-color: rgba(180, 35, 24, 0.25); color: var(--danger);
 }
 .status-pill.status-test {
   background: var(--accent-soft); border-color: rgba(79, 70, 229, 0.25); color: var(--accent);
 }
 .status-pill.status-no_answer, .status-pill.status-no-answer,
-.status-pill.status-skipped, .status-pill.status-inactive {
+.status-pill.status-skipped {
   background: var(--surface-2); border-color: var(--border); color: var(--muted);
 }
 .status-pill.status-active {
@@ -507,6 +518,42 @@ input[type="search"], input[type="tel"], select, textarea {
   backdrop-filter: blur(2px) !important;
   -webkit-backdrop-filter: blur(2px) !important;
 }
+
+/* .modal-overlay / .modal-card (export-progress dialogs in history +
+   locations) had NO layout or card styles anywhere — they rendered as an
+   in-flow band at the bottom of the page. Give them the same treatment
+   as .modal-backdrop / .modal. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 260;
+  padding: 20px;
+}
+.modal-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  width: 100%;
+  max-width: 520px;
+}
+.modal-card .modal-header {
+  padding: 16px 22px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.modal-card .modal-body { padding: 18px 22px; }
+.modal-card .modal-footer {
+  padding: 14px 22px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .modal, .ea-overlay {
   border-radius: var(--radius-lg) !important;
   background: var(--surface) !important;
@@ -551,8 +598,11 @@ input[type="search"], input[type="tel"], select, textarea {
   color: var(--text) !important;
   box-shadow: var(--shadow-xs);
 }
-.flash-msg.success { border-color: rgba(6, 118, 71, 0.35); }
-.flash-msg.error, .flash-msg.danger { border-color: rgba(180, 35, 24, 0.35); }
+/* !important required: the base rule's border shorthand is !important,
+   which would otherwise beat these longhands regardless of order. */
+.flash-msg.success { border-color: rgba(6, 118, 71, 0.35) !important; }
+.flash-msg.error, .flash-msg.danger { border-color: rgba(180, 35, 24, 0.35) !important; }
+.flash-msg.warning { border-color: rgba(154, 62, 6, 0.35) !important; }
 
 /* ============================================================
    Active Jobs dock
@@ -579,9 +629,8 @@ input[type="search"], input[type="tel"], select, textarea {
 }
 .ajd-panel-header, .ajd-panel-title { color: var(--text) !important; }
 .ajd-row { border-bottom: 1px solid var(--border) !important; color: var(--text) !important; }
-.ajd-pill-status.queued, .ajd-status.queued {
-  color: var(--accent) !important;
-}
+.ajd-pill-status.queued { color: var(--accent) !important; }
+.ajd-pill:hover { border-color: var(--accent) !important; }
 
 /* ============================================================
    Impersonation banner (children hardcode #fff in app.css)
@@ -591,6 +640,7 @@ input[type="search"], input[type="tel"], select, textarea {
   background: var(--danger-bg) !important;
   border-bottom: 1px solid rgba(180, 35, 24, 0.35) !important;
   color: var(--text) !important;
+  box-shadow: var(--shadow-xs) !important;
 }
 .impersonation-text strong { color: var(--danger) !important; }
 .impersonation-dot { background: var(--danger) !important; }
@@ -600,6 +650,7 @@ input[type="search"], input[type="tel"], select, textarea {
   border: 1px solid var(--danger) !important;
   border-radius: var(--radius-sm) !important;
 }
+.impersonation-stop:hover { background: #9A1C12 !important; border-color: #9A1C12 !important; }
 
 /* ============================================================
    Skeleton (loading)
@@ -705,6 +756,22 @@ audio.app-audio { filter: none !important; }
    ============================================================ */
 
 tr.row-flagged { background: var(--warning-bg) !important; }
+/* app.css paints cells with an old coral tint ON TOP of the row wash */
+tr.row-flagged td { background: transparent !important; }
+/* white-on-white leaks tuned for the dark theme */
+.usage-bar { background: var(--surface-3) !important; }
+.org-detail-body {
+  background: var(--surface-2) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-sm) !important;
+}
+
+/* ============================================================
+   Side panel (interaction detail slide-in)
+   ============================================================ */
+
+.side-panel { box-shadow: var(--shadow-lg) !important; }
+.side-panel-backdrop { background: rgba(16, 24, 40, 0.45) !important; }
 
 /* ============================================================
    Mono / numerals

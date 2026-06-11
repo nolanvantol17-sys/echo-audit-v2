@@ -37,7 +37,7 @@
     .ea-ms-popover {
       position: absolute; z-index: 1200; min-width: 220px; max-width: 340px;
       background: var(--surface,#FFFDF9); border: 1px solid var(--border,#D8CFC2);
-      border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+      border-radius: 8px; box-shadow: 0 6px 18px rgba(16,24,40,0.12);
       padding: 8px; max-height: 340px; display: flex; flex-direction: column;
     }
     .ea-ms-popover input.ea-ms-search {
