@@ -453,10 +453,11 @@
       return;
     }
     editorHandle = EA.RubricEditor.mount({
-      container:     mount,
-      rubricGroupId: state.summary.rubric_group_id,
-      gradeTarget:   state.summary.rg_grade_target || "respondent",
-      isAdmin:       IS_ADMIN,
+      container:       mount,
+      rubricGroupId:   state.summary.rubric_group_id,
+      gradeTarget:     state.summary.rg_grade_target || "respondent",
+      referenceScript: state.summary.rg_reference_script || "",
+      isAdmin:         IS_ADMIN,
     });
   }
 

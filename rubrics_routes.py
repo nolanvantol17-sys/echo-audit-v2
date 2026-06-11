@@ -188,6 +188,7 @@ def list_rubric_groups():
     try:
         cur = conn.execute(
             q("""SELECT rg.rubric_group_id, rg.rg_name, rg.rg_grade_target,
+                        rg.rg_reference_script,
                         rg.location_id, l.location_name, rg.status_id,
                         s.status_name, rg.rg_source_industry_id,
                         rg.rg_created_at, rg.rg_updated_at
@@ -261,11 +262,18 @@ def update_rubric_group(rubric_group_id):
     if err: return err
 
     body = _body()
-    allowed = ("rg_name", "rg_grade_target", "location_id", "status_id")
+    allowed = ("rg_name", "rg_grade_target", "rg_reference_script",
+               "location_id", "status_id")
     fields = {k: body[k] for k in allowed if k in body}
 
     if "rg_grade_target" in fields and fields["rg_grade_target"] not in _VALID_GRADE_TARGETS:
         return _err("Please choose who you're grading: the person who placed the call or the person who answered the call.", 400)
+
+    # Normalize a blank/whitespace-only script to NULL so the grader cleanly
+    # omits the block rather than injecting an empty heading.
+    if "rg_reference_script" in fields:
+        s = fields["rg_reference_script"]
+        fields["rg_reference_script"] = s.strip() if isinstance(s, str) and s.strip() else None
 
     conn = get_conn()
     try:

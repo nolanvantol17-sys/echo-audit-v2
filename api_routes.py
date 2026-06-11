@@ -1921,7 +1921,8 @@ def get_project_summary(project_id):
                    COALESCE(l_phr.location_name,  l_rubric.location_name)  AS location_name,
                    COALESCE(l_phr.location_phone, l_rubric.location_phone) AS location_phone,
                    rg.rg_name AS rubric_group_name,
-                   rg.rg_grade_target
+                   rg.rg_grade_target,
+                   rg.rg_reference_script
             FROM projects p
             LEFT JOIN statuses      s  ON s.status_id      = p.status_id
             LEFT JOIN phone_routing phr ON phr.phone_routing_id = p.phone_routing_id
