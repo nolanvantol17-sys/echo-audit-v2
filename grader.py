@@ -235,15 +235,20 @@ def grade_with_claude(
     criteria_list = rubric_criteria or _DEFAULT_CRITERIA
     rubric_text = build_rubric_prompt(criteria_list)
 
+    _, grade_target_label = _normalize_grade_target(grade_target)
+
     script_block = ""
     if rubric_script and rubric_script.strip():
-        script_block = f"\n\nAGENT SCRIPT — Grade whether the agent followed this script:\n{rubric_script.strip()}\n"
+        # Label the script for whoever is being graded so the model checks the
+        # right speaker's adherence (a caller script must not read as 'AGENT').
+        script_block = (
+            f"\n\nREFERENCE SCRIPT — Grade whether {grade_target_label} "
+            f"followed this script:\n{rubric_script.strip()}\n"
+        )
 
     call_context_block = ""
     if rubric_context and rubric_context.strip():
         call_context_block = f"\n\nCALL TYPE / CONTEXT:\n{rubric_context.strip()}\n"
-
-    _, grade_target_label = _normalize_grade_target(grade_target)
     grade_target_block = f"\n\nGRADE TARGET: You are evaluating {grade_target_label}. Focus your scoring and feedback on this person's performance.\n"
 
     scores_parts, conf_parts, ts_parts, expl_parts = [], [], [], []

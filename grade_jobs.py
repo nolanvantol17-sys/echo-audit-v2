@@ -305,7 +305,8 @@ def _load_criteria_for_project(project_id):
         items = _load_rubric_items(conn, rg_id)
         criteria = _items_to_criteria(items)
         grade_target = (rubric_group or {}).get("rg_grade_target") or "respondent"
-        return criteria, None, None, grade_target
+        script_text = (rubric_group or {}).get("rg_reference_script") or None
+        return criteria, script_text, None, grade_target
     finally:
         conn.close()
 

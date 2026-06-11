@@ -772,6 +772,53 @@ button { font-family: inherit; }
   line-height: 1.45;
 }
 
+/* Grading settings block (who is graded + reference script) */
+.rubric-settings {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rubric-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.rubric-setting-row.rubric-setting-col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.rubric-setting-label { font-weight: 600; font-size: 0.9rem; }
+.rubric-settings textarea[data-role="ref-script"] {
+  width: 100%;
+  font-family: var(--mono, monospace);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  resize: vertical;
+}
+.rubric-settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rubric-script-readonly {
+  white-space: pre-wrap;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+}
+
 .rubric-item {
   background: var(--surface-2);
   border: 1px solid var(--border);

@@ -124,7 +124,7 @@ def _active_project(company_id):
     conn = get_conn()
     try:
         cur = conn.execute(
-            q("""SELECT p.*, rg.rg_grade_target
+            q("""SELECT p.*, rg.rg_grade_target, rg.rg_reference_script
                  FROM projects p
                  JOIN rubric_groups rg ON rg.rubric_group_id = p.rubric_group_id
                  WHERE p.company_id = ?
@@ -153,7 +153,7 @@ def _project_by_id(project_id, company_id):
     conn = get_conn()
     try:
         cur = conn.execute(
-            q("""SELECT p.*, rg.rg_grade_target
+            q("""SELECT p.*, rg.rg_grade_target, rg.rg_reference_script
                    FROM projects p
                    JOIN rubric_groups rg ON rg.rubric_group_id = p.rubric_group_id
                   WHERE p.project_id = ?
@@ -710,7 +710,7 @@ def _grade_and_finalize(voip_queue_id, interaction_id, *,
         grade_result = grader.grade_with_claude(
             transcript=transcript,
             rubric_criteria=criteria,
-            rubric_script=None,
+            rubric_script=project.get("rg_reference_script") or None,
             rubric_context=None,
             grade_target=project.get("rg_grade_target") or "respondent",
         )

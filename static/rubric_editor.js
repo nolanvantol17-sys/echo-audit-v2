@@ -46,9 +46,14 @@
     opts = opts || {};
     const container     = opts.container;
     const rubricGroupId = opts.rubricGroupId;
-    const gradeTarget   = opts.gradeTarget || "respondent";
     const isAdmin       = !!opts.isAdmin;
     const onChange      = typeof opts.onChange === "function" ? opts.onChange : null;
+
+    // grade target is mutable: the settings toggle below can change it, and
+    // handleGuidanceGenerate reads the current value when asking the AI to
+    // draft scoring guidance for the right person.
+    let gradeTarget = opts.gradeTarget || "respondent";
+    let referenceScript = opts.referenceScript || "";
 
     if (!container)     throw new Error("EA.RubricEditor.mount: container is required");
     if (!rubricGroupId) throw new Error("EA.RubricEditor.mount: rubricGroupId is required");
@@ -66,6 +71,62 @@
       listeners.push(function () { el.removeEventListener(ev, fn); });
     }
 
+    function settingsHtml() {
+      // Grading settings block: who is graded + the optional reference script
+      // the graded person should follow. Admins get editable controls; others
+      // see a read-only view (and the script only if one is set).
+      const tRespSel = gradeTarget === "respondent" ? " selected" : "";
+      const tCallSel = gradeTarget === "caller" ? " selected" : "";
+      if (isAdmin) {
+        return (
+          '<div class="rubric-settings" data-role="rubric-settings">' +
+            '<div class="panel-title">Grading settings</div>' +
+            '<label class="rubric-setting-row">' +
+              '<span class="rubric-setting-label">Who is being graded?</span>' +
+              '<select data-role="grade-target" class="input">' +
+                '<option value="respondent"' + tRespSel + '>The person who answered the call</option>' +
+                '<option value="caller"' + tCallSel + '>The person who placed the call</option>' +
+              '</select>' +
+            '</label>' +
+            '<div class="rubric-snapshot-note">Changing who is graded affects future grades only.</div>' +
+            '<label class="rubric-setting-row rubric-setting-col">' +
+              '<span class="rubric-setting-label">Script the graded person should follow ' +
+                '<span class="muted">(optional)</span></span>' +
+              '<textarea data-role="ref-script" class="input" rows="8" ' +
+                'placeholder="Paste the script the graded person is supposed to follow. ' +
+                'The AI grader will score how closely they followed it.">' +
+                EA.esc(referenceScript) +
+              '</textarea>' +
+            '</label>' +
+            '<div class="rubric-settings-actions">' +
+              '<button type="button" class="btn btn-primary btn-sm" data-act="save-script">Save script</button>' +
+              '<span class="muted" data-role="script-status"></span>' +
+            '</div>' +
+          '</div>'
+        );
+      }
+      // Non-admin read-only view.
+      const targetText = gradeTarget === "caller"
+        ? "The person who placed the call"
+        : "The person who answered the call";
+      const scriptRo = referenceScript
+        ? '<div class="rubric-setting-row rubric-setting-col">' +
+            '<span class="rubric-setting-label">Script the graded person should follow</span>' +
+            '<pre class="rubric-script-readonly">' + EA.esc(referenceScript) + '</pre>' +
+          '</div>'
+        : '';
+      return (
+        '<div class="rubric-settings" data-role="rubric-settings">' +
+          '<div class="panel-title">Grading settings</div>' +
+          '<div class="rubric-setting-row">' +
+            '<span class="rubric-setting-label">Who is being graded?</span>' +
+            '<span>' + targetText + '</span>' +
+          '</div>' +
+          scriptRo +
+        '</div>'
+      );
+    }
+
     function shellHtml() {
       const emptyHintHtml = isAdmin
         ? '<div class="empty-state" data-role="empty-hint" hidden>' +
@@ -75,6 +136,7 @@
             'This project has no rubric items yet.' +
           '</div>';
       return (
+        settingsHtml() +
         '<div class="rubric-editor-header">' +
           '<div class="panel-title">Rubric items</div>' +
           (isAdmin
@@ -230,6 +292,53 @@
     if (isAdmin) {
       const addBtn = container.querySelector('[data-act="add-item"]');
       on(addBtn, "click", function () { if (view) view.addBlankRow(); });
+
+      // Grade-target toggle → PUT rg_grade_target on the rubric group.
+      const targetSel = container.querySelector('[data-role="grade-target"]');
+      on(targetSel, "change", async function () {
+        const prev = gradeTarget;
+        const next = targetSel.value;
+        if (next === prev) return;
+        try {
+          await EA.fetchJSON("/api/rubric-groups/" + rubricGroupId, {
+            method: "PUT", body: { rg_grade_target: next },
+          });
+          gradeTarget = next;
+          EA.toast("Updated who is being graded.", "success");
+          if (onChange) onChange();
+        } catch (err) {
+          targetSel.value = prev;  // revert UI to the persisted value
+          EA.toast(err.message || "Couldn't update grade target.", "error");
+        }
+      });
+
+      // Save script → PUT rg_reference_script on the rubric group.
+      const scriptEl = container.querySelector('[data-role="ref-script"]');
+      const saveBtn  = container.querySelector('[data-act="save-script"]');
+      const statusEl = container.querySelector('[data-role="script-status"]');
+      on(saveBtn, "click", async function () {
+        const val = scriptEl ? scriptEl.value : "";
+        saveBtn.disabled = true;
+        if (statusEl) statusEl.textContent = "Saving…";
+        try {
+          await EA.fetchJSON("/api/rubric-groups/" + rubricGroupId, {
+            method: "PUT", body: { rg_reference_script: val },
+          });
+          referenceScript = (val || "").trim();
+          if (statusEl) statusEl.textContent = "Saved.";
+          EA.toast("Script saved.", "success");
+          if (onChange) onChange();
+        } catch (err) {
+          if (statusEl) statusEl.textContent = "";
+          EA.toast(err.message || "Couldn't save script.", "error");
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+      // Clear the "Saved." note once the admin edits again.
+      on(scriptEl, "input", function () {
+        if (statusEl) statusEl.textContent = "";
+      });
     }
 
     loadItems();

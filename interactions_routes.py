@@ -190,7 +190,8 @@ def _load_rubric_items(conn, rubric_group_id):
 
 def _load_rubric_group(conn, rubric_group_id):
     cur = conn.execute(
-        q("""SELECT rubric_group_id, rg_name, rg_grade_target
+        q("""SELECT rubric_group_id, rg_name, rg_grade_target,
+                    rg_reference_script
              FROM rubric_groups
              WHERE rubric_group_id = ? AND rg_deleted_at IS NULL"""),
         (rubric_group_id,),
@@ -978,6 +979,7 @@ def submit_grade():
             if rubric_group is None:
                 return _err("Project's rubric_group is missing or deleted", 500)
             grade_target = rubric_group["rg_grade_target"] or "respondent"
+            script_text = rubric_group.get("rg_reference_script") or None
             items = _load_rubric_items(conn, project["rubric_group_id"])
             if not items:
                 return _err("Project rubric has no items", 400)
@@ -1759,6 +1761,7 @@ def regrade_with_context(interaction_id):
         else:
             rubric_group = _load_rubric_group(conn, project["rubric_group_id"])
             grade_target = (rubric_group or {}).get("rg_grade_target") or "respondent"
+            script_text = (rubric_group or {}).get("rg_reference_script") or None
             items = _load_rubric_items(conn, project["rubric_group_id"])
             if not items:
                 return _err("Project rubric has no items", 400)

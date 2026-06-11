@@ -380,6 +380,10 @@ CREATE TABLE rubric_groups (
                               -- NULL = industry-level template
     rg_name               TEXT NOT NULL,
     rg_grade_target       TEXT NOT NULL,
+    -- Optional reference script the GRADED person (per rg_grade_target) should
+    -- follow. Injected into the Claude grading prompt so the AI scores script
+    -- adherence. NULL/blank = no script (grader omits the block).
+    rg_reference_script   TEXT,
     rg_source_industry_id INTEGER,   -- lineage only, NOT an FK
     status_id             INTEGER NOT NULL DEFAULT 1
                               REFERENCES statuses (status_id) ON DELETE RESTRICT,
