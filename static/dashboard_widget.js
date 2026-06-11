@@ -176,7 +176,7 @@
       background: var(--surface-2); border: 1px solid var(--border);
       color: var(--text); font-size: 0.74rem; padding: 3px 6px;
       border-radius: 6px; font-family: inherit;
-      color-scheme: dark;
+      color-scheme: light;
       width: 132px;
     }
     .daw-date-input:hover { border-color: var(--accent); }
@@ -214,7 +214,7 @@
       font-family: inherit; cursor: pointer;
     }
     .daw-share-banner-reset:hover {
-      background: var(--accent); color: var(--text); border-color: var(--accent);
+      background: var(--accent); color: #fff; border-color: var(--accent);
     }
     .daw-share-btn:active {
       transform: translateY(1px);
@@ -223,7 +223,7 @@
     .daw-popover {
       position: absolute; z-index: 50; min-width: 220px; max-width: 320px;
       background: var(--surface); border: 1px solid var(--border);
-      border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.30);
+      border-radius: 8px; box-shadow: 0 6px 18px rgba(16,24,40,0.12);
       padding: 8px; max-height: 320px; display: flex; flex-direction: column;
     }
     .daw-popover input.daw-popover-search {
@@ -265,7 +265,7 @@
 
     .daw-chart-loading {
       position: absolute; inset: 0; display: flex; align-items: center;
-      justify-content: center; background: rgba(26,31,31,0.55);
+      justify-content: center; background: rgba(255,255,255,0.65);
       border-radius: var(--radius); z-index: 2; backdrop-filter: blur(1px);
     }
     .daw-spinner {
@@ -538,12 +538,12 @@
     const cache = new Map();
     const root = document.documentElement;
     return function resolve(val) {
-      if (!val) return "#9C9183";
+      if (!val) return "#98A2B3";
       const m = /^var\((--[^)]+)\)$/.exec(String(val).trim());
       if (!m) return val;
       const key = m[1];
       if (cache.has(key)) return cache.get(key);
-      const resolved = getComputedStyle(root).getPropertyValue(key).trim() || "#9C9183";
+      const resolved = getComputedStyle(root).getPropertyValue(key).trim() || "#98A2B3";
       cache.set(key, resolved);
       return resolved;
     };
@@ -562,8 +562,8 @@
         datasets: [{
           label: "Score",
           data: dataset.data || [],
-          borderColor: "#4A8076",
-          backgroundColor: "rgba(74,128,118,0.15)",
+          borderColor: resolve("var(--accent)"),
+          backgroundColor: resolve("var(--accent-soft)"),
           borderWidth: 2,
           pointRadius: 4,
           pointHoverRadius: 6,
@@ -573,8 +573,8 @@
           fill: true,
         }],
       },
-      options: chartCommonOptions({ viewBy: "date" }),
-      plugins: [thresholdLinePlugin()],
+      options: chartCommonOptions({ viewBy: "date", resolve: resolve }),
+      plugins: [thresholdLinePlugin(resolve)],
     };
   }
 
@@ -594,15 +594,16 @@
           borderWidth: 1,
         }],
       },
-      options: chartCommonOptions({ viewBy: "aggregate" }),
-      plugins: [thresholdLinePlugin()],
+      options: chartCommonOptions({ viewBy: "aggregate", resolve: resolve }),
+      plugins: [thresholdLinePlugin(resolve)],
     };
   }
 
   function chartCommonOptions(opts) {
     opts = opts || {};
     const isDate = opts.viewBy === "date";
-    const plugins = { legend: { labels: { color: "#ECE6D9" } } };
+    const rs = opts.resolve || makeColorResolver();
+    const plugins = { legend: { labels: { color: rs("var(--muted)") } } };
     if (isDate) {
       // Date-view tooltip reads the matched row from chart.$points (stashed
       // in renderChart). Multi-line: score, caller, respondent, then a
@@ -658,12 +659,12 @@
       scales: {
         y: {
           min: 0, max: 10,
-          ticks: { color: "#9C9183", stepSize: 2 },
-          grid:  { color: "rgba(236,230,217,0.10)" },
+          ticks: { color: rs("var(--muted-2)"), stepSize: 2 },
+          grid:  { color: rs("var(--border)") },
         },
         x: {
-          ticks: { color: "#9C9183", maxRotation: 0, autoSkip: true },
-          grid:  { color: "rgba(236,230,217,0.10)" },
+          ticks: { color: rs("var(--muted-2)"), maxRotation: 0, autoSkip: true },
+          grid:  { color: rs("var(--border)") },
         },
       },
       plugins: plugins,
@@ -680,7 +681,10 @@
   // so they don't overlap when the two values are close. Either is skipped if
   // its value is null/NaN. The chart instance is expected to expose
   // chart.$thresholds = { view: number|null, company: number|null }.
-  function thresholdLinePlugin() {
+  function thresholdLinePlugin(resolve) {
+    const rs = resolve || makeColorResolver();
+    const companyColor = rs("var(--muted)");
+    const viewColor    = rs("var(--accent)");
     return {
       id: "daw-threshold-line",
       afterDraw(chartInstance) {
@@ -691,7 +695,7 @@
         const company = (typeof t.company === "number" && isFinite(t.company)) ? t.company : null;
 
         ctx.save();
-        ctx.font = "600 11px Geist, Inter, sans-serif";
+        ctx.font = "600 11px Inter, system-ui, sans-serif";
         ctx.lineWidth = 2;
 
         // Draw the value label on a translucent backing pill so it stays
@@ -709,7 +713,7 @@
 
         if (company !== null) {
           const yC = scales.y.getPixelForValue(company);
-          ctx.strokeStyle = "rgba(73,66,57,0.85)";
+          ctx.strokeStyle = companyColor;
           ctx.setLineDash([7, 4]);
           ctx.beginPath();
           ctx.moveTo(chartArea.left, yC);
@@ -717,12 +721,12 @@
           ctx.stroke();
           ctx.setLineDash([]);
           drawLabel("Company avg " + company.toFixed(2),
-                    chartArea.left + 6, yC, "left", "rgba(73,66,57,1)");
+                    chartArea.left + 6, yC, "left", companyColor);
         }
 
         if (view !== null) {
           const yV = scales.y.getPixelForValue(view);
-          ctx.strokeStyle = "rgba(38,102,90,0.95)";
+          ctx.strokeStyle = viewColor;
           ctx.setLineDash([7, 4]);
           ctx.beginPath();
           ctx.moveTo(chartArea.left, yV);
@@ -730,7 +734,7 @@
           ctx.stroke();
           ctx.setLineDash([]);
           drawLabel("View avg " + view.toFixed(2),
-                    chartArea.right - 6, yV, "right", "rgba(38,102,90,1)");
+                    chartArea.right - 6, yV, "right", viewColor);
         }
 
         ctx.restore();
