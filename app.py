@@ -100,6 +100,33 @@ def render_page(template_name, **ctx):
     return render_template(template_name, **ctx)
 
 
+# ── Manager (RM) read-only seal ───────────────────────────────────
+# The 'manager' role (Regional Managers) is locked into a sealed, read-only
+# portal: the dashboard graph + their own scoped calls + per-call reports.
+# A single before_request gate (registered in create_app) is the security
+# boundary — DENY-BY-DEFAULT, so any future route is off-limits to managers
+# unless it is explicitly allowlisted here. The gate is GET-only; every
+# write (POST/PUT/PATCH/DELETE) is blocked regardless of a route's own
+# decorators. admin / super_admin / caller are unaffected.
+_RM_ALLOWED_API_EXACT = frozenset({
+    "/api/me",
+    "/api/dashboard", "/api/dashboard/chart", "/api/dashboard/filters",
+    "/api/interactions",
+})
+_RM_ALLOWED_API_PREFIX = (
+    "/api/interactions/",          # /<id>, /<id>/audio, /<id>/export  (GET only)
+)
+# NOTE: /api/performance-reports* is intentionally NOT allowlisted yet — those
+# endpoints scope by company but not by RM property (location_scope_for_user),
+# so they'd leak cross-location scorecards. Add them in Phase 2 only AFTER
+# adding RM row-scoping in performance_reports.py.
+_RM_BLOCKED_API_EXACT = frozenset({
+    "/api/dashboard/insights",     # side-effecting GET (can trigger LLM recompute)
+})
+_RM_ALLOWED_PAGE_EXACT = frozenset({"/app/manager"})
+_RM_ALWAYS_ALLOWED = frozenset({"/logout", "/change-password"})
+
+
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
@@ -112,6 +139,40 @@ def create_app():
 
     register_routes(app)
     _register_context_processors(app)
+
+    # ── Manager (RM) read-only seal — deny-by-default request gate ──
+    # The real security boundary for the sealed RM portal. Runs before every
+    # view; for the 'manager' role it blocks all writes and all non-allowlisted
+    # reads, and bounces any other page back to the sealed home.
+    @app.before_request
+    def _seal_manager_role():
+        if not current_user.is_authenticated:
+            return None
+        if getattr(current_user, "role", None) != "manager":
+            return None
+        p = request.path
+        # Static assets, logout, and forced password rotation always pass.
+        if p.startswith("/static/") or p in _RM_ALWAYS_ALLOWED:
+            return None
+        # Block ALL writes for managers — covers every mutating route,
+        # regardless of that route's own (or missing) role decorator.
+        if request.method not in ("GET", "HEAD"):
+            if p.startswith("/api/"):
+                return jsonify({"error": "Read-only access"}), 403
+            return redirect(url_for("manager_home"))
+        # GET /api/* — allow only the read-only set; block side-effecting GETs.
+        if p.startswith("/api/"):
+            if p in _RM_BLOCKED_API_EXACT:
+                return jsonify({"error": "Read-only access"}), 403
+            if p in _RM_ALLOWED_API_EXACT or p.startswith(_RM_ALLOWED_API_PREFIX):
+                return None  # falls through to the route's own tenant/RM scoping
+            return jsonify({"error": "Read-only access"}), 403
+        # GET pages — only the sealed shell passes. Everything else (any other
+        # /app page, /, and any non-/api path like /signup or /auth/sso/*)
+        # bounces to the sealed home. Deny-by-default.
+        if p in _RM_ALLOWED_PAGE_EXACT:
+            return None
+        return redirect(url_for("manager_home"))
 
     # Phase 2 API routes
     app.register_blueprint(api_bp)
@@ -719,7 +780,18 @@ def register_routes(app):
     @app.route("/app")
     @login_required
     def app_home():
+        if current_user.role == "manager":
+            return redirect(url_for("manager_home"))
         return redirect(url_for("projects_page"))
+
+    @app.route("/app/manager")
+    @login_required
+    def manager_home():
+        # Sealed read-only RM portal. Non-managers are sent to their normal
+        # home; the before_request seal keeps managers in here.
+        if current_user.role != "manager":
+            return redirect(url_for("app_home"))
+        return render_template("manager_sealed.html")
 
     # ── Post-signup setup wizard ──
     # Walks a brand-new admin through creating one location, one rubric, and

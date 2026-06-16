@@ -1725,7 +1725,7 @@ def update_interaction_respondent(interaction_id):
 
 @interactions_bp.route("/interactions/<int:interaction_id>/regrade-with-context", methods=["POST"])
 @login_required
-@role_required("manager", "admin", "super_admin")
+@role_required("admin", "super_admin")
 def regrade_with_context(interaction_id):
     company_id, err = _require_company()
     if err: return err

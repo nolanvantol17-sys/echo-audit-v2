@@ -46,7 +46,7 @@ def _as_int(v):
 
 @scheduled_calls_bp.route("/api/grade/ai-shop", methods=["POST"])
 @login_required
-@auth.role_required("admin", "manager", "super_admin")
+@auth.role_required("admin", "super_admin")
 def schedule_ai_shop():
     """Initiate an outbound AI shop. Persists scheduled_calls row in both
     success and failure paths so the operator always has an audit trail."""
