@@ -57,7 +57,9 @@
       return;
     }
 
-    state = buildPanel(iid);
+    const sealed = (opts.sealed !== undefined) ? !!opts.sealed
+                   : !!window.EA_PANEL_SEALED;
+    state = buildPanel(iid, sealed);
     state.onClose = opts.onClose || null;
     document.body.appendChild(state.backdrop);
 
@@ -113,9 +115,20 @@
     }
   }
 
-  function buildPanel(iid) {
+  function buildPanel(iid, sealed) {
     const backdrop = document.createElement("div");
     backdrop.className = "side-panel-backdrop";
+    // Sealed (RM portal) mode: no Export ZIP and no "Open as full page" — the
+    // latter targets /app/history/<id>, which the RM seal blocks anyway.
+    const headerLinks = sealed ? '' : (
+      '<a class="btn btn-ghost btn-sm" data-role="export-zip" ' +
+         'href="/api/interactions/' + iid + '/export" download>' +
+        '↓ Export ZIP' +
+      '</a>' +
+      '<a class="btn btn-ghost btn-sm" data-role="open-full" href="/app/history/' + iid + '">' +
+        'Open as full page →' +
+      '</a>'
+    );
     backdrop.innerHTML =
       '<aside class="side-panel" role="dialog" aria-modal="false" aria-label="Interaction detail">' +
         '<header class="side-panel-header">' +
@@ -124,13 +137,7 @@
             '<span class="side-panel-score" data-role="score"></span>' +
           '</div>' +
           '<div class="side-panel-actions">' +
-            '<a class="btn btn-ghost btn-sm" data-role="export-zip" ' +
-               'href="/api/interactions/' + iid + '/export" download>' +
-              '↓ Export ZIP' +
-            '</a>' +
-            '<a class="btn btn-ghost btn-sm" data-role="open-full" href="/app/history/' + iid + '">' +
-              'Open as full page →' +
-            '</a>' +
+            headerLinks +
             '<button type="button" class="side-panel-close" data-role="close" aria-label="Close">×</button>' +
           '</div>' +
         '</header>' +
@@ -158,6 +165,7 @@
       scoreEl: scoreEl,
       openFull: openFull,
       exportZip: exportZip,
+      sealed: !!sealed,
       currentId: iid,
       onKey: null,
       onPopstate: null,
@@ -194,8 +202,8 @@
     self.heading.textContent = "Interaction #" + iid;
     self.scoreEl.textContent = "";
     self.scoreEl.className = "side-panel-score";
-    self.openFull.setAttribute("href", "/app/history/" + iid);
-    self.exportZip.setAttribute("href", "/api/interactions/" + iid + "/export");
+    if (self.openFull) self.openFull.setAttribute("href", "/app/history/" + iid);
+    if (self.exportZip) self.exportZip.setAttribute("href", "/api/interactions/" + iid + "/export");
     self.body.innerHTML =
       '<div class="skeleton" style="height:26px;margin:10px 0;"></div>' +
       '<div class="skeleton" style="height:160px;margin:10px 0;"></div>' +
@@ -217,10 +225,13 @@
         (data.status_id === 44) ? "N/A" : EA.formatScore(data.interaction_overall_score);
 
       const role = (window.EA_USER && window.EA_USER.role) || null;
-      const canHardDelete = (role === "admin" || role === "super_admin");
+      // Sealed mode forces no-delete even if an elevated user somehow loaded
+      // this panel; otherwise admins/super_admins keep the danger zone.
+      const canHardDelete = !self.sealed && (role === "admin" || role === "super_admin");
       EA.InteractionView.render(self.body, data, {
         readOnly: true,
         canHardDelete: canHardDelete,
+        hideExport: !!self.sealed,
       });
 
       // Wire the danger-zone button. The view itself is pure markup —

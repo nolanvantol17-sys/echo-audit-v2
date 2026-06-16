@@ -6,8 +6,10 @@
    full-app chrome can leak in. The before_request seal in app.py is the
    real security boundary; this template is the matching minimal surface.
 
-   Phase 1: the dashboard graph only (read-only). Phase 2 adds the calls
-   list + per-call report panel.
+   Shows: the dashboard graph, the list of calls for the active filters, and
+   a click-through to each call's FULL read-only report (transcript, audio,
+   rubric breakdown, strengths/weaknesses/overall). Everything is read-only:
+   no edit, regrade, delete, export, or navigation off this page.
    ======================================================================== #}
 <!DOCTYPE html>
 <html lang="en">
@@ -44,6 +46,24 @@
     .ms-main { max-width: 1200px; margin: 0 auto; padding: 28px; }
     .ms-h1 { font-size: 1.25rem; font-weight: 700; margin: 0 0 4px; }
     .ms-sub { color: var(--muted); font-size: 0.88rem; margin: 0 0 22px; }
+    .ms-h2 { font-size: 1.02rem; font-weight: 700; margin: 30px 0 12px; }
+
+    .ms-table-wrap {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-md, 12px); overflow: hidden;
+    }
+    .ms-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    .ms-table thead th {
+      text-align: left; padding: 11px 16px; background: var(--surface-2);
+      color: var(--muted); font-weight: 600; font-size: 0.74rem;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      border-bottom: 1px solid var(--border);
+    }
+    .ms-table tbody td { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    .ms-table tbody tr:last-child td { border-bottom: none; }
+    .ms-call-row { cursor: pointer; transition: background 0.12s ease; }
+    .ms-call-row:hover { background: var(--surface-hover, var(--surface-2)); }
+    .ms-muted { color: var(--muted); }
     /* A sealed read-only portal never offers to share itself back out. */
     .daw-share-btn { display: none !important; }
   </style>
@@ -66,20 +86,98 @@
 
   <main class="ms-main">
     <h1 class="ms-h1">Call Performance</h1>
-    <p class="ms-sub">Graded calls for your properties.</p>
+    <p class="ms-sub">Graded calls for your properties. Open any call to see its full report.</p>
+
     <div id="dashboard-widget"></div>
+
+    <h2 class="ms-h2">Calls</h2>
+    <div class="ms-table-wrap">
+      <table class="ms-table">
+        <thead>
+          <tr>
+            <th>Date</th><th>Property</th><th>Respondent</th><th>Score</th>
+          </tr>
+        </thead>
+        <tbody id="ms-calls-body">
+          <tr><td colspan="4" class="ms-muted" style="text-align:center;padding:18px;">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
   </main>
 
   <script>
-    // UI-only role hint; the server seal is the real boundary. Manager role
-    // never unlocks edit/delete affordances in any reused component.
+    // UI-only role hint; the server seal is the real boundary. EA_PANEL_SEALED
+    // forces every interaction panel opened here into read-only/no-export mode.
     window.EA_USER = { role: {{ current_user.role|tojson }}, user_id: {{ current_user.user_id|tojson }} };
+    window.EA_PANEL_SEALED = true;
   </script>
   <script src="{{ url_for('static', filename='app.js') }}?v={{ static_v('app.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='audio_player.js') }}?v={{ static_v('audio_player.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='interaction_view.js') }}?v={{ static_v('interaction_view.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='interaction_panel.js') }}?v={{ static_v('interaction_panel.js') }}"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script defer src="{{ url_for('static', filename='dashboard_widget.js') }}?v={{ static_v('dashboard_widget.js') }}"></script>
   <script>
     (function () {
+      var callsBody = document.getElementById("ms-calls-body");
+
+      function scoreCell(score, statusId) {
+        if (statusId === 44) return '<span class="ms-muted">No answer</span>';
+        if (score === null || score === undefined) return '<span class="ms-muted">—</span>';
+        var cls = (window.EA && EA.scoreClass) ? EA.scoreClass(score) : "";
+        var txt = (window.EA && EA.formatScore) ? EA.formatScore(score) : score;
+        return '<span class="score-pill ' + cls + '">' + txt + '</span>';
+      }
+
+      function fmtDate(d) {
+        if (window.EA && EA.formatDate) { try { return EA.formatDate(d); } catch (_) {} }
+        return d || "";
+      }
+
+      function renderCalls(rows) {
+        if (!rows || !rows.length) {
+          callsBody.innerHTML =
+            '<tr><td colspan="4" class="ms-muted" style="text-align:center;padding:18px;">No calls for this view.</td></tr>';
+          return;
+        }
+        callsBody.innerHTML = rows.map(function (r) {
+          return '<tr class="ms-call-row" data-id="' + r.interaction_id + '">' +
+            '<td>' + EA.esc(fmtDate(r.interaction_date)) + '</td>' +
+            '<td>' + EA.esc(r.location_name || "—") + '</td>' +
+            '<td>' + EA.esc(r.respondent_name || "—") + '</td>' +
+            '<td>' + scoreCell(r.interaction_overall_score, r.status_id) + '</td>' +
+          '</tr>';
+        }).join("");
+      }
+
+      async function loadCalls(state) {
+        var p = new URLSearchParams();
+        if (state) {
+          if (state.date_from) p.set("from_date", state.date_from);
+          if (state.date_to)   p.set("to_date",   state.date_to);
+          if (state.location_ids && state.location_ids.length) p.set("location_ids", state.location_ids.join(","));
+          if (state.campaign_ids && state.campaign_ids.length) p.set("campaign_ids", state.campaign_ids.join(","));
+        }
+        var qs = p.toString();
+        try {
+          var rows = await EA.fetchJSON("/api/interactions" + (qs ? "?" + qs : ""));
+          renderCalls(rows);
+        } catch (e) {
+          callsBody.innerHTML =
+            '<tr><td colspan="4" class="ms-muted" style="text-align:center;padding:18px;">Couldn’t load calls.</td></tr>';
+        }
+      }
+
+      // Row click → open the full read-only report panel.
+      callsBody.addEventListener("click", function (e) {
+        var tr = e.target.closest(".ms-call-row");
+        if (!tr) return;
+        var id = tr.getAttribute("data-id");
+        if (id && window.EA && EA.InteractionPanel) {
+          EA.InteractionPanel.open(id, { sealed: true });
+        }
+      });
+
       function boot() {
         if (!window.EA || !EA.DashboardWidget) { setTimeout(boot, 30); return; }
         EA.DashboardWidget.init({
@@ -87,7 +185,10 @@
           defaultViewBy:     "date",
           defaultDatePreset: "all",
           showFilters:       ["campaigns"],
+          // Keep the calls list in lockstep with the graph's filters.
+          onChange:          function (state) { loadCalls(state); },
         });
+        loadCalls();  // initial (all-time, matching the graph default)
       }
       if (document.readyState === "loading") {
         document.addEventListener("DOMContentLoaded", boot);
