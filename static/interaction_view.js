@@ -40,6 +40,7 @@
     const canRegrade = !!opts.canRegrade;
     const canHardDelete = !!opts.canHardDelete;
     const canEditTestFlag = !!opts.canEditTestFlag;
+    const hideExport = !!opts.hideExport;  // sealed RM portal: no downloads
     const d = data;
     const interactionId = d.interaction_id;
 
@@ -112,10 +113,11 @@
             ? '<span class="status-pill status-test" title="Test call — excluded from dashboards & reports">🧪 TEST</span>'
             : '') +
           regradeBadge +
+          (hideExport ? '' :
           '<a class="btn btn-ghost btn-sm" ' +
              'href="/api/interactions/' + interactionId + '/export" download>' +
             '↓ Export ZIP' +
-          '</a>' +
+          '</a>') +
           (canEditTestFlag
             ? '<button type="button" class="btn btn-ghost btn-sm" ' +
                  'data-role="toggle-test-flag" ' +
@@ -155,10 +157,11 @@
           (d.interaction_is_test
             ? '<span class="status-pill status-test" title="Test call — excluded from dashboards & reports">🧪 TEST</span>'
             : '') +
+          (hideExport ? '' :
           '<a class="btn btn-ghost btn-sm" ' +
              'href="/api/interactions/' + interactionId + '/export" download>' +
             '↓ Export ZIP' +
-          '</a>' +
+          '</a>') +
           (canEditTestFlag
             ? '<button type="button" class="btn btn-ghost btn-sm" ' +
                  'data-role="toggle-test-flag" ' +

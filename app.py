@@ -160,9 +160,11 @@ def create_app():
             if p.startswith("/api/"):
                 return jsonify({"error": "Read-only access"}), 403
             return redirect(url_for("manager_home"))
-        # GET /api/* — allow only the read-only set; block side-effecting GETs.
+        # GET /api/* — allow only the read-only set; block side-effecting GETs
+        # and ZIP exports (the sealed portal is strictly view-only — no
+        # downloads, even of the RM's own calls).
         if p.startswith("/api/"):
-            if p in _RM_BLOCKED_API_EXACT:
+            if p in _RM_BLOCKED_API_EXACT or p.endswith("/export"):
                 return jsonify({"error": "Read-only access"}), 403
             if p in _RM_ALLOWED_API_EXACT or p.startswith(_RM_ALLOWED_API_PREFIX):
                 return None  # falls through to the route's own tenant/RM scoping
