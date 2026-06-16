@@ -148,6 +148,9 @@
     {% endif %}
 
     <form method="POST" action="{{ url_for('login') }}">
+      {# Carries an emailed deep link (e.g. a shared dashboard view) through
+         sign-in so the user lands on the shared view, not the default home. #}
+      <input type="hidden" name="next" value="{{ next_url or '' }}">
       <label for="email">Email</label>
       <input type="email" id="email" name="email" placeholder="you@company.com" required autofocus value="{{ email or '' }}">
 
@@ -174,7 +177,7 @@
        fresh deploys before the AZURE_AD_* values land. #}
     {% if sso_microsoft_enabled %}
     <div class="auth-divider">or</div>
-    <a href="{{ url_for('sso.microsoft_start') }}" class="btn-sso">
+    <a href="{{ url_for('sso.microsoft_start', next=next_url) if next_url else url_for('sso.microsoft_start') }}" class="btn-sso">
       <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
         <rect x="0" y="0"  width="7" height="7" fill="#F25022"/>
         <rect x="9" y="0"  width="7" height="7" fill="#7FBA00"/>

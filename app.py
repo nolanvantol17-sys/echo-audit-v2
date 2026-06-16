@@ -51,6 +51,7 @@ from helpers import (  # noqa: F401
     check_rate_limit,
     get_effective_company_id,
     increment_usage,
+    safe_next_url,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -172,7 +173,11 @@ def create_app():
     def _unauthorized():
         if request.path.startswith("/api/"):
             return jsonify({"error": "Unauthorized"}), 401
-        return redirect(url_for("login"))
+        # Preserve the originally-requested URL (path + query) so a deep link —
+        # e.g. an emailed shared dashboard view (?location_ids=...) — survives
+        # the login redirect instead of dumping the user at the default home.
+        nxt = safe_next_url(request.full_path)
+        return redirect(url_for("login", next=nxt) if nxt else url_for("login"))
 
     # Long-cache /static/* — templates pair this with a ?v=<mtime> cache-buster
     # so redeploys invalidate the old asset. Without this, every sidebar nav
@@ -439,8 +444,13 @@ def register_routes(app):
     # ── Login ──
     @app.route("/login", methods=["GET", "POST"])
     def login():
+        # 'next' arrives on the GET (from the unauthorized redirect) and is
+        # re-posted via the form's hidden field. Validated to a safe relative URL
+        # so an emailed deep link resumes after sign-in.
+        next_url = safe_next_url(request.values.get("next"))
+
         if current_user.is_authenticated:
-            return redirect(url_for("app_home"))
+            return redirect(next_url or url_for("app_home"))
 
         error = None
         email = ""
@@ -457,10 +467,15 @@ def register_routes(app):
             else:
                 login_user(user, remember=remember)
                 if user.must_change_password:
+                    # Stash the deep link so it survives the forced password
+                    # change and resumes from that flow.
+                    if next_url:
+                        session["post_login_next"] = next_url
                     return redirect(url_for("change_password"))
-                return redirect(url_for("app_home"))
+                return redirect(next_url or url_for("app_home"))
 
-        return render_template("login.html", error=error, email=email)
+        return render_template("login.html", error=error, email=email,
+                               next_url=next_url)
 
     # ── Signup ──
     @app.route("/signup", methods=["GET", "POST"])
@@ -680,7 +695,9 @@ def register_routes(app):
                         if refreshed is not None:
                             login_user(refreshed)
                         if forced:
-                            return redirect(url_for("app_home"))
+                            # Resume the deep link stashed at login, if any.
+                            nxt = session.pop("post_login_next", None)
+                            return redirect(safe_next_url(nxt) or url_for("app_home"))
                     except Exception:
                         logger.exception("Password update failed")
                         error = "Password update failed."
