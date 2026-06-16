@@ -244,6 +244,32 @@ def access_token():
     if not project_id or not location_id:
         return _err("project_id and location_id are required.", 400)
 
+    # Campaign attribution guard — mirror the submit-grade / no-answer / ai-shop
+    # paths so a browser-dialed call can't silently land NULL-campaign on a
+    # campaign-using project. Without this, a dropped/missing campaign was
+    # accepted verbatim and the call never appeared under its campaign.
+    # Lazy import keeps blueprint registration order / cycles a non-issue.
+    from interactions_routes import (
+        _campaign_belongs_to_project, _project_has_campaigns,
+    )
+    try:
+        campaign_id = (int(campaign_id)
+                       if campaign_id not in (None, "", "null") else None)
+    except (TypeError, ValueError):
+        campaign_id = None
+    _cconn = get_conn()
+    try:
+        if campaign_id is not None and not _campaign_belongs_to_project(
+                _cconn, campaign_id, project_id):
+            return _err("Selected campaign does not belong to this project.", 400)
+        if campaign_id is None and _project_has_campaigns(_cconn, project_id):
+            return _err(
+                "This project requires a campaign. Please pick one before dialing.",
+                400,
+            )
+    finally:
+        _cconn.close()
+
     tbc_id = _create_pending_call(
         company_id=company_id, user_id=current_user.user_id,
         project_id=project_id, location_id=location_id, campaign_id=campaign_id,
