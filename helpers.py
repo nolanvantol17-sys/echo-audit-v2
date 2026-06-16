@@ -11,13 +11,39 @@ import re
 import secrets
 from datetime import datetime
 from typing import Optional
+from urllib.parse import urljoin, urlparse
 
-from flask import session
+from flask import request, session
 from flask_login import current_user
 
 from db import get_conn, q, IS_POSTGRES
 
 logger = logging.getLogger(__name__)
+
+
+def safe_next_url(target):
+    """Validate a post-login redirect target ('next') and return a SAFE
+    site-relative path (including query string), or None.
+
+    Lets an emailed deep link — e.g. a shared dashboard view with
+    ?location_ids=... — survive the login round-trip (password OR SSO)
+    instead of dumping the user at the default home. Guards against
+    open-redirect: only same-host site-relative paths are accepted;
+    absolute URLs, protocol-relative (//evil.com), and backslash tricks
+    are rejected, as are the auth pages themselves (avoids redirect loops).
+    Shared by app.py (password login) and sso_routes.py (Microsoft SSO).
+    """
+    if not target:
+        return None
+    if not target.startswith("/") or target.startswith("//") or "\\" in target:
+        return None
+    test = urlparse(urljoin(request.host_url, target))
+    if test.netloc != urlparse(request.host_url).netloc:
+        return None
+    rel = test.path + (("?" + test.query) if test.query else "")
+    if rel.startswith(("/login", "/logout", "/signup", "/auth/")):
+        return None
+    return rel
 
 
 def generate_temp_password():

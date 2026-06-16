@@ -12,7 +12,7 @@ doesn't issue additional queries.
 import logging
 from functools import wraps
 
-from flask import abort, redirect, url_for
+from flask import abort, redirect, request, url_for
 from flask_login import (
     LoginManager, UserMixin,
     current_user, login_user, logout_user,
@@ -437,7 +437,12 @@ def role_required(*roles):
         @wraps(fn)
         def wrapper(*args, **kwargs):
             if not current_user.is_authenticated:
-                return redirect(url_for("login"))
+                # Preserve the deep link through login (lazy import avoids a
+                # module-load cycle with helpers).
+                from helpers import safe_next_url
+                nxt = safe_next_url(request.full_path)
+                return redirect(url_for("login", next=nxt) if nxt
+                                else url_for("login"))
             if current_user.role not in allowed:
                 abort(403)
             return fn(*args, **kwargs)

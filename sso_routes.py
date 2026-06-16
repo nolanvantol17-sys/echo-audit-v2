@@ -50,6 +50,7 @@ from flask_login import login_user
 
 import auth
 from db import get_conn, q
+from helpers import safe_next_url
 
 logger = logging.getLogger(__name__)
 
@@ -122,10 +123,10 @@ def microsoft_start():
 
     state = secrets.token_urlsafe(24)
     session["sso_state"] = state
-    # Optional: capture the post-login destination so we can route the user
-    # back where they intended to go. Defaults to /app.
-    next_url = request.args.get("next", "/app")
-    session["sso_next"] = next_url
+    # Capture the post-login destination (e.g. an emailed shared dashboard
+    # link) so we route the user back there after auth. Validated to a safe
+    # same-site path; falls back to /app.
+    session["sso_next"] = safe_next_url(request.args.get("next")) or "/app"
 
     app = _msal_app(cfg)
     auth_url = app.get_authorization_request_url(
@@ -295,11 +296,9 @@ def microsoft_callback():
         logger.info("[sso] login OK user_id=%s email=%s company_id=%s",
                     user.user_id, email, company_id)
 
-        next_url = session.pop("sso_next", "/app") or "/app"
-        # Defensive: only allow same-origin redirects to prevent open-redirect
-        # via a tampered ?next= param.
-        if not next_url.startswith("/"):
-            next_url = "/app"
+        # safe_next_url rejects open-redirect tricks (//evil.com, backslashes,
+        # absolute URLs) — stronger than a bare startswith("/") check.
+        next_url = safe_next_url(session.pop("sso_next", None)) or "/app"
         return redirect(next_url)
     finally:
         conn.close()
