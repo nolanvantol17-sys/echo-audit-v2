@@ -2174,7 +2174,7 @@ _VALID_GRADE_TARGETS = {"caller", "respondent"}
 
 @api_bp.route("/projects/create-with-rubric", methods=["POST"])
 @login_required
-@role_required("admin", "super_admin", "manager")
+@role_required("admin", "super_admin")
 def create_project_with_rubric():
     company_id, err = _require_company()
     if err: return err

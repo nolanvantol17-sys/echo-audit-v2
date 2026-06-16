@@ -1,0 +1,100 @@
+{# ========================================================================
+   manager_sealed.html — sealed, read-only RM (manager) portal.
+
+   Deliberately does NOT extend base.html: no sidebar, no Settings/Team/
+   Locations nav, no jobs dock, no impersonation banner — so none of the
+   full-app chrome can leak in. The before_request seal in app.py is the
+   real security boundary; this template is the matching minimal surface.
+
+   Phase 1: the dashboard graph only (read-only). Phase 2 adds the calls
+   list + per-call report panel.
+   ======================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ client_name or "Echo Audit" }} — Call Performance</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ static_v('app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app-theme.css') }}?v={{ static_v('app-theme.css') }}">
+  <style>
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: 'Inter', system-ui, sans-serif; margin: 0;
+    }
+    .ms-topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 28px; background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .ms-brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1rem; }
+    .ms-brand img { height: 30px; width: auto; }
+    .ms-user { display: flex; align-items: center; gap: 14px; font-size: 0.85rem; color: var(--muted); }
+    .ms-logout {
+      background: transparent; border: 1px solid var(--border-strong); color: var(--text);
+      border-radius: var(--radius-sm, 8px); padding: 6px 14px;
+      font: inherit; font-size: 0.82rem; cursor: pointer; transition: all 0.15s ease;
+    }
+    .ms-logout:hover { border-color: var(--accent); color: var(--accent); }
+    .ms-main { max-width: 1200px; margin: 0 auto; padding: 28px; }
+    .ms-h1 { font-size: 1.25rem; font-weight: 700; margin: 0 0 4px; }
+    .ms-sub { color: var(--muted); font-size: 0.88rem; margin: 0 0 22px; }
+    /* A sealed read-only portal never offers to share itself back out. */
+    .daw-share-btn { display: none !important; }
+  </style>
+</head>
+<body>
+  <header class="ms-topbar">
+    <div class="ms-brand">
+      {% if logo_base64 %}
+        <img src="data:image/png;base64,{{ logo_base64 }}" alt="{{ client_name or 'Echo Audit' }}">
+      {% endif %}
+      <span>{{ client_name or "Echo Audit" }}</span>
+    </div>
+    <div class="ms-user">
+      <span>{{ current_user.full_name }}</span>
+      <form method="POST" action="{{ url_for('logout') }}" style="margin:0;">
+        <button type="submit" class="ms-logout">Log out</button>
+      </form>
+    </div>
+  </header>
+
+  <main class="ms-main">
+    <h1 class="ms-h1">Call Performance</h1>
+    <p class="ms-sub">Graded calls for your properties.</p>
+    <div id="dashboard-widget"></div>
+  </main>
+
+  <script>
+    // UI-only role hint; the server seal is the real boundary. Manager role
+    // never unlocks edit/delete affordances in any reused component.
+    window.EA_USER = { role: {{ current_user.role|tojson }}, user_id: {{ current_user.user_id|tojson }} };
+  </script>
+  <script src="{{ url_for('static', filename='app.js') }}?v={{ static_v('app.js') }}"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script defer src="{{ url_for('static', filename='dashboard_widget.js') }}?v={{ static_v('dashboard_widget.js') }}"></script>
+  <script>
+    (function () {
+      function boot() {
+        if (!window.EA || !EA.DashboardWidget) { setTimeout(boot, 30); return; }
+        EA.DashboardWidget.init({
+          container:         document.getElementById("dashboard-widget"),
+          defaultViewBy:     "date",
+          defaultDatePreset: "all",
+          showFilters:       ["campaigns"],
+        });
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", boot);
+      } else {
+        boot();
+      }
+    })();
+  </script>
+</body>
+</html>
