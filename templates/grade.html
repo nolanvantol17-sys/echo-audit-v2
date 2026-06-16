@@ -3524,16 +3524,20 @@
   // (pollBcPending was removed — disposition flow returns to idle
   // immediately and lets the dock surface the eventual grade job.)
 
-  // Best-effort: read the existing form's campaign field if it has a
-  // resolved id. The campaign input is a combobox over names, but the
-  // selected campaign_id gets stashed as a data-attribute by the existing
-  // combobox wiring. Absence just means null — backend tolerates it.
+  // Read the selected campaign the SAME way every other submit path does —
+  // from the combobox handle (state.campaignCombo.getValue()), mirroring
+  // _buildGradeFormData. The earlier version read el.dataset.campaignId,
+  // which the combobox never stamps, so it ALWAYS returned null and every
+  // browser-dialed call landed campaign-less (un-bucketed from its campaign).
   function readCampaignIdIfAny() {
-    const el = document.getElementById("gf-campaign");
-    if (!el) return null;
-    const raw = el.dataset.campaignId || el.dataset.id || "";
-    const v = parseInt(raw, 10);
-    return Number.isFinite(v) ? v : null;
+    try {
+      const v = state.campaignCombo ? state.campaignCombo.getValue() : null;
+      if (v === null || v === undefined || v === "") return null;
+      const n = parseInt(v, 10);
+      return Number.isFinite(n) ? n : null;
+    } catch (_) {
+      return null;
+    }
   }
   function readRespondentNameIfAny() {
     // Respondent isn't entered on the grade form today — assigned later
