@@ -37,6 +37,14 @@
     .ms-brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1rem; }
     .ms-brand img { height: 30px; width: auto; }
     .ms-user { display: flex; align-items: center; gap: 14px; font-size: 0.85rem; color: var(--muted); }
+    /* Centered "Viewing: <properties>" chip — which property/properties the
+       current filters resolve to. Truncates with an ellipsis if very long. */
+    .ms-viewing {
+      flex: 1; min-width: 0; text-align: center; padding: 0 16px;
+      font-size: 0.85rem; font-weight: 600; color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .ms-viewing:empty { display: none; }
     .ms-logout {
       background: transparent; border: 1px solid var(--border-strong); color: var(--text);
       border-radius: var(--radius-sm, 8px); padding: 6px 14px;
@@ -76,6 +84,7 @@
       {% endif %}
       <span>{{ client_name or "Echo Audit" }}</span>
     </div>
+    <div class="ms-viewing" id="ms-viewing"></div>
     <div class="ms-user">
       <span>{{ current_user.full_name }}</span>
       <form method="POST" action="{{ url_for('logout') }}" style="margin:0;">
@@ -178,17 +187,50 @@
         }
       });
 
+      // Header text: which property/properties the current filters resolve to.
+      // One name → that name; a few → list them; many → a count.
+      function renderViewing(info) {
+        var el = document.getElementById("ms-viewing");
+        if (!el) return;
+        var names = (info && info.names) || [];
+        var text = "";
+        if (names.length === 1)      text = names[0];
+        else if (names.length > 1 && names.length <= 3) text = names.join(", ");
+        else if (names.length > 3)   text = names.length + " properties";
+        el.textContent = text ? ("Viewing: " + text) : "";
+      }
+
       function boot() {
         if (!window.EA || !EA.DashboardWidget) { setTimeout(boot, 30); return; }
-        EA.DashboardWidget.init({
+        var widget = EA.DashboardWidget.init({
           container:         document.getElementById("dashboard-widget"),
           defaultViewBy:     "date",
           defaultDatePreset: "all",
           showFilters:       ["campaigns"],
+          // Callers (secret shoppers) and phone routings aren't meaningful to
+          // an RM — hide both the filters and the matching group-by modes so
+          // the bar stays uncluttered and shopper identities stay hidden.
+          hideFilters:       ["callers", "phone_routings"],
+          hideViewByModes:   ["caller", "phone_routing"],
           // Keep the calls list in lockstep with the graph's filters.
           onChange:          function (state) { loadCalls(state); },
+          // Reflect the in-scope properties in the top header.
+          onLocationsChange: renderViewing,
+          // Trend (By Date): open the clicked call's read-only report.
+          // By Location: drill the whole view into the clicked property.
+          onPointClick:      function (p, view) {
+            if (p && p.interaction_id && window.EA && EA.InteractionPanel) {
+              EA.InteractionPanel.open(p.interaction_id, { sealed: true });
+              return;
+            }
+            if (view === "location" && p && p.location_id && widget) {
+              widget.setLocationSelection([p.location_id]);
+            }
+          },
         });
-        loadCalls();  // initial (all-time, matching the graph default)
+        // Initial load honors any filters hydrated from a shared link (the
+        // widget hydrates from the URL synchronously during init).
+        loadCalls(widget.getState());
       }
       if (document.readyState === "loading") {
         document.addEventListener("DOMContentLoaded", boot);

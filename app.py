@@ -174,7 +174,13 @@ def create_app():
         # bounces to the sealed home. Deny-by-default.
         if p in _RM_ALLOWED_PAGE_EXACT:
             return None
-        return redirect(url_for("manager_home"))
+        # Carry any query string (e.g. shared-link filter params like
+        # location_ids / campaign_ids / date_from) across the bounce so the
+        # sealed portal's widget hydrates the same view the sender shared.
+        target = url_for("manager_home")
+        if request.query_string:
+            target += "?" + request.query_string.decode("utf-8", "ignore")
+        return redirect(target)
 
     # Phase 2 API routes
     app.register_blueprint(api_bp)

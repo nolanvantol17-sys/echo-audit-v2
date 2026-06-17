@@ -30,7 +30,19 @@
                                         //     {date_from, date_to,
                                         //      location_ids, caller_ids,
                                         //      phone_routing_ids, campaign_ids}
+       onPointClick:   function (p, viewBy) // optional: when set, chart point
+                                        //   clicks call this (with the raw
+                                        //   point + active view) INSTEAD of
+                                        //   the default navigate-to-history.
+                                        //   Date points carry interaction_id;
+                                        //   location points carry location_id.
+       onLocationsChange: function (info)  // optional: fires when the in-scope
+                                        //   locations or selection change.
+                                        //   info: {all, names[]}. Hosts use it
+                                        //   to show which properties are shown.
      });
+
+   Returned handle: { getState(), setLocationSelection(ids), destroy() }.
 
    Self-contained — relies only on window.EA + Chart.js (already loaded by
    the host page).
@@ -120,7 +132,7 @@
   const STYLE_ID = "daw-style";
   const STYLE = `
     .daw-filters {
-      display: flex; flex-wrap: nowrap; gap: 8px; align-items: center;
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
       padding: 10px 14px; background: var(--surface);
       border: 1px solid var(--border); border-radius: var(--radius);
       margin-bottom: 12px;
@@ -132,14 +144,14 @@
     .daw-filters .daw-view-by {
       background: var(--surface-2); border: 1px solid var(--border);
       color: var(--text); font-size: 0.82rem; padding: 6px 10px;
-      border-radius: 6px; font-family: inherit; flex: 1 1 0; min-width: 0;
+      border-radius: 6px; font-family: inherit; flex: 1 1 160px; min-width: 150px;
     }
     .daw-ms-btn {
       background: var(--surface-2); border: 1px solid var(--border);
       color: var(--text); font-size: 0.82rem; padding: 6px 10px;
       border-radius: 6px; font-family: inherit; cursor: pointer;
       display: inline-flex; align-items: center; gap: 6px;
-      flex: 1 1 0; min-width: 0;
+      flex: 1 1 160px; min-width: 150px;
     }
     .daw-ms-btn:hover { border-color: var(--accent); }
     .daw-ms-label {
@@ -852,6 +864,7 @@
 
     let chart = null;
     let allPhoneRoutings = [];   // raw phone routing list for client-side narrowing
+    let allLocations = [];       // raw location list for the "viewing" header
     // Per-instance default takes precedence; falls back to global constant.
     let datePreset = opts.defaultDatePreset || DEFAULT_DATE_PRESET;
     // Custom date range overrides the preset when set (e.g. when hydrated from
@@ -978,10 +991,16 @@
       const callerIds = parseIds(sp.get("caller_ids"));
       const phrIds    = parseIds(sp.get("phone_routing_ids"));
       const campIds   = parseIds(sp.get("campaign_ids"));
-      if (locIds.length)    { locMS.setSelection(locIds);    touched = true; }
-      if (callerIds.length) { callerMS.setSelection(callerIds); touched = true; }
-      if (phrIds.length)    { phrMS.setSelection(phrIds);    touched = true; }
-      if (campIds.length)   { campMS.setSelection(campIds);  touched = true; }
+      // Never hydrate a filter that's HIDDEN in this widget instance: the user
+      // can't see or clear it, and host surfaces that don't read it (e.g. the
+      // RM portal's calls table) would silently disagree with the chart. A
+      // hidden filter stays at its "All" default.
+      const hiddenKeys = new Set(hideFilters);
+      if (!showFilters.includes("campaigns")) hiddenKeys.add("campaigns");
+      if (locIds.length    && !hiddenKeys.has("locations"))      { locMS.setSelection(locIds);      touched = true; }
+      if (callerIds.length && !hiddenKeys.has("callers"))        { callerMS.setSelection(callerIds); touched = true; }
+      if (phrIds.length    && !hiddenKeys.has("phone_routings")) { phrMS.setSelection(phrIds);       touched = true; }
+      if (campIds.length   && !hiddenKeys.has("campaigns"))      { campMS.setSelection(campIds);     touched = true; }
       // explicit date range — overrides preset; pills will all deactivate
       const dateFrom = sp.get("date_from");
       const dateTo   = sp.get("date_to");
@@ -1173,6 +1192,26 @@
       };
     }
 
+    // Resolve the location names currently "in view" — the explicit selection,
+    // or every in-scope location when "All Locations" is active. Lets host
+    // pages (the sealed RM portal) show which properties are being viewed.
+    function selectedLocationInfo() {
+      const sel = locMS.get();
+      let names;
+      if (sel.all) {
+        names = allLocations.map((l) => l.name);
+      } else {
+        const chosen = new Set(sel.ids);
+        names = allLocations.filter((l) => chosen.has(l.id)).map((l) => l.name);
+      }
+      return { all: sel.all, names: names };
+    }
+    function notifyLocations() {
+      if (typeof opts.onLocationsChange !== "function") return;
+      try { opts.onLocationsChange(selectedLocationInfo()); }
+      catch (e) { console.warn("DashboardWidget onLocationsChange threw:", e); }
+    }
+
     function notifyChange() {
       // Mirror current filter state into the URL via replaceState so refresh
       // / back-button preserves the view, and so the share button can copy
@@ -1182,6 +1221,7 @@
         const tail = url.replace(window.location.origin, "");
         history.replaceState(null, "", tail);
       } catch (_) { /* defensive — share URL builder unavailable on init */ }
+      notifyLocations();
       if (typeof opts.onChange !== "function") return;
       try { opts.onChange(currentFilterState()); }
       catch (e) { console.warn("DashboardWidget onChange threw:", e); }
@@ -1226,7 +1266,23 @@
       // filter and the navigation would be misleading.
       const view = viewBySel.value;
       const clickableViews = { date: 1, location: 1, project: 1 };
-      if (clickableViews[view]) {
+      // Host-controlled clicks (e.g. the sealed RM portal opens a read-only
+      // side panel for the clicked call) take precedence over the default
+      // navigate-to-history behavior. The handler gets the raw clicked point
+      // and the active view; in date view that point carries interaction_id.
+      if (typeof opts.onPointClick === "function") {
+        cfg.options.onClick = function (evt, activeEls, ch) {
+          if (!activeEls || !activeEls.length) return;
+          const p = ch.$points && ch.$points[activeEls[0].index];
+          if (!p) return;
+          try { opts.onPointClick(p, view); }
+          catch (e) { console.warn("DashboardWidget onPointClick threw:", e); }
+        };
+        cfg.options.onHover = function (evt, activeEls, ch) {
+          if (!ch || !ch.canvas) return;
+          ch.canvas.style.cursor = (activeEls && activeEls.length) ? "pointer" : "default";
+        };
+      } else if (clickableViews[view]) {
         cfg.options.onClick = function (evt, activeEls, ch) {
           if (!activeEls || !activeEls.length) return;
           const p = ch.$points && ch.$points[activeEls[0].index];
@@ -1259,6 +1315,7 @@
         const locs = (data.locations || []).map((r) => ({
           id: r.location_id, name: r.location_name,
         }));
+        allLocations = locs;
         const callers = (data.callers || []).map((r) => ({
           id: r.user_id, name: r.user_name || ("User #" + r.user_id),
         }));
@@ -1272,6 +1329,9 @@
         callerMS.setItems(callers);
         narrowPhoneRoutingsByLocation();
         campMS.setItems(campaigns);
+        // Now that location names are known, refresh the host's "viewing"
+        // header (reflects any selection hydrated from a shared link).
+        notifyLocations();
       } catch (err) {
         // Filters are non-critical — chart still works with no options.
         console.warn("Failed to load filter options:", err);
@@ -1289,6 +1349,18 @@
     // (appended to document.body) release their references instead of
     // orphaning after the widget's container is destroyed.
     return {
+      // Current filter snapshot — lets a host align its own surfaces (e.g.
+      // the sealed portal's calls table) with filters hydrated from a shared
+      // link on first load, before any user-initiated onChange fires.
+      getState() { return currentFilterState(); },
+      // Programmatically narrow to a set of location ids and reload — used by
+      // hosts for drill-down (e.g. clicking a By-Location bar in the sealed
+      // portal). Fires the normal onChange / onLocationsChange notifications.
+      setLocationSelection(ids) {
+        locMS.setSelection(ids);
+        narrowPhoneRoutingsByLocation();
+        reload();
+      },
       destroy() {
         try { locMS.close(); }    catch (_) {}
         try { callerMS.close(); } catch (_) {}
