@@ -35,6 +35,7 @@ from helpers import (
     ai_caller_user_id_for_company,
     is_feature_enabled,
     location_scope_for_user,
+    to_iso_date,
 )
 
 logger = logging.getLogger(__name__)
@@ -178,6 +179,37 @@ def _get_campaign_in_company(conn, campaign_id, company_id):
         (campaign_id, company_id),
     )
     return cur.fetchone()
+
+
+def _normalize_campaign_start_date(raw):
+    """Validate an optional campaign start date.
+
+    Returns (value, error): value is a 'YYYY-MM-DD' string or None (for
+    null/empty), error is a message string or None. Postgres accepts the
+    ISO string directly for its DATE column.
+    """
+    if raw is None:
+        return None, None
+    s = str(raw).strip()
+    if not s:
+        return None, None
+    try:
+        from datetime import datetime as _dt
+        _dt.strptime(s, "%Y-%m-%d")
+    except ValueError:
+        return None, "campaign_start_date must be in YYYY-MM-DD format"
+    return s, None
+
+
+def _campaign_json(d):
+    """Serialize a campaign dict for the API: emit campaign_start_date as a
+    plain 'YYYY-MM-DD' string (not Flask's default GMT date serialization) so
+    <input type="date"> round-trips cleanly."""
+    if d is None:
+        return None
+    if "campaign_start_date" in d:
+        d["campaign_start_date"] = to_iso_date(d.get("campaign_start_date"))
+    return d
 
 
 def _get_rubric_group_in_company(conn, rubric_group_id, company_id):
@@ -1671,6 +1703,7 @@ def list_campaigns(project_id):
         # selection rule on the Grade page (pre-select items[0]).
         cur = conn.execute(q("""
             SELECT c.campaign_id, c.project_id, c.campaign_name,
+                   c.campaign_start_date,
                    c.campaign_created_at, c.campaign_updated_at,
                    MAX(i.interaction_created_at) AS last_used_at,
                    COUNT(DISTINCT i.interaction_id) AS usage_count
@@ -1680,10 +1713,12 @@ def list_campaigns(project_id):
                   AND i.interaction_deleted_at IS NULL
             WHERE c.project_id = ? AND c.campaign_deleted_at IS NULL
             GROUP BY c.campaign_id, c.project_id, c.campaign_name,
+                     c.campaign_start_date,
                      c.campaign_created_at, c.campaign_updated_at
             ORDER BY last_used_at DESC NULLS LAST, c.campaign_created_at DESC
         """) if IS_POSTGRES else q("""
             SELECT c.campaign_id, c.project_id, c.campaign_name,
+                   c.campaign_start_date,
                    c.campaign_created_at, c.campaign_updated_at,
                    MAX(i.interaction_created_at) AS last_used_at,
                    COUNT(DISTINCT i.interaction_id) AS usage_count
@@ -1695,7 +1730,7 @@ def list_campaigns(project_id):
             GROUP BY c.campaign_id
             ORDER BY last_used_at IS NULL, last_used_at DESC, c.campaign_created_at DESC
         """), (project_id,))
-        return jsonify(_rows(cur))
+        return jsonify([_campaign_json(r) for r in _rows(cur)])
     finally:
         conn.close()
 
@@ -1711,6 +1746,9 @@ def create_campaign(project_id):
     name = (body.get("campaign_name") or "").strip()
     if not name:
         return _err("Missing campaign_name", 400)
+    start_date, derr = _normalize_campaign_start_date(body.get("campaign_start_date"))
+    if derr:
+        return _err(derr, 400)
 
     conn = get_conn()
     try:
@@ -1728,27 +1766,28 @@ def create_campaign(project_id):
         ).fetchone()
         if dup:
             existing_id = dup["campaign_id"] if IS_POSTGRES else dup[0]
-            return jsonify(_row_to_dict(
+            return jsonify(_campaign_json(_row_to_dict(
                 _get_campaign_in_company(conn, existing_id, company_id)
-            )), 200
+            ))), 200
 
         campaign_id = _insert_returning(
             conn,
-            sql_pg="""INSERT INTO campaigns (project_id, campaign_name)
-                      VALUES (%s, %s) RETURNING campaign_id""",
-            sql_lite="INSERT INTO campaigns (project_id, campaign_name) VALUES (?, ?)",
-            params=(project_id, name),
+            sql_pg="""INSERT INTO campaigns (project_id, campaign_name, campaign_start_date)
+                      VALUES (%s, %s, %s) RETURNING campaign_id""",
+            sql_lite="INSERT INTO campaigns (project_id, campaign_name, campaign_start_date) VALUES (?, ?, ?)",
+            params=(project_id, name, start_date),
             pk_col="campaign_id",
         )
         write_audit_log(
             current_user.user_id, ACTION_CREATED, ENTITY_CAMPAIGN, campaign_id,
-            metadata={"project_id": project_id, "campaign_name": name},
+            metadata={"project_id": project_id, "campaign_name": name,
+                      "campaign_start_date": start_date},
             conn=conn,
         )
         conn.commit()
-        return jsonify(_row_to_dict(
+        return jsonify(_campaign_json(_row_to_dict(
             _get_campaign_in_company(conn, campaign_id, company_id)
-        )), 201
+        ))), 201
     finally:
         conn.close()
 
@@ -1757,8 +1796,10 @@ def create_campaign(project_id):
 @login_required
 @role_required("admin", "super_admin")
 def update_campaign(campaign_id):
-    """Rename a campaign. Case-insensitive duplicate guard scoped to live
-    campaigns in the same project; tombstoned rows don't block."""
+    """Rename a campaign and/or set its start date. Case-insensitive duplicate
+    guard scoped to live campaigns in the same project; tombstoned rows don't
+    block. campaign_start_date is only touched when the key is present in the
+    body, so a name-only update won't clear an existing date."""
     company_id, err = _require_company()
     if err: return err
 
@@ -1766,6 +1807,10 @@ def update_campaign(campaign_id):
     name = (body.get("campaign_name") or "").strip()
     if not name:
         return _err("Missing campaign_name", 400)
+    set_start = "campaign_start_date" in body
+    start_date, derr = _normalize_campaign_start_date(body.get("campaign_start_date"))
+    if set_start and derr:
+        return _err(derr, 400)
 
     conn = get_conn()
     try:
@@ -1784,18 +1829,27 @@ def update_campaign(campaign_id):
         if dup:
             return _err("A campaign with that name already exists in this project", 409)
 
-        conn.execute(
-            q("UPDATE campaigns SET campaign_name = ? WHERE campaign_id = ?"),
-            (name, campaign_id),
-        )
+        if set_start:
+            conn.execute(
+                q("UPDATE campaigns SET campaign_name = ?, campaign_start_date = ? WHERE campaign_id = ?"),
+                (name, start_date, campaign_id),
+            )
+        else:
+            conn.execute(
+                q("UPDATE campaigns SET campaign_name = ? WHERE campaign_id = ?"),
+                (name, campaign_id),
+            )
+        meta = {"campaign_name": name}
+        if set_start:
+            meta["campaign_start_date"] = start_date
         write_audit_log(
             current_user.user_id, ACTION_UPDATED, ENTITY_CAMPAIGN, campaign_id,
-            metadata={"campaign_name": name}, conn=conn,
+            metadata=meta, conn=conn,
         )
         conn.commit()
-        return jsonify(_row_to_dict(
+        return jsonify(_campaign_json(_row_to_dict(
             _get_campaign_in_company(conn, campaign_id, company_id)
-        ))
+        )))
     finally:
         conn.close()
 

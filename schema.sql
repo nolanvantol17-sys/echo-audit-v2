@@ -537,6 +537,10 @@ CREATE TABLE campaigns (
     project_id          INTEGER NOT NULL
                             REFERENCES projects (project_id) ON DELETE CASCADE,
     campaign_name       TEXT NOT NULL,
+    -- Optional start date — the 1st of the month a campaign covers. No end
+    -- date by design (campaigns are open-ended). Used to order the dashboard
+    -- campaign filter chronologically.
+    campaign_start_date DATE,
     campaign_deleted_at TIMESTAMPTZ,
     campaign_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     campaign_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

@@ -46,6 +46,22 @@ def safe_next_url(target):
     return rel
 
 
+def to_iso_date(v):
+    """Normalize a DATE value to a 'YYYY-MM-DD' string (or None).
+
+    Postgres returns datetime.date objects, which Flask's JSON serializer would
+    otherwise emit as an HTTP/GMT string ("Wed, 01 Apr 2026 00:00:00 GMT") —
+    breaking <input type="date"> round-trips. SQLite returns the stored text
+    already. Use this on any date column before jsonify so the API always
+    speaks plain ISO dates.
+    """
+    if v is None:
+        return None
+    if hasattr(v, "isoformat"):
+        return v.isoformat()
+    return str(v)
+
+
 def generate_temp_password():
     """Return a ~12-char URL-safe random temporary password.
 

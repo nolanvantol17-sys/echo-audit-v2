@@ -23,7 +23,7 @@ from dashboard_helpers import (
     _report_url_for, _roll_up_locations, _trend_for_calls,
 )
 from db import get_conn, q
-from helpers import get_effective_company_id, location_scope_for_user
+from helpers import get_effective_company_id, location_scope_for_user, to_iso_date
 from insights import compute_dashboard_insights_async, fetch_cached as fetch_insights_cached
 
 dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/api")
@@ -620,17 +620,26 @@ def get_filters():
         # instead of being pruned back to "All Campaigns".
         campaigns = []
         if project_id or current_user.role == "manager":
+            # Chronological by start date (the 1st of the campaign's month);
+            # undated campaigns fall to the end, then alphabetical as a
+            # tiebreaker. NULLS LAST sorts the dateless ones last; it's
+            # DISTINCT-safe because campaign_start_date is in the select list.
             cur = conn.execute(
-                q(f"""SELECT DISTINCT c.campaign_id, c.campaign_name
+                q(f"""SELECT DISTINCT c.campaign_id, c.campaign_name,
+                             c.campaign_start_date
                       FROM interactions i
                       JOIN projects   p ON p.project_id   = i.project_id
                       JOIN campaigns  c ON c.campaign_id  = i.campaign_id
                       WHERE {where}
                         AND c.campaign_deleted_at IS NULL
-                      ORDER BY c.campaign_name ASC"""),
+                      ORDER BY c.campaign_start_date ASC NULLS LAST,
+                               c.campaign_name ASC"""),
                 base_params,
             )
-            campaigns = _rows(cur)
+            campaigns = [
+                {**r, "campaign_start_date": to_iso_date(r.get("campaign_start_date"))}
+                for r in _rows(cur)
+            ]
 
         return jsonify({
             "locations":      locations,

@@ -171,6 +171,11 @@ _ADDITIVE_MIGRATIONS = [
     # one-off migration script applied before the deploy.
     "ALTER TABLE companies ADD COLUMN IF NOT EXISTS company_setup_dismissed_at TIMESTAMPTZ",
 
+    # Campaigns get an optional start date (the 1st of the month they cover).
+    # No end date by design — campaigns are open-ended. Drives chronological
+    # ordering of the dashboard campaign filter.
+    "ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS campaign_start_date DATE",
+
     # Phase 5: VoIP integration tables.
     # Full CREATE TABLE IF NOT EXISTS so this also lands on DBs that already
     # ran the pre-Phase-5 schema.sql (sentinel-gated on `statuses` which pre-dates

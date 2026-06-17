@@ -498,9 +498,13 @@
         const lastUsed = c.last_used_at
           ? EA.esc(EA.formatRelativeTime(c.last_used_at))
           : '<span class="muted">Never</span>';
+        const startCell = c.campaign_start_date
+          ? EA.esc(c.campaign_start_date)
+          : '<span class="muted">—</span>';
         return (
           '<tr data-id="' + c.campaign_id + '">' +
             '<td>' + EA.esc(c.campaign_name) + '</td>' +
+            '<td>' + startCell + '</td>' +
             '<td>' + (Number(c.usage_count) || 0) + '</td>' +
             '<td>' + lastUsed + '</td>' +
             '<td style="text-align:right;">' +
@@ -512,11 +516,12 @@
       }).join("");
       mount.innerHTML =
         '<div class="muted text-small" style="margin-bottom:10px;">' +
-          'Rename or remove campaigns used to label graded calls. ' +
+          'Edit or remove campaigns used to label graded calls. Set a start ' +
+          'date (the 1st of the month it covers) to order them chronologically. ' +
           'New campaigns are created from the Grade page.' +
         '</div>' +
         '<table class="history-table"><thead><tr>' +
-          '<th>Name</th><th>Usage</th><th>Last used</th><th></th>' +
+          '<th>Name</th><th>Start</th><th>Usage</th><th>Last used</th><th></th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
       mount.querySelectorAll(".camp-edit").forEach(function (b) {
         b.onclick = function () { onEdit(b.dataset.id); };
@@ -530,19 +535,27 @@
       const camp = cache.find(function (x) { return String(x.campaign_id) === String(id); });
       if (!camp) return;
       const data = await EA.formDialog({
-        title:   "Rename campaign",
-        fields:  [{ name: "campaign_name", label: "Name", required: true, value: camp.campaign_name }],
+        title:   "Edit campaign",
+        fields:  [
+          { name: "campaign_name", label: "Name", required: true, value: camp.campaign_name },
+          { name: "campaign_start_date", label: "Start date", type: "date",
+            value: camp.campaign_start_date || "",
+            help: "The 1st of the month this campaign covers. Optional; used to sort the filter." },
+        ],
         okLabel: "Save",
       });
       if (!data) return;
       const name = (data.campaign_name || "").trim();
-      if (!name || name === camp.campaign_name) return;
+      const startDate = data.campaign_start_date || null;   // formDialog gives null when cleared
+      if (!name) return;
+      // No-op if neither the name nor the start date changed.
+      if (name === camp.campaign_name && startDate === (camp.campaign_start_date || null)) return;
       try {
         await EA.fetchJSON("/api/campaigns/" + encodeURIComponent(id),
-                           { method: "PUT", body: { campaign_name: name } });
+                           { method: "PUT", body: { campaign_name: name, campaign_start_date: startDate } });
         await load();
-        EA.toast("Campaign renamed.", "success");
-      } catch (err) { EA.toast(err.message || "Rename failed", "error"); }
+        EA.toast("Campaign updated.", "success");
+      } catch (err) { EA.toast(err.message || "Update failed", "error"); }
     }
 
     async function onDelete(id) {
