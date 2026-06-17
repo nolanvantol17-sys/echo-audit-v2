@@ -588,6 +588,7 @@ _ADDITIVE_MIGRATIONS = [
     # commit that wires helpers.location_scope_for_user into the read paths.
     "ALTER TABLE locations ADD COLUMN IF NOT EXISTS mayfair_property_id INTEGER",
     "ALTER TABLE locations ADD COLUMN IF NOT EXISTS mayfair_rm_user_id INTEGER",
+    "ALTER TABLE locations ADD COLUMN IF NOT EXISTS mayfair_am_user_id INTEGER",
     "ALTER TABLE locations ADD COLUMN IF NOT EXISTS locations_mayfair_synced_at TIMESTAMPTZ",
     """CREATE UNIQUE INDEX IF NOT EXISTS uq_locations_mayfair_property_id
          ON locations (mayfair_property_id)
@@ -595,6 +596,23 @@ _ADDITIVE_MIGRATIONS = [
     """CREATE INDEX IF NOT EXISTS idx_locations_mayfair_rm_user_id
          ON locations (mayfair_rm_user_id)
         WHERE mayfair_rm_user_id IS NOT NULL AND location_deleted_at IS NULL""",
+    """CREATE INDEX IF NOT EXISTS idx_locations_mayfair_am_user_id
+         ON locations (mayfair_am_user_id)
+        WHERE mayfair_am_user_id IS NOT NULL AND location_deleted_at IS NULL""",
+
+    # Manual one-off read-only portal grants (external sponsors/owners, etc.):
+    # access to a specific property without being its RM/AM. See schema.sql.
+    """CREATE TABLE IF NOT EXISTS location_portal_grants (
+        location_portal_grant_id  SERIAL PRIMARY KEY,
+        location_id               INTEGER NOT NULL
+                                      REFERENCES locations (location_id) ON DELETE CASCADE,
+        mayfair_user_id           INTEGER NOT NULL,
+        lpg_created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS uq_location_portal_grants
+         ON location_portal_grants (location_id, mayfair_user_id)""",
+    """CREATE INDEX IF NOT EXISTS idx_location_portal_grants_user
+         ON location_portal_grants (mayfair_user_id)""",
 
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS mayfair_user_id INTEGER",
     """CREATE UNIQUE INDEX IF NOT EXISTS uq_users_mayfair_user_id

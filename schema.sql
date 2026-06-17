@@ -218,9 +218,13 @@ CREATE TABLE locations (
     -- mayfair_rm_user_id      = Mayfair's RMUserId for this property (their
     --                           internal user-table PK; we DON'T FK to it because
     --                           Mayfair owns that ID space — we just store it).
+    -- mayfair_am_user_id      = Mayfair's Sr. Asset Manager UserId for this
+    --                           property (same ID space as rm_user_id; one AM
+    --                           per property per the MPL /managers feed).
     -- locations_mayfair_synced_at = when this row last got fresh API data.
     mayfair_property_id          INTEGER,
     mayfair_rm_user_id           INTEGER,
+    mayfair_am_user_id           INTEGER,
     locations_mayfair_synced_at  TIMESTAMPTZ,
     -- Exile Island / MPL bulk feed (property-directory). location_yardi_code
     -- is the stable join key (YardiCode); the *_user_ids columns store the
@@ -251,9 +255,29 @@ CREATE UNIQUE INDEX uq_locations_mayfair_property_id
 CREATE INDEX idx_locations_mayfair_rm_user_id
     ON locations (mayfair_rm_user_id)
     WHERE mayfair_rm_user_id IS NOT NULL AND location_deleted_at IS NULL;
+CREATE INDEX idx_locations_mayfair_am_user_id
+    ON locations (mayfair_am_user_id)
+    WHERE mayfair_am_user_id IS NOT NULL AND location_deleted_at IS NULL;
 CREATE UNIQUE INDEX uq_locations_yardi_code
     ON locations (location_yardi_code)
     WHERE location_yardi_code IS NOT NULL;
+
+-- Manual, one-off read-only portal grants: gives a manager-role user access to
+-- a specific property even when they are not its RM or AM (e.g. an external
+-- sponsor/owner viewing only their property). Keyed on mayfair_user_id to match
+-- how helpers.location_scope_for_user scopes the RM/AM columns. Most properties
+-- have ZERO rows here — this is the exception path, not the main one.
+CREATE TABLE location_portal_grants (
+    location_portal_grant_id  SERIAL PRIMARY KEY,
+    location_id               INTEGER NOT NULL
+                                  REFERENCES locations (location_id) ON DELETE CASCADE,
+    mayfair_user_id           INTEGER NOT NULL,
+    lpg_created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX uq_location_portal_grants
+    ON location_portal_grants (location_id, mayfair_user_id);
+CREATE INDEX idx_location_portal_grants_user
+    ON location_portal_grants (mayfair_user_id);
 
 CREATE OR REPLACE FUNCTION set_location_updated_at() RETURNS TRIGGER AS $$
 BEGIN NEW.location_updated_at = NOW(); RETURN NEW; END;

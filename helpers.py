@@ -387,12 +387,15 @@ def location_scope_for_user(user_id, role, company_id,
         pass `column="l.location_id"`.
 
     Rules (only apply when company_settings.ff_permission_filtering is on):
-      - manager → restrict to locations.mayfair_rm_user_id = the requesting
-        user's users.mayfair_user_id. A manager who hasn't been linked to a
-        Mayfair RM (mayfair_user_id IS NULL) returns the deny-all fragment
+      - manager → restrict to locations where the requesting user's
+        users.mayfair_user_id is the property's RM (locations.mayfair_rm_user_id)
+        OR its Sr. Asset Manager (locations.mayfair_am_user_id) OR there is an
+        explicit manual grant in location_portal_grants (external sponsors/owners
+        scoped to a single property). A manager who hasn't been linked to a
+        Mayfair user (mayfair_user_id IS NULL) returns the deny-all fragment
         '1=0' so they see nothing rather than the whole company. The remedy
         is admin: run the Mayfair sync + confirm the user's email matches a
-        Mayfair RM email.
+        Mayfair RM/AM email, or add a location_portal_grants row.
       - admin, super_admin, caller → unrestricted (empty fragment).
 
     When the flag is off → unrestricted for all roles (preserves today's
@@ -450,12 +453,28 @@ def location_scope_for_user(user_id, role, company_id,
         )
         result = ("1=0", [])
     else:
+        # A manager sees a property if they are its Regional Manager, its
+        # Sr. Asset Manager, OR they have an explicit manual portal grant
+        # (e.g. an external sponsor scoped to a single property). All three
+        # match on Mayfair's user-id space; UNION de-dupes overlaps.
+        # Both arms are tenant-scoped to company_id so the fragment is
+        # self-contained (defense-in-depth: callers also constrain company,
+        # but a manual grant must never resolve a location in another company
+        # that happens to share a user-id namespace). company_id is always a
+        # real value here — the ff_permission_filtering gate above is False
+        # when company_id is None, so this branch never runs without it.
         result = (
             f"{column} IN ("
             "SELECT location_id FROM locations "
-            "WHERE mayfair_rm_user_id = ? AND location_deleted_at IS NULL"
+            "WHERE (mayfair_rm_user_id = ? OR mayfair_am_user_id = ?) "
+            "AND company_id = ? AND location_deleted_at IS NULL"
+            " UNION "
+            "SELECT g.location_id FROM location_portal_grants g "
+            "JOIN locations l ON l.location_id = g.location_id "
+            "AND l.location_deleted_at IS NULL AND l.company_id = ? "
+            "WHERE g.mayfair_user_id = ?"
             ")",
-            [mayfair_uid],
+            [mayfair_uid, mayfair_uid, company_id, company_id, mayfair_uid],
         )
 
     if cache is not None:
