@@ -603,6 +603,12 @@
     opts = opts || {};
     const isDate = opts.viewBy === "date";
     const rs = opts.resolve || makeColorResolver();
+    // ISO date label "YYYY-MM-DD" → "MM/DD/YY" (display only). String-parsed
+    // so there's no Date() timezone shift; non-date labels pass through.
+    const fmtMDY = (s) => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || ""));
+      return m ? (m[2] + "/" + m[3] + "/" + m[1].slice(2)) : s;
+    };
     const plugins = { legend: { labels: { color: rs("var(--muted)") } } };
     if (isDate) {
       // Date-view tooltip reads the matched row from chart.$points (stashed
@@ -616,7 +622,7 @@
             if (!items || !items.length) return "";
             const pts = items[0].chart && items[0].chart.$points;
             const p = pts && pts[items[0].dataIndex];
-            return (p && p.interaction_date) || items[0].label || "";
+            return fmtMDY((p && p.interaction_date) || items[0].label || "");
           },
           label(ctx) {
             const pts = ctx.chart && ctx.chart.$points;
@@ -663,7 +669,12 @@
           grid:  { color: rs("var(--border)") },
         },
         x: {
-          ticks: { color: rs("var(--muted-2)"), maxRotation: 0, autoSkip: true },
+          ticks: {
+            color: rs("var(--muted-2)"), maxRotation: 0, autoSkip: true,
+            callback: isDate
+              ? function (value) { return fmtMDY(this.getLabelForValue(value)); }
+              : undefined,
+          },
           grid:  { color: rs("var(--border)") },
         },
       },
