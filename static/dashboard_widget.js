@@ -698,19 +698,17 @@
     };
   }
 
-  // Two dynamic reference lines:
+  // One dynamic reference line:
   //   - "View avg" — average of the currently-visible chart values (filtered
   //                  slice). Computed client-side from the data the user is
   //                  looking at right now.
-  //   - "Company avg" — all-time company-wide average (no filters applied).
-  //                     Returned by the chart endpoint as `company_avg`.
-  // Both rendered as horizontal dashed lines with a label at opposite edges
-  // so they don't overlap when the two values are close. Either is skipped if
-  // its value is null/NaN. The chart instance is expected to expose
-  // chart.$thresholds = { view: number|null, company: number|null }.
+  // Rendered as a horizontal dashed line with a label. Skipped if its value
+  // is null/NaN. The chart instance is expected to expose
+  // chart.$thresholds = { view: number|null }.
+  // (A company-wide average line used to be drawn here too; removed — it's not
+  // appropriate for sponsor/RM-facing views and was dropped everywhere.)
   function thresholdLinePlugin(resolve) {
     const rs = resolve || makeColorResolver();
-    const companyColor = rs("var(--muted)");
     const viewColor    = rs("var(--accent)");
     return {
       id: "daw-threshold-line",
@@ -718,8 +716,7 @@
         const { ctx, chartArea, scales } = chartInstance;
         if (!scales.y) return;
         const t = chartInstance.$thresholds || {};
-        const view    = (typeof t.view === "number"    && isFinite(t.view))    ? t.view    : null;
-        const company = (typeof t.company === "number" && isFinite(t.company)) ? t.company : null;
+        const view = (typeof t.view === "number" && isFinite(t.view)) ? t.view : null;
 
         ctx.save();
         ctx.font = "600 11px Inter, system-ui, sans-serif";
@@ -736,19 +733,6 @@
           ctx.fillStyle = lineColor;
           ctx.textAlign = align;
           ctx.fillText(text, x, y - 4);
-        }
-
-        if (company !== null) {
-          const yC = scales.y.getPixelForValue(company);
-          ctx.strokeStyle = companyColor;
-          ctx.setLineDash([7, 4]);
-          ctx.beginPath();
-          ctx.moveTo(chartArea.left, yC);
-          ctx.lineTo(chartArea.right, yC);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          drawLabel("Company avg " + company.toFixed(2),
-                    chartArea.left + 6, yC, "left", companyColor);
         }
 
         if (view !== null) {
@@ -1301,12 +1285,12 @@
 
       chart = new Chart(canvasEl, cfg);
       chart.$points = data.points || [];
-      // Threshold lines read from chart.$thresholds in afterDraw. Setting them
+      // Threshold line reads from chart.$thresholds in afterDraw. Setting it
       // before/after `new Chart()` both work — afterDraw runs on every render.
-      const companyAvg = (typeof data.company_avg === "number") ? data.company_avg : null;
+      // (Company-wide average line intentionally omitted — not for sponsor/RM
+      // eyes, and removed from the internal dashboards too.)
       chart.$thresholds = {
-        view:    computeViewAvg(data),
-        company: companyAvg,
+        view: computeViewAvg(data),
       };
       showCanvas();
     }
