@@ -154,6 +154,10 @@
       flex: 1 1 160px; min-width: 150px;
     }
     .daw-ms-btn:hover { border-color: var(--accent); }
+    /* The author "display: inline-flex" above outranks the UA [hidden] rule,
+       so hideFilters' btn.hidden=true wouldn't actually hide the button
+       without this explicit override. */
+    .daw-ms-btn[hidden] { display: none !important; }
     .daw-ms-label {
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
       text-align: left;

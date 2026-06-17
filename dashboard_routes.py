@@ -538,10 +538,12 @@ def get_filters():
     project_id is provided). Phone routings include their location_id so the
     UI can narrow the phone_routing list when locations are selected.
 
-    Campaigns are returned ONLY when project_id is provided — campaigns are
-    project-scoped (campaigns.project_id FK) and a company-wide campaign list
-    isn't a meaningful filter (caller would need to know which project a
-    campaign belongs to). Empty list when project_id is omitted.
+    Campaigns are returned when project_id is provided, OR when the requester
+    is a manager (RM) — campaigns are project-scoped (campaigns.project_id FK)
+    and a company-wide list isn't a meaningful filter for an admin, but an RM
+    is already row-scoped to their locations, so their campaign list is small
+    and useful (and the sealed RM portal needs it without a project_id).
+    Empty list otherwise.
     """
     company_id, err = _require_company()
     if err: return err
@@ -609,10 +611,15 @@ def get_filters():
         )
         phone_routings = _rows(cur)
 
-        # campaigns: project-scoped only. Distinct live campaigns reachable
-        # via interactions in scope. Returns [] when project_id not provided.
+        # campaigns: project-scoped for admins — a company-wide campaign list
+        # isn't a meaningful filter (you'd need to know each campaign's
+        # project). But a manager (RM) is already location-scoped via `where`,
+        # so their campaign list is naturally small AND useful without a
+        # project_id. Required so the sealed RM portal's campaign filter has
+        # options at all, and so a shared-link campaign_id survives hydration
+        # instead of being pruned back to "All Campaigns".
         campaigns = []
-        if project_id:
+        if project_id or current_user.role == "manager":
             cur = conn.execute(
                 q(f"""SELECT DISTINCT c.campaign_id, c.campaign_name
                       FROM interactions i
