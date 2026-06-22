@@ -429,7 +429,7 @@ def location_scope_for_user(user_id, role, company_id,
     conn = get_conn()
     try:
         cur = conn.execute(
-            q("""SELECT mayfair_user_id FROM users
+            q("""SELECT mayfair_user_id, user_all_locations_readonly FROM users
                   WHERE user_id = ? AND user_deleted_at IS NULL"""),
             (user_id,),
         )
@@ -438,13 +438,29 @@ def location_scope_for_user(user_id, role, company_id,
         conn.close()
 
     mayfair_uid = None
+    all_locations = False
     if row is not None:
         try:
             mayfair_uid = row["mayfair_user_id"]
+            all_locations = bool(row["user_all_locations_readonly"])
         except (KeyError, TypeError, IndexError):
             mayfair_uid = row[0]
+            all_locations = bool(row[1])
 
-    if not mayfair_uid:
+    if all_locations:
+        # Company-wide read-only viewer (e.g. an executive / President): sees
+        # every non-deleted location in their company, current AND future — no
+        # per-property RM/AM/grant needed. Read-only is enforced by the manager
+        # seal (deny-by-default gate in app.py), not here. Tenant-scoped to
+        # company_id; company_id is always real here (the ff gate above is False
+        # when it's None).
+        result = (
+            f"{column} IN ("
+            "SELECT location_id FROM locations "
+            "WHERE company_id = ? AND location_deleted_at IS NULL)",
+            [company_id],
+        )
+    elif not mayfair_uid:
         logger.warning(
             "[location_scope] manager user_id=%s has no mayfair_user_id — "
             "denying all rows under ff_permission_filtering. "

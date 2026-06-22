@@ -619,6 +619,10 @@ _ADDITIVE_MIGRATIONS = [
          ON users (mayfair_user_id)
         WHERE mayfair_user_id IS NOT NULL AND user_deleted_at IS NULL""",
 
+    # Company-wide read-only viewer flag (executives who see every location but
+    # have no admin/edit powers). Honored by helpers.location_scope_for_user.
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS user_all_locations_readonly BOOLEAN NOT NULL DEFAULT FALSE",
+
     """CREATE TABLE IF NOT EXISTS mayfair_sync_runs (
         mayfair_sync_run_id     SERIAL PRIMARY KEY,
         company_id              INTEGER NOT NULL

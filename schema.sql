@@ -366,6 +366,12 @@ CREATE TABLE users (
     -- matches a Mayfair RM email. Permission filtering checks this column
     -- to decide whether to scope a manager's data view to their properties.
     mayfair_user_id            INTEGER,
+    -- Company-wide read-only viewer. When TRUE, a manager-role user sees EVERY
+    -- location in their company (current + future) via the sealed read-only
+    -- portal — instead of only their RM/AM/granted properties. For executives
+    -- (e.g. a President) who need full visibility but not admin/edit powers.
+    -- helpers.location_scope_for_user honors this before the RM/AM/grant logic.
+    user_all_locations_readonly BOOLEAN NOT NULL DEFAULT FALSE,
     -- Exile Island / MPL active-users feed. Set by the sync when a
     -- feed-origin user (mayfair_user_id NOT NULL) stops appearing in the
     -- feed. Echo-Audit-native accounts (AI Caller bot, super-admins) are
