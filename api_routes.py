@@ -1698,9 +1698,12 @@ def list_campaigns(project_id):
     try:
         if not _get_project(conn, project_id, company_id):
             return _err("Project not found", 404)
-        # Order by last-used (most recent interaction) first, then by creation
-        # date for campaigns that have never been used. Matches the default-
-        # selection rule on the Grade page (pre-select items[0]).
+        # Order chronologically by campaign start date (NULLS LAST), then name —
+        # matches the dashboard filter so monthly campaigns read in calendar
+        # order. The Grade page no longer auto-picks items[0] when 2+ campaigns
+        # exist (it shows the placeholder), so display order here is cosmetic.
+        # last_used_at / usage_count are still returned for any client that wants
+        # them.
         cur = conn.execute(q("""
             SELECT c.campaign_id, c.project_id, c.campaign_name,
                    c.campaign_start_date,
@@ -1715,7 +1718,7 @@ def list_campaigns(project_id):
             GROUP BY c.campaign_id, c.project_id, c.campaign_name,
                      c.campaign_start_date,
                      c.campaign_created_at, c.campaign_updated_at
-            ORDER BY last_used_at DESC NULLS LAST, c.campaign_created_at DESC
+            ORDER BY c.campaign_start_date ASC NULLS LAST, c.campaign_name ASC
         """) if IS_POSTGRES else q("""
             SELECT c.campaign_id, c.project_id, c.campaign_name,
                    c.campaign_start_date,
@@ -1728,7 +1731,7 @@ def list_campaigns(project_id):
                   AND i.interaction_deleted_at IS NULL
             WHERE c.project_id = ? AND c.campaign_deleted_at IS NULL
             GROUP BY c.campaign_id
-            ORDER BY last_used_at IS NULL, last_used_at DESC, c.campaign_created_at DESC
+            ORDER BY c.campaign_start_date IS NULL, c.campaign_start_date ASC, c.campaign_name ASC
         """), (project_id,))
         return jsonify([_campaign_json(r) for r in _rows(cur)])
     finally:
