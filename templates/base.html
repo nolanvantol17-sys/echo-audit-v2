@@ -100,6 +100,7 @@
 {% set is_grade = _p == '/app/grade' or _p.startswith('/app/grade/') or _p.startswith('/app/grade?') %}
 {% set _nsw = 'data-no-swap' if is_grade else '' %}
 
+{% include "_sim_banner.html" %}
 <div class="app-shell">
 
   {# ── Sidebar ────────────────────────────────────────────── #}
@@ -145,6 +146,10 @@
       <a href="{{ url_for('voip_page') }}"
          class="nav-link {% if is_voip %}active{% endif %}" {{ _nsw }}>
         <span class="nav-icon">☎</span> VoIP
+      </a>
+      <a href="{{ url_for('simulator.simulator_page') }}"
+         class="nav-link {% if request.path.startswith('/app/simulator') %}active{% endif %}" {{ _nsw }}>
+        <span class="nav-icon">◐</span> Simulator
       </a>
       {% endif %}
 

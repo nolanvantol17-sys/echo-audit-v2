@@ -43,6 +43,7 @@ from active_jobs_routes import active_jobs_bp
 from voice_agents_routes import voice_agents_bp
 from sso_routes import sso_bp
 from twilio_routes import twilio_bp
+from simulator_routes import simulator_bp
 # Re-exported from helpers so "from app import get_effective_company_id" works
 # for any callers that expect the helper to live on the main app module.
 # check_rate_limit and increment_usage live in helpers to avoid a circular
@@ -124,12 +125,26 @@ _RM_BLOCKED_API_EXACT = frozenset({
     "/api/dashboard/insights",     # side-effecting GET (can trigger LLM recompute)
 })
 _RM_ALLOWED_PAGE_EXACT = frozenset({"/app/manager"})
-_RM_ALWAYS_ALLOWED = frozenset({"/logout", "/change-password"})
+# "/app/simulator/stop": when an admin simulates an RM they become a sealed
+# manager — Terminate must still work, so it's exempt from the seal (allowed
+# before the method/role checks, like logout).
+_RM_ALWAYS_ALLOWED = frozenset({"/logout", "/change-password", "/app/simulator/stop"})
 
 
 def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+
+    # Session-cookie hardening. SameSite=Lax blocks cross-site form-POST CSRF
+    # (matters most for the simulator's act-as POSTs and other state changes)
+    # while still allowing the top-level OAuth redirect back from Microsoft.
+    # HttpOnly keeps JS from reading the cookie. Secure pins it to HTTPS — on by
+    # default (prod is HTTPS); set SESSION_COOKIE_SECURE=0 for local http dev.
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SECURE"] = (
+        os.environ.get("SESSION_COOKIE_SECURE", "1") not in ("0", "false", "False", "")
+    )
 
     # Initialize database schema + seed defaults on startup
     db.init_app(app)
@@ -233,6 +248,9 @@ def create_app():
     # twilio_routes.py module docstring.
     app.register_blueprint(twilio_bp)
 
+    # Simulator — admin "view as user" (full act-as). See simulator_routes.py.
+    app.register_blueprint(simulator_bp)
+
     # JSON error handlers for /api/ paths (HTML paths get default handling)
     _register_error_handlers(app)
 
@@ -287,6 +305,7 @@ def _register_context_processors(app):
             "active_org_id":       None,
             "active_org_name":     None,
             "all_orgs":            None,
+            "simulating":          None,
             "location_label":      "Location",
             "property_list_label": "Locations",
             "keyterms_prompt_max_terms": 200,
@@ -325,6 +344,38 @@ def _register_context_processors(app):
         ctx["user_name"]  = current_user.full_name
         ctx["user_email"] = current_user.email
         ctx["user_id"]    = current_user.user_id
+
+        # Simulator banner — when an admin is "viewing as" a user, current_user
+        # IS the simulated target; resolve the real admin's name for the banner.
+        # Best-effort: never block a render. See simulator_routes.py.
+        sim_real_id = session.get("sim_real_user_id")
+        if sim_real_id:
+            admin_name = "your account"
+            try:
+                conn = db.get_conn()
+                try:
+                    cur = conn.execute(
+                        db.q("SELECT user_first_name, user_last_name FROM users WHERE user_id = ?"),
+                        (sim_real_id,),
+                    )
+                    r = cur.fetchone()
+                    if r is not None:
+                        try:
+                            fn, ln = r["user_first_name"], r["user_last_name"]
+                        except (KeyError, TypeError, IndexError):
+                            fn, ln = r[0], r[1]
+                        nm = " ".join(p for p in (fn, ln) if p).strip()
+                        if nm:
+                            admin_name = nm
+                finally:
+                    conn.close()
+            except Exception:
+                pass
+            ctx["simulating"] = {
+                "target_name": current_user.full_name or current_user.email,
+                "target_role": current_user.role,
+                "admin_name":  admin_name,
+            }
 
         active_cid = get_effective_company_id()
         ctx["active_org_id"] = active_cid

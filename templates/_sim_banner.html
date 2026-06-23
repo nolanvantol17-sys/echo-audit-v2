@@ -1,0 +1,31 @@
+{# Simulation banner — shown on every page while an admin is "viewing as" a
+   user. Self-contained styles so it renders identically in base.html and the
+   sealed manager portal regardless of which stylesheets that page loads. #}
+{% if simulating %}
+<style>
+  .sim-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;
+    background:#8a4b00;color:#fff;padding:9px 18px;font-size:.86rem;line-height:1.3;
+    font-family:inherit;border-bottom:1px solid rgba(0,0,0,.25);
+    box-shadow:0 1px 4px rgba(0,0,0,.18);}
+  .sim-banner-text{display:flex;align-items:center;gap:9px;flex-wrap:wrap;}
+  .sim-banner-role{text-transform:uppercase;letter-spacing:.06em;font-size:.68rem;
+    background:rgba(255,255,255,.22);padding:2px 8px;border-radius:10px;font-weight:600;}
+  .sim-banner strong{font-weight:700;}
+  .sim-banner-who{opacity:.85;}
+  .sim-banner-btn{background:#fff;color:#8a4b00;border:none;border-radius:6px;
+    padding:6px 14px;font:inherit;font-size:.8rem;font-weight:700;cursor:pointer;
+    white-space:nowrap;transition:background .15s ease;}
+  .sim-banner-btn:hover{background:#ffe6cc;}
+</style>
+<div class="sim-banner" role="alert">
+  <span class="sim-banner-text">
+    <span aria-hidden="true">👁</span>
+    Simulating <strong>{{ simulating.target_name }}</strong>
+    <span class="sim-banner-role">{{ simulating.target_role }}</span>
+    <span class="sim-banner-who">· signed in as {{ simulating.admin_name }}</span>
+  </span>
+  <form method="POST" action="{{ url_for('simulator.simulator_stop') }}" style="margin:0;">
+    <button type="submit" class="sim-banner-btn">Terminate simulation</button>
+  </form>
+</div>
+{% endif %}

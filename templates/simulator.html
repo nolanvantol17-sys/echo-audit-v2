@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Simulator | {{ client_name or "Echo Audit" }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  .sim-head { margin-bottom: 18px; }
+  .sim-head h1 { font-size: 1.4rem; font-weight: 650; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .sim-head p { color: var(--muted); margin: 0; font-size: 0.9rem; }
+  .sim-search {
+    width: 100%; max-width: 420px; margin: 0 0 16px;
+    padding: 9px 13px; border: 1px solid var(--border); border-radius: var(--radius-sm, 8px);
+    background: var(--surface); color: var(--text); font: inherit; font-size: 0.9rem;
+  }
+  .sim-table { width: 100%; border-collapse: collapse; background: var(--surface);
+    border: 1px solid var(--border); border-radius: var(--radius-lg, 12px); overflow: hidden; }
+  .sim-table th, .sim-table td { text-align: left; padding: 11px 16px; font-size: 0.88rem;
+    border-bottom: 1px solid var(--border); }
+  .sim-table th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--muted); font-weight: 600; background: var(--surface-2); }
+  .sim-table tr:last-child td { border-bottom: none; }
+  .sim-table tr:hover td { background: var(--surface-hover, var(--surface-2)); }
+  .sim-name { font-weight: 600; color: var(--text); }
+  .sim-email { color: var(--muted); font-size: 0.82rem; }
+  .sim-role { text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.68rem; font-weight: 600;
+    color: var(--muted); background: var(--surface-2); padding: 2px 8px; border-radius: 10px; }
+  .sim-btn { background: var(--text); color: var(--surface); border: none; border-radius: 6px;
+    padding: 6px 14px; font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .sim-btn:hover { opacity: 0.88; }
+  .sim-empty { padding: 24px; color: var(--muted); text-align: center; }
+  .sim-count { color: var(--muted); font-size: 0.82rem; margin-left: 8px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sim-head">
+  <h1>Simulator</h1>
+  <p>Pick a user to see the app exactly as they do. A banner stays at the top while you simulate, with a button to end it.</p>
+</div>
+
+<input type="text" id="sim-search" class="sim-search" placeholder="Search by name, email, or role…" autocomplete="off">
+<span class="sim-count" id="sim-count"></span>
+
+<table class="sim-table">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Role</th>
+      {% if user_role == 'super_admin' %}<th>Organization</th>{% endif %}
+      <th style="text-align:right;">Action</th>
+    </tr>
+  </thead>
+  <tbody id="sim-rows">
+    {% for u in sim_users %}
+    <tr class="sim-row" data-search="{{ (u.full_name ~ ' ' ~ (u.user_email or '') ~ ' ' ~ (u.role_name or '') ~ ' ' ~ (u.company_name or '')) | lower }}">
+      <td>
+        <div class="sim-name">{{ u.full_name }}</div>
+        <div class="sim-email">{{ u.user_email }}</div>
+      </td>
+      <td><span class="sim-role">{{ u.role_name or '—' }}</span></td>
+      {% if user_role == 'super_admin' %}<td>{{ u.company_name or '—' }}</td>{% endif %}
+      <td style="text-align:right;">
+        <form method="POST" action="{{ url_for('simulator.simulator_start', user_id=u.user_id) }}" style="margin:0;display:inline;">
+          <button type="submit" class="sim-btn">Simulate</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="{{ 4 if user_role == 'super_admin' else 3 }}" class="sim-empty">No users available to simulate.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    var input = document.getElementById("sim-search");
+    var rows = Array.prototype.slice.call(document.querySelectorAll(".sim-row"));
+    var count = document.getElementById("sim-count");
+    function update() {
+      var q = (input.value || "").trim().toLowerCase();
+      var shown = 0;
+      rows.forEach(function (r) {
+        var match = !q || (r.getAttribute("data-search") || "").indexOf(q) !== -1;
+        r.style.display = match ? "" : "none";
+        if (match) shown++;
+      });
+      count.textContent = shown + " user" + (shown === 1 ? "" : "s");
+    }
+    if (input) { input.addEventListener("input", update); update(); }
+  })();
+</script>
+{% endblock %}
