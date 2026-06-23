@@ -89,9 +89,13 @@ def simulator_page():
                 " ORDER BY c.company_name, r.role_name, u.user_first_name"
             cur = conn.execute(q(sql), (current_user.user_id,))
         else:
-            # company admin: own org only (INNER JOIN on dept to enforce company)
+            # company admin: own org only (INNER JOIN on dept to enforce company),
+            # and never list super-admins (they can't be simulated by a non-
+            # super-admin — keeps the picker consistent with the start guard).
             sql = base.format(dept_join="JOIN") + \
-                " AND d.company_id = ? ORDER BY r.role_name, u.user_first_name"
+                " AND d.company_id = ?" \
+                " AND (r.role_name IS NULL OR r.role_name <> 'super_admin')" \
+                " ORDER BY r.role_name, u.user_first_name"
             cur = conn.execute(q(sql), (current_user.user_id, current_user.company_id))
         users = [_dict(r) for r in cur.fetchall()]
     finally:
