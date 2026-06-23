@@ -1,0 +1,6 @@
+{# Browser tab / home-screen icons — the Echo Audit echo mark.
+   SVG first (crisp at any size), PNG fallback for older browsers, apple-touch
+   for iOS home screens. Shared by base.html and the standalone auth pages. #}
+<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}?v={{ static_v('favicon.svg') }}">
+<link rel="alternate icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}?v={{ static_v('favicon.png') }}">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}?v={{ static_v('apple-touch-icon.png') }}">

@@ -17,6 +17,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ client_name or "Echo Audit" }} — Call Performance</title>
+  {% include "_favicon.html" %}
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -35,7 +36,7 @@
       border-bottom: 1px solid var(--border);
     }
     .ms-brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1rem; }
-    .ms-brand img { height: 30px; width: auto; }
+    .ms-brand img { height: 26px; width: auto; max-width: 100%; }
     .ms-user { display: flex; align-items: center; gap: 14px; font-size: 0.85rem; color: var(--muted); }
     /* Centered "Viewing: <properties>" chip — which property/properties the
        current filters resolve to. Truncates with an ellipsis if very long. */
@@ -80,10 +81,8 @@
   {% include "_sim_banner.html" %}
   <header class="ms-topbar">
     <div class="ms-brand">
-      {% if logo_base64 %}
-        <img src="data:image/png;base64,{{ logo_base64 }}" alt="{{ client_name or 'Echo Audit' }}">
-      {% endif %}
-      <span>{{ client_name or "Echo Audit" }}</span>
+      <img src="{{ url_for('static', filename='logo.svg') }}?v={{ static_v('logo.svg') }}"
+           alt="{{ client_name or 'Echo Audit' }}">
     </div>
     <div class="ms-viewing" id="ms-viewing"></div>
     <div class="ms-user">

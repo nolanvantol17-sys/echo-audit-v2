@@ -107,7 +107,10 @@ a:hover { color: var(--accent-h); }
   padding: 22px 22px 18px !important;
   border-bottom: 1px solid var(--border) !important;
 }
-.sidebar-brand img { filter: none !important; }   /* drop the dark-mode invert */
+.sidebar-brand img {
+  height: 24px !important; width: auto; max-width: 100%;
+  filter: none !important;                          /* SVG wordmark, no invert */
+}
 .sidebar-brand-text {
   font-weight: 600 !important;
   letter-spacing: -0.01em !important;

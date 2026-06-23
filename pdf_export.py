@@ -310,7 +310,9 @@ def _build_header(intr, styles, *, show_score=True):
     right_stack = []
     logo = _logo_bytes()
     if logo:
-        right_stack.append([Image(io.BytesIO(logo), width=80, height=80*218/400)])
+        # New "ECHO AUDIT" wordmark lockup is 3664x560 (~6.54:1); fit to the
+        # 80pt right column and scale height to preserve the aspect.
+        right_stack.append([Image(io.BytesIO(logo), width=80, height=80*560/3664)])
     if show_score:
         if right_stack:
             right_stack.append([Spacer(1, 4)])

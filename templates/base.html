@@ -18,6 +18,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}{{ client_name or "Echo Audit" }}{% endblock %}</title>
+  {% include "_favicon.html" %}
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -106,10 +107,8 @@
   {# ── Sidebar ────────────────────────────────────────────── #}
   <aside class="sidebar">
     <a href="{{ url_for('app_home') }}" class="sidebar-brand" {{ _nsw }}>
-      {% if logo_base64 %}
-        <img src="data:image/png;base64,{{ logo_base64 }}" alt="{{ client_name or 'Logo' }}">
-      {% endif %}
-      <span class="sidebar-brand-text">{{ client_name or "Echo Audit" }}</span>
+      <img src="{{ url_for('static', filename='logo.svg') }}?v={{ static_v('logo.svg') }}"
+           alt="{{ client_name or 'Echo Audit' }}">
     </a>
 
     <nav class="sidebar-nav">
