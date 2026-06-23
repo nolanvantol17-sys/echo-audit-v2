@@ -337,6 +337,22 @@ _ADDITIVE_MIGRATIONS = [
     # is NULL and grading picks the location per call).
     "ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_all_locations BOOLEAN NOT NULL DEFAULT FALSE",
 
+    # Per-project access restriction. When project_is_restricted is TRUE, the
+    # project is visible only to admins/super_admins + the users listed in
+    # project_access; everyone else is denied as if it didn't exist. See the
+    # helpers.py "Per-project access restriction" block for enforcement.
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS project_is_restricted BOOLEAN NOT NULL DEFAULT FALSE",
+    """CREATE TABLE IF NOT EXISTS project_access (
+        project_access_id         SERIAL PRIMARY KEY,
+        project_id                INTEGER NOT NULL
+                                      REFERENCES projects (project_id) ON DELETE CASCADE,
+        user_id                   INTEGER NOT NULL
+                                      REFERENCES users (user_id) ON DELETE CASCADE,
+        project_access_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_project_access_project_user ON project_access (project_id, user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_project_access_user_id ON project_access (user_id)",
+
     # Phase 8: call timestamps. interaction_uploaded_at is set on every grade
     # submission (server-side NOW()). The other three are populated only for
     # live recordings — uploaded files leave them NULL.

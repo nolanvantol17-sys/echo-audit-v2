@@ -28,7 +28,8 @@ from flask_login import current_user, login_required
 import grader
 from db import IS_POSTGRES, get_conn, q
 from grade_jobs import enqueue_grade_job, process_grade_job_async
-from helpers import check_rate_limit, get_effective_company_id
+from helpers import (check_rate_limit, get_effective_company_id,
+                     restricted_project_ids_for_user)
 from interactions_routes import (
     _campaign_belongs_to_project,
     _get_project_in_company,
@@ -199,10 +200,21 @@ def list_grade_jobs():
     company_id, err = _require_company()
     if err: return err
 
+    # Hide jobs whose interaction is in a restricted project this user can't see
+    # (covers a user removed from a project's allowlist). NULL project = queued
+    # job with no interaction yet → keep. Admins/super_admins → no-op.
+    hidden = restricted_project_ids_for_user(
+        current_user.user_id, current_user.role, company_id)
+    hide_sql, hide_params = "", []
+    if hidden:
+        ph = ",".join(["?"] * len(hidden))
+        hide_sql = f" AND (i.project_id IS NULL OR i.project_id NOT IN ({ph}))"
+        hide_params = list(hidden)
+
     conn = get_conn()
     try:
         cur = conn.execute(
-            q("""SELECT j.grade_job_id,
+            q(f"""SELECT j.grade_job_id,
                         j.gj_status,
                         j.gj_phase_started_at,
                         j.gj_error,
@@ -221,9 +233,9 @@ def list_grade_jobs():
                    LEFT JOIN locations l    ON l.location_id    = i.interaction_location_id
                   WHERE j.company_id = ?
                     AND j.submitted_by_user_id = ?
-                    AND j.gj_dismissed_at IS NULL
+                    AND j.gj_dismissed_at IS NULL{hide_sql}
                   ORDER BY j.gj_created_at DESC, j.grade_job_id DESC"""),
-            (company_id, current_user.user_id),
+            (company_id, current_user.user_id, *hide_params),
         )
         return jsonify(_rows(cur))
     finally:

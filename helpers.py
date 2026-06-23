@@ -498,6 +498,135 @@ def location_scope_for_user(user_id, role, company_id,
     return result
 
 
+# ── Per-project access restriction ──────────────────────────────────────────
+# A project can be marked "restricted" (projects.project_is_restricted). A
+# restricted project is visible ONLY to admins / super_admins and the users
+# explicitly listed in the project_access allowlist; everyone else is denied as
+# if it didn't exist. Enforcement composes into the SAME WHERE-clause channel as
+# location_scope_for_user() at every interaction/aggregate read, and gates the
+# single-project ownership getters. All lookups FAIL OPEN (treat nothing as
+# restricted) if the column/table aren't present yet — so a deploy that lands
+# before the additive migration can't break project access. No project is
+# actually restricted until an admin sets the flag, which happens after migrate.
+
+def restricted_project_ids_for_user(user_id, role, company_id, conn=None):
+    """Return restricted project_ids in `company_id` this user may NOT see.
+
+    [] for admin/super_admin (they bypass) and when nothing applies. Compose via
+    project_hide_clause()/add_project_hide(); for a single project use
+    user_can_access_project()."""
+    if role in ("admin", "super_admin"):
+        return []
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        cur = conn.execute(q("""
+            SELECT p.project_id FROM projects p
+            WHERE p.company_id = ?
+              AND p.project_is_restricted
+              AND p.project_deleted_at IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM project_access pa
+                  WHERE pa.project_id = p.project_id AND pa.user_id = ?
+              )"""), (company_id, user_id))
+        rows = cur.fetchall()
+    except Exception:
+        logger.warning("[project_access] restriction lookup failed; allowing "
+                       "(infra not ready?)", exc_info=True)
+        return []
+    finally:
+        if own:
+            conn.close()
+    out = []
+    for r in rows:
+        try:
+            out.append(r["project_id"])
+        except (KeyError, TypeError, IndexError):
+            out.append(r[0])
+    return out
+
+
+def user_can_access_project(user_id, role, project_id, conn=None):
+    """True if the user may access `project_id` under the restriction layer.
+
+    Admins/super_admins always may. Others may unless the project is restricted
+    and they're not on its allowlist. Unknown / not-restricted → True. Fails open
+    on missing infra (returns True)."""
+    if role in ("admin", "super_admin"):
+        return True
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        row = conn.execute(
+            q("""SELECT project_is_restricted FROM projects
+                 WHERE project_id = ? AND project_deleted_at IS NULL"""),
+            (project_id,),
+        ).fetchone()
+        if not row:
+            return True
+        try:
+            restricted = bool(row["project_is_restricted"])
+        except (KeyError, TypeError, IndexError):
+            restricted = bool(row[0])
+        if not restricted:
+            return True
+        granted = conn.execute(
+            q("""SELECT 1 FROM project_access
+                 WHERE project_id = ? AND user_id = ?"""),
+            (project_id, user_id),
+        ).fetchone()
+        return bool(granted)
+    except Exception:
+        logger.warning("[project_access] access check failed for project %s; "
+                       "allowing (infra not ready?)", project_id, exc_info=True)
+        return True
+    finally:
+        if own:
+            conn.close()
+
+
+def project_hide_clause(hidden_project_ids, column="i.project_id"):
+    """Return (sql_fragment, params) excluding restricted projects, mirroring
+    location_scope_for_user()'s contract: "" or a bare predicate to AND into the
+    WHERE. `column` is the project_id column in the caller's query."""
+    if not hidden_project_ids:
+        return "", []
+    placeholders = ",".join(["?"] * len(hidden_project_ids))
+    return f"{column} NOT IN ({placeholders})", list(hidden_project_ids)
+
+
+def add_project_hide(scope_sql, scope_params, user_id, role, company_id,
+                     column="i.project_id"):
+    """Fold the restricted-project hide predicate into an existing
+    (scope_sql, scope_params) pair (typically from location_scope_for_user).
+    Returns a new (sql, params). No-op for admins/super_admins or when nothing is
+    hidden — so it's safe to call unconditionally at every interaction read."""
+    hide_sql, hide_params = project_hide_clause(
+        restricted_project_ids_for_user(user_id, role, company_id), column)
+    if not hide_sql:
+        return scope_sql, list(scope_params)
+    combined = (scope_sql + " AND " + hide_sql) if scope_sql else hide_sql
+    return combined, [*scope_params, *hide_params]
+
+
+def current_user_blocked_from_project(project_id):
+    """True if the current request's user is blocked from this restricted
+    project. False when there's no request/auth context (trusted server code) or
+    the user is allowed. Wrapper for the single-project ownership getters; uses a
+    fresh connection so a missing-infra error can't poison a caller transaction."""
+    try:
+        from flask import has_request_context
+        if not has_request_context() or not getattr(current_user, "is_authenticated", False):
+            return False
+        return not user_can_access_project(
+            current_user.user_id, current_user.role, project_id)
+    except Exception:
+        logger.warning("[project_access] gate errored; allowing", exc_info=True)
+        return False
+
+
 def ai_caller_user_id_for_company(company_id):
     """Return the user_id of this company's AI Caller bot user, or None.
 

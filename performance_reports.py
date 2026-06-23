@@ -31,10 +31,11 @@ import threading
 
 import anthropic
 from flask import Blueprint, jsonify
-from flask_login import login_required
+from flask_login import current_user, login_required
 
 from db import IS_POSTGRES, get_conn, q
-from helpers import check_rate_limit, get_effective_company_id, increment_usage
+from helpers import (check_rate_limit, get_effective_company_id, increment_usage,
+                     restricted_project_ids_for_user)
 
 logger = logging.getLogger(__name__)
 
@@ -91,25 +92,34 @@ _PR_SCORE_FILTER = (
 )
 
 
-def _live_scores_by_key(conn, key_col, ids):
+def _live_scores_by_key(conn, key_col, ids, hide_project_ids=None):
     """{key: (avg_rounded_1, count)} over the canonical scored set.
 
     key_col is 'respondent_id' (detected-respondent reports) or
     'respondent_user_id' (known-user reports). Empty ids → {}.
+
+    hide_project_ids (optional): exclude interactions in these restricted
+    projects, so a viewer who isn't allowlisted for a restricted project never
+    sees its calls reflected in a respondent's score/count.
     """
     ids = [i for i in (ids or []) if i is not None]
     if not ids:
         return {}
     ph = ",".join(["?"] * len(ids))
+    hide_sql, hide_params = "", []
+    if hide_project_ids:
+        hp = ",".join(["?"] * len(hide_project_ids))
+        hide_sql = f" AND project_id NOT IN ({hp})"
+        hide_params = list(hide_project_ids)
     cur = conn.execute(
         q(f"""SELECT {key_col} AS k,
                      AVG(interaction_overall_score) AS a,
                      COUNT(*) AS n
                 FROM interactions
                WHERE {key_col} IN ({ph})
-                 AND {_PR_SCORE_FILTER}
+                 AND {_PR_SCORE_FILTER}{hide_sql}
                GROUP BY {key_col}"""),
-        list(ids),
+        [*ids, *hide_params],
     )
     out = {}
     for r in _rows(cur):
@@ -138,6 +148,10 @@ def _live_scores_by_key(conn, key_col, ids):
 def list_performance_reports():
     company_id, err = _require_company()
     if err: return err
+
+    # Restricted projects this viewer can't see (admins/super_admins → []).
+    hidden = restricted_project_ids_for_user(
+        current_user.user_id, current_user.role, company_id)
 
     # Two groups of reports per company:
     #   1. Known-user reports — scoped by users.department_id → companies
@@ -251,6 +265,11 @@ def list_performance_reports():
         no_answers_by_loc = {}
         if loc_ids:
             placeholders = ",".join(["?"] * len(loc_ids))
+            hide_sql, hide_params = "", []
+            if hidden:
+                hp = ",".join(["?"] * len(hidden))
+                hide_sql = f" AND i.project_id NOT IN ({hp})"
+                hide_params = list(hidden)
             cur = conn.execute(
                 q(f"""SELECT i.interaction_location_id AS loc_id,
                              COUNT(*) AS n
@@ -260,9 +279,9 @@ def list_performance_reports():
                          AND i.status_id = 44
                          AND i.interaction_deleted_at IS NULL
                          AND i.interaction_is_test = FALSE
-                         AND i.interaction_location_id IN ({placeholders})
+                         AND i.interaction_location_id IN ({placeholders}){hide_sql}
                        GROUP BY i.interaction_location_id"""),
-                [company_id] + loc_ids,
+                [company_id] + loc_ids + hide_params,
             )
             for sr in cur.fetchall():
                 d = _row_to_dict(sr)
@@ -277,10 +296,12 @@ def list_performance_reports():
         resp_live = _live_scores_by_key(
             conn, "respondent_id",
             {r["respondent_id"] for r in rows if r.get("respondent_id")},
+            hide_project_ids=hidden,
         )
         user_live = _live_scores_by_key(
             conn, "respondent_user_id",
             {r["respondent_user_id"] for r in rows if r.get("respondent_user_id")},
+            hide_project_ids=hidden,
         )
         for r in rows:
             if r.get("respondent_id"):
@@ -289,6 +310,12 @@ def list_performance_reports():
                 avg, n = user_live.get(r.get("respondent_user_id"), (None, 0))
             r["pr_average_score"] = avg
             r["pr_call_count"]    = n
+
+        # When the viewer is locked out of one or more projects, a respondent
+        # whose only calls live in those projects now has 0 visible calls — drop
+        # their report entirely so a restricted project leaves no trace here.
+        if hidden:
+            rows = [r for r in rows if (r.get("pr_call_count") or 0) > 0]
 
         # Group the flat list into {location_name: [reports]}
         grouped = {}
@@ -310,6 +337,9 @@ def list_performance_reports():
 def get_performance_report(performance_report_id):
     company_id, err = _require_company()
     if err: return err
+
+    hidden = restricted_project_ids_for_user(
+        current_user.user_id, current_user.role, company_id)
 
     conn = get_conn()
     try:
@@ -357,10 +387,18 @@ def get_performance_report(performance_report_id):
         else:
             key_col, key_val = "respondent_user_id", row.get("subject_user_id")
 
-        live = _live_scores_by_key(conn, key_col, [key_val])
+        live = _live_scores_by_key(conn, key_col, [key_val], hide_project_ids=hidden)
         avg, n = live.get(key_val, (None, 0))
         row["pr_average_score"] = avg
         row["pr_call_count"]    = n
+
+        # Exclude calls in restricted projects this viewer can't see (bare
+        # `project_id`; admins/super_admins → hidden is []).
+        hide_sql, hide_params = "", []
+        if hidden:
+            hp = ",".join(["?"] * len(hidden))
+            hide_sql = f" AND project_id NOT IN ({hp})"
+            hide_params = list(hidden)
 
         if key_val is not None:
             cur = conn.execute(
@@ -373,13 +411,18 @@ def get_performance_report(performance_report_id):
                              interaction_overall_assessment
                       FROM interactions
                       WHERE {key_col} = ?
-                        AND {_PR_SCORE_FILTER}
+                        AND {_PR_SCORE_FILTER}{hide_sql}
                       ORDER BY interaction_date DESC, interaction_id DESC"""),
-                (key_val,),
+                (key_val, *hide_params),
             )
             row["interactions"] = _rows(cur)
         else:
             row["interactions"] = []
+
+        # If hiding leaves this report with no visible calls, it belongs to a
+        # restricted project the viewer isn't allowlisted for — 404 it.
+        if hidden and not row["interactions"] and not n:
+            return _err("Performance report not found", 404)
 
         return jsonify(row)
     finally:
@@ -404,6 +447,9 @@ def get_location_no_answers(location_id):
     company_id, err = _require_company()
     if err: return err
 
+    hidden = restricted_project_ids_for_user(
+        current_user.user_id, current_user.role, company_id)
+
     conn = get_conn()
     try:
         cur = conn.execute(
@@ -417,17 +463,22 @@ def get_location_no_answers(location_id):
         if not loc:
             return _err("Location not found", 404)
 
+        hide_sql, hide_params = "", []
+        if hidden:
+            hp = ",".join(["?"] * len(hidden))
+            hide_sql = f" AND project_id NOT IN ({hp})"
+            hide_params = list(hidden)
         cur = conn.execute(
-            q("""SELECT interaction_id, interaction_date,
+            q(f"""SELECT interaction_id, interaction_date,
                         interaction_call_start_time,
                         interaction_call_duration_seconds,
                         interaction_uploaded_at
                    FROM interactions
                   WHERE interaction_location_id = ?
                     AND status_id = 44
-                    AND interaction_deleted_at IS NULL
+                    AND interaction_deleted_at IS NULL{hide_sql}
                   ORDER BY interaction_date DESC, interaction_id DESC"""),
-            (location_id,),
+            (location_id, *hide_params),
         )
         events = _rows(cur)
         return jsonify({

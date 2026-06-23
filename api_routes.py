@@ -35,6 +35,8 @@ from helpers import (
     ai_caller_user_id_for_company,
     is_feature_enabled,
     location_scope_for_user,
+    restricted_project_ids_for_user, project_hide_clause,
+    current_user_blocked_from_project,
     to_iso_date,
 )
 
@@ -165,7 +167,13 @@ def _get_project(conn, project_id, company_id):
              WHERE project_id = ? AND company_id = ? AND project_deleted_at IS NULL"""),
         (project_id, company_id),
     )
-    return cur.fetchone()
+    row = cur.fetchone()
+    # Per-project access restriction: a restricted project is invisible to users
+    # not on its allowlist (admins/super_admins bypass). Returning None here makes
+    # every single-project endpoint 404 — the same as a non-existent project.
+    if row is not None and current_user_blocked_from_project(project_id):
+        return None
+    return row
 
 
 def _get_campaign_in_company(conn, campaign_id, company_id):
@@ -1381,13 +1389,20 @@ def list_projects():
     company_id, err = _require_company()
     if err: return err
 
+    # Hide restricted projects this user isn't allowlisted for (admins bypass).
+    hide_sql, hide_params = project_hide_clause(
+        restricted_project_ids_for_user(
+            current_user.user_id, current_user.role, company_id),
+        "p.project_id")
+    hide_clause = f" AND {hide_sql}" if hide_sql else ""
+
     conn = get_conn()
     try:
         # Location priority: phone_routing → rubric_group. A project without a
         # phone_routing can still be single-location if its rubric group is
         # tied to one, so fall back through the rubric_group location to avoid
         # losing the lock on the grade form.
-        cur = conn.execute(q("""
+        cur = conn.execute(q(f"""
             SELECT p.project_id, p.project_name, p.phone_routing_id, p.rubric_group_id,
                    p.project_start_date, p.project_end_date,
                    p.status_id, s.status_name,
@@ -1401,9 +1416,9 @@ def list_projects():
             LEFT JOIN locations l_phr ON l_phr.location_id = phr.location_id
             LEFT JOIN rubric_groups rg ON rg.rubric_group_id = p.rubric_group_id
             LEFT JOIN locations l_rubric ON l_rubric.location_id = rg.location_id
-            WHERE p.company_id = ? AND p.project_deleted_at IS NULL
+            WHERE p.company_id = ? AND p.project_deleted_at IS NULL{hide_clause}
             ORDER BY p.project_name
-        """), (company_id,))
+        """), (company_id, *hide_params))
         rows = _rows(cur)
         # For all-locations projects, surface a friendly label and mask the
         # derived location_id so the frontend can't treat it as "this project's"

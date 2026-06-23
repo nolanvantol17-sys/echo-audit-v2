@@ -488,6 +488,9 @@ CREATE TABLE projects (
     -- project's location is chosen per-call at grade time, and the rubric
     -- group is created with location_id = NULL (shared across locations).
     project_all_locations BOOLEAN NOT NULL DEFAULT FALSE,
+    -- TRUE = restricted project: visible only to admins/super_admins and the
+    -- users listed in project_access (allowlist). See helpers.py enforcement.
+    project_is_restricted BOOLEAN NOT NULL DEFAULT FALSE,
     status_id          INTEGER NOT NULL DEFAULT 1
                            REFERENCES statuses (status_id) ON DELETE RESTRICT,
     project_deleted_at TIMESTAMPTZ,
@@ -505,6 +508,20 @@ CREATE INDEX idx_projects_company_id_status_id  ON projects (company_id, status_
 CREATE INDEX idx_projects_rubric_group_id       ON projects (rubric_group_id);
 CREATE INDEX idx_projects_phone_routing_id      ON projects (phone_routing_id);
 CREATE INDEX idx_projects_status_id             ON projects (status_id);
+
+-- Allowlist for restricted projects (project_is_restricted = TRUE). A row grants
+-- one user access to one restricted project, on top of admins/super_admins who
+-- always have access. No rows for a project that isn't restricted.
+CREATE TABLE IF NOT EXISTS project_access (
+    project_access_id         SERIAL PRIMARY KEY,
+    project_id                INTEGER NOT NULL
+                                  REFERENCES projects (project_id) ON DELETE CASCADE,
+    user_id                   INTEGER NOT NULL
+                                  REFERENCES users (user_id) ON DELETE CASCADE,
+    project_access_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_project_access_project_user ON project_access (project_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_project_access_user_id ON project_access (user_id);
 
 CREATE OR REPLACE FUNCTION set_project_updated_at() RETURNS TRIGGER AS $$
 BEGIN NEW.project_updated_at = NOW(); RETURN NEW; END;

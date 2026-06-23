@@ -23,7 +23,8 @@ from dashboard_helpers import (
     _report_url_for, _roll_up_locations, _trend_for_calls,
 )
 from db import get_conn, q
-from helpers import get_effective_company_id, location_scope_for_user, to_iso_date
+from helpers import (get_effective_company_id, location_scope_for_user,
+                     add_project_hide, to_iso_date)
 from insights import compute_dashboard_insights_async, fetch_cached as fetch_insights_cached
 
 dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/api")
@@ -199,6 +200,13 @@ def get_dashboard():
     # every interactions read in this route picks it up by composition.
     scope_sql, scope_params = location_scope_for_user(
         current_user.user_id, current_user.role, company_id,
+    )
+    # Fold restricted-project hiding into the scope predicate BEFORE it splits
+    # into the extra_clause and scope_clause channels, so every interactions
+    # read in this route (including the rolling/recent/activity queries that
+    # ride scope_clause) excludes restricted projects the user can't see.
+    scope_sql, scope_params = add_project_hide(
+        scope_sql, scope_params, current_user.user_id, current_user.role, company_id,
     )
     if scope_sql:
         extra_where.append(scope_sql)
@@ -561,6 +569,9 @@ def get_filters():
     scope_sql, scope_params = location_scope_for_user(
         current_user.user_id, current_user.role, company_id,
     )
+    scope_sql, scope_params = add_project_hide(
+        scope_sql, scope_params, current_user.user_id, current_user.role, company_id,
+    )
     if scope_sql:
         base_filters.append(scope_sql)
         base_params.extend(scope_params)
@@ -743,6 +754,9 @@ def get_chart():
     # their slice of the chart.
     scope_sql, scope_params = location_scope_for_user(
         current_user.user_id, current_user.role, company_id,
+    )
+    scope_sql, scope_params = add_project_hide(
+        scope_sql, scope_params, current_user.user_id, current_user.role, company_id,
     )
     if scope_sql:
         filters.append(scope_sql)

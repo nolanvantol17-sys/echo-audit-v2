@@ -39,6 +39,8 @@ from helpers import (
     increment_usage,
     load_active_hints,
     location_scope_for_user,
+    add_project_hide,
+    current_user_blocked_from_project,
     validate_caller_user_id_for_user,
 )
 from intel import compute_location_intel_async
@@ -110,13 +112,20 @@ def _parse_date(val, default=None):
 
 
 def _get_project_in_company(conn, project_id, company_id):
-    """Return project row if it belongs to this company (soft-delete aware)."""
+    """Return project row if it belongs to this company (soft-delete aware).
+
+    Also enforces the per-project access restriction: a restricted project is
+    invisible (returns None → 404) to users not on its allowlist, which blocks
+    them from grading into it. Admins/super_admins bypass."""
     cur = conn.execute(
         q("""SELECT * FROM projects
              WHERE project_id = ? AND company_id = ? AND project_deleted_at IS NULL"""),
         (project_id, company_id),
     )
-    return cur.fetchone()
+    row = cur.fetchone()
+    if row is not None and current_user_blocked_from_project(project_id):
+        return None
+    return row
 
 
 def _campaign_belongs_to_project(conn, campaign_id, project_id):
@@ -164,6 +173,9 @@ def _get_interaction_in_company(conn, interaction_id, company_id):
     """
     scope_sql, scope_params = location_scope_for_user(
         current_user.user_id, current_user.role, company_id,
+    )
+    scope_sql, scope_params = add_project_hide(
+        scope_sql, scope_params, current_user.user_id, current_user.role, company_id,
     )
     extra = f" AND {scope_sql}" if scope_sql else ""
     cur = conn.execute(
@@ -1350,9 +1362,12 @@ def list_interactions():
     # Permission scope (ff_permission_filtering off → empty). Applied AFTER
     # any explicit ?location_id filter so the user can't widen their view by
     # passing a location_id outside their scope — the intersection is the
-    # cap on what they can see.
+    # cap on what they can see. Restricted-project hiding rides the same channel.
     scope_sql, scope_params = location_scope_for_user(
         current_user.user_id, current_user.role, company_id,
+    )
+    scope_sql, scope_params = add_project_hide(
+        scope_sql, scope_params, current_user.user_id, current_user.role, company_id,
     )
     if scope_sql:
         filters.append(scope_sql)
@@ -1620,6 +1635,9 @@ def get_interaction(interaction_id):
 
     scope_sql, scope_params = location_scope_for_user(
         current_user.user_id, current_user.role, company_id,
+    )
+    scope_sql, scope_params = add_project_hide(
+        scope_sql, scope_params, current_user.user_id, current_user.role, company_id,
     )
     scope_clause = f" AND {scope_sql}" if scope_sql else ""
 
@@ -1928,6 +1946,9 @@ def get_audio(interaction_id):
 
     scope_sql, scope_params = location_scope_for_user(
         current_user.user_id, current_user.role, company_id,
+    )
+    scope_sql, scope_params = add_project_hide(
+        scope_sql, scope_params, current_user.user_id, current_user.role, company_id,
     )
     scope_clause = f" AND {scope_sql}" if scope_sql else ""
 

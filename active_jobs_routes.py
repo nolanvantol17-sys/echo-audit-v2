@@ -24,7 +24,7 @@ from flask_login import current_user, login_required
 from audit_log import (ACTION_DISMISSED, ENTITY_GRADE_JOB,
                        ENTITY_SCHEDULED_CALL, write_audit_log)
 from db import IS_POSTGRES, get_conn, q
-from helpers import get_effective_company_id
+from helpers import get_effective_company_id, restricted_project_ids_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,23 @@ def get_active_jobs_for_user(company_id, user_id):
         datetime.now(timezone.utc) - timedelta(hours=ACTIVE_WINDOW_HOURS)
     ).isoformat()
 
-    sql = """
+    # Hide dock rows tied to restricted projects this user can't see (covers a
+    # user removed from a project's allowlist). NULL project (queued job, not yet
+    # linked) is kept. Admins/super_admins → no-op. Uses current_user.role; this
+    # function always runs in a request context (route + context processor).
+    try:
+        hidden = restricted_project_ids_for_user(
+            user_id, current_user.role, company_id)
+    except Exception:
+        hidden = []
+    hide_gj, hide_sc, hide_params = "", "", []
+    if hidden:
+        ph = ",".join(["?"] * len(hidden))
+        hide_gj = f" AND (i.project_id IS NULL OR i.project_id NOT IN ({ph}))"
+        hide_sc = f" AND (sc.sc_project_id IS NULL OR sc.sc_project_id NOT IN ({ph}))"
+        hide_params = list(hidden)
+
+    sql = f"""
         SELECT
             'grade_job'                  AS source,
             j.grade_job_id               AS id,
@@ -176,7 +192,7 @@ def get_active_jobs_for_user(company_id, user_id):
           AND (
             j.gj_status NOT IN ('graded', 'failed')
             OR j.gj_updated_at > ?
-          )
+          ){hide_gj}
 
         UNION ALL
 
@@ -204,15 +220,15 @@ def get_active_jobs_for_user(company_id, user_id):
           AND (
             sc.sc_status = 'initiated'
             OR COALESCE(sc.sc_completed_at, sc.sc_requested_at) > ?
-          )
+          ){hide_sc}
 
         ORDER BY updated_at DESC
         LIMIT ?
     """
 
     params = (
-        company_id, user_id, cutoff_iso,    # grade_jobs branch
-        company_id, user_id, cutoff_iso,    # scheduled_calls branch
+        company_id, user_id, cutoff_iso, *hide_params,   # grade_jobs branch
+        company_id, user_id, cutoff_iso, *hide_params,   # scheduled_calls branch
         MAX_ROWS,
     )
 
