@@ -994,10 +994,56 @@ def sweep_stuck_grade_jobs(company_id=None):
         conn.close()
 
 
+def sweep_stuck_browser_calls(minutes=15):
+    """Recover twilio_browser_calls rows orphaned mid-finalization.
+
+    _apply_disposition (twilio_routes) atomically claims a row by flipping
+    tbc_status to 'processing' before its terminal work (grade enqueue /
+    no-answer insert / discard). A hard crash or dropped DB connection in the
+    sub-second gap before the terminal write would otherwise strand the row in
+    'processing' forever — the one-shot recording webhook, a user re-click, and
+    _park_audio all (correctly) refuse to touch a 'processing' row. Mirrors
+    sweep_stuck_grade_jobs: any 'processing' row older than `minutes` is marked
+    'failed' (a genuine claim is held only for milliseconds, so 15 min is
+    safe). Resetting to a terminal state — not back to re-claimable — avoids
+    double-processing a submit whose grade job may already be enqueued (that
+    job completes, or sweep_stuck_grade_jobs reaps it, independently). Called at
+    boot. Postgres-only (browser calls are a Postgres-only feature).
+    """
+    if not IS_POSTGRES:
+        return
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            f"""UPDATE twilio_browser_calls
+                   SET tbc_status       = 'failed',
+                       tbc_error        = COALESCE(tbc_error,
+                                          'recovery: stuck in processing >{minutes} min'),
+                       tbc_audio        = NULL,
+                       tbc_completed_at = NOW()
+                 WHERE tbc_status = 'processing'
+                   AND tbc_created_at < NOW() - INTERVAL '{minutes} minutes'"""
+        )
+        try:
+            n = cur.rowcount or 0
+        except Exception:
+            n = 0
+        conn.commit()
+        if n > 0:
+            logger.info("sweep_stuck_browser_calls: marked %d stuck rows failed", n)
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        logger.exception("sweep_stuck_browser_calls failed (non-fatal)")
+    finally:
+        conn.close()
+
+
 def init_app(app):
     """Wire setup_db() + seed_defaults() into a Flask app at startup."""
     with app.app_context():
         setup_db()
         seed_defaults()
         sweep_stuck_grade_jobs()
+        sweep_stuck_browser_calls()
         logger.info("Echo Audit V2 database ready (postgres=%s)", IS_POSTGRES)

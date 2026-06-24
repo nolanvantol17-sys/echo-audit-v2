@@ -409,7 +409,7 @@ def recording_callback():
         return ("", 200)
     pending = dict(row) if hasattr(row, "keys") else {k: row[i] for i, k in enumerate(row.keys())}
 
-    if pending.get("tbc_interaction_id") or pending.get("tbc_status") in ("graded", "discarded", "no_answer_logged", "failed"):
+    if pending.get("tbc_interaction_id") or pending.get("tbc_status") in ("graded", "discarded", "no_answer_logged", "failed", "processing"):
         logger.info("[twilio.rec_cb] already processed tbc=%s status=%s",
                     pending["tbc_id"], pending.get("tbc_status"))
         return ("", 200)
@@ -441,30 +441,50 @@ def recording_callback():
     except ValueError:
         pass
 
-    disposition = pending.get("tbc_disposition")
-    if disposition is None:
-        # User hasn't clicked any of the 4 bc-choice buttons yet. Park the
-        # audio in tbc_audio so the disposition endpoint can act on it the
-        # moment the user picks. Twilio's webhook is one-shot — we own the
-        # bytes from here on.
-        _park_audio(pending["tbc_id"], audio_bytes)
-        logger.info("[twilio.rec_cb] parked audio awaiting disposition tbc=%s",
-                    pending["tbc_id"])
+    # The audio fetch above can block for up to 30s. Re-read the row NOW so we
+    # branch on the user's CURRENT choice, not the snapshot from before the
+    # fetch: during that window they may have clicked a disposition (which we
+    # must honor — e.g. a submit that would otherwise strand) or already
+    # finalized the call (which we must not double-process).
+    fresh = _load_pending(pending["tbc_id"]) or pending
+    if fresh.get("tbc_interaction_id") or fresh.get("tbc_status") in (
+        "graded", "discarded", "no_answer_logged", "failed", "processing"
+    ):
+        logger.info("[twilio.rec_cb] tbc=%s already handled (status=%s) — dropping audio",
+                    fresh["tbc_id"], fresh.get("tbc_status"))
         return ("", 200)
 
-    _apply_disposition(pending["tbc_id"], disposition, audio_bytes,
-                       pending, duration_seconds)
+    disposition = fresh.get("tbc_disposition")
+    if disposition is None:
+        # User hasn't clicked any of the bc-choice buttons yet. Park the audio
+        # in tbc_audio so the disposition endpoint can act on it the moment the
+        # user picks. Twilio's webhook is one-shot — we own the bytes from here
+        # on. (Park is itself guarded against resurrecting a finalized row.)
+        _park_audio(fresh["tbc_id"], audio_bytes)
+        logger.info("[twilio.rec_cb] parked audio awaiting disposition tbc=%s",
+                    fresh["tbc_id"])
+        return ("", 200)
+
+    _apply_disposition(fresh["tbc_id"], disposition, audio_bytes,
+                       fresh, duration_seconds)
     return ("", 200)
 
 
 def _park_audio(tbc_id, audio_bytes):
-    """Stash the recording bytes + flip status to awaiting_disposition."""
+    """Stash the recording bytes + flip status to awaiting_disposition — but
+    ONLY while the row is still live. The guard stops a slow recording webhook
+    from resurrecting a call the user already dispositioned: without it, a park
+    that lands after a finalize would overwrite the terminal status back to
+    'awaiting_disposition', strand the bytes, and the 'already chosen' check
+    would then block the user from re-dispositioning."""
     conn = get_conn()
     try:
         conn.execute(
             q("""UPDATE twilio_browser_calls
                     SET tbc_audio = ?, tbc_status = 'awaiting_disposition'
-                  WHERE tbc_id = ?"""),
+                  WHERE tbc_id = ?
+                    AND tbc_status NOT IN
+                        ('graded','discarded','no_answer_logged','failed','processing')"""),
             (audio_bytes, tbc_id),
         )
         conn.commit()
@@ -485,18 +505,48 @@ def _clear_parked_audio(tbc_id):
         conn.close()
 
 
+def _claim_disposition(tbc_id):
+    """Atomically claim a call for terminal processing. Returns True iff THIS
+    caller won — the row was non-terminal/unclaimed and is now flipped to
+    'processing'. Compare-and-set (a single guarded UPDATE) so the recording
+    webhook and the immediate set_disposition apply can't BOTH finalize the
+    same call, which would create a duplicate interaction or clobber the
+    terminal status."""
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            q("""UPDATE twilio_browser_calls
+                    SET tbc_status = 'processing'
+                  WHERE tbc_id = ?
+                    AND tbc_status NOT IN
+                        ('graded','discarded','no_answer_logged','failed','processing')"""),
+            (tbc_id,),
+        )
+        conn.commit()
+        return (cur.rowcount or 0) == 1
+    finally:
+        conn.close()
+
+
 def _apply_disposition(tbc_id, action, audio_bytes, pending, duration_seconds=None):
     """Run the user's chosen post-call action against the recording bytes.
 
     Called from two places:
-      1. recording-callback when disposition was set BEFORE audio arrived
-         (the common case — user clicks within seconds of hangup).
-      2. set_disposition endpoint when disposition is set AFTER audio arrived
-         (rare — fires when the recording webhook beat the user click).
+      1. recording-callback when a recording exists (disposition set before or
+         after the audio arrived).
+      2. set_disposition endpoint — either when audio already parked, or
+         immediately for no_answer/discard on a call that never recorded.
 
-    All three branches are terminal: they update tbc_status to a final state
-    and clear tbc_audio so the table doesn't carry orphan bytes forever.
+    Exactly-once: both callers can target the same row concurrently, so we
+    first atomically CLAIM the row (non-terminal -> 'processing'); the loser
+    bails. All branches end terminal and clear tbc_audio so the table carries
+    no orphan bytes.
     """
+    if not _claim_disposition(tbc_id):
+        logger.info("[twilio.disp] tbc=%s already claimed/finalized — skipping %r",
+                    tbc_id, action)
+        return
+
     if action == "submit":
         from grade_jobs import enqueue_grade_job, process_grade_job_async
         try:
@@ -549,10 +599,14 @@ def _apply_disposition(tbc_id, action, audio_bytes, pending, duration_seconds=No
                 call_start_time=None,
                 call_end_time=None,
                 call_duration_seconds=duration_seconds,
-                set_uploaded_at=True,
+                set_uploaded_at=bool(audio_bytes),
             )
-            audio_url, audio_data = _save_audio(interaction_id, audio_bytes, ".mp3")
-            _save_no_answer_audio(conn, interaction_id, audio_url, audio_data)
+            # Audio is optional: an unanswered call has no recording, but
+            # "Log Unanswered" must still produce the no-answer row. Attach the
+            # recording only when one actually exists.
+            if audio_bytes:
+                audio_url, audio_data = _save_audio(interaction_id, audio_bytes, ".mp3")
+                _save_no_answer_audio(conn, interaction_id, audio_url, audio_data)
             conn.commit()
         except Exception as e:
             conn.rollback()
@@ -574,6 +628,11 @@ def _apply_disposition(tbc_id, action, audio_bytes, pending, duration_seconds=No
         return
 
     logger.warning("[twilio.disp] unknown action=%r tbc=%s", action, tbc_id)
+    # We already claimed the row ('processing') above — don't leave it stuck
+    # there. (Unreachable today: callers validate action ∈ submit/no_answer/
+    # discard, but belt-and-suspenders.)
+    _set_call_status(tbc_id, status="failed",
+                     error=f"unknown disposition {action!r}", completed=True)
 
 
 @twilio_bp.route("/pending-call/<int:tbc_id>/disposition", methods=["POST"])
@@ -614,7 +673,8 @@ def set_disposition(tbc_id):
             "already_chosen": pending["tbc_disposition"],
         }), 409
 
-    # Persist the choice. The webhook reads this column on audio arrival.
+    # Persist the choice. The recording webhook reads this column if/when audio
+    # arrives.
     conn = get_conn()
     try:
         conn.execute(
@@ -625,11 +685,26 @@ def set_disposition(tbc_id):
     finally:
         conn.close()
 
-    # Audio already arrived? Act on it now using the parked bytes.
-    if pending.get("tbc_status") == "awaiting_disposition" and pending.get("tbc_audio"):
+    # Re-read the freshest row before deciding: a recording may have arrived and
+    # parked between our initial read and now. Acting on the stale pre-update
+    # read is what left 'submit' calls stuck in 'awaiting_disposition' forever
+    # (the recording had already parked, but the pre-update snapshot didn't show
+    # it, so neither this path nor the one-shot webhook ever applied the choice).
+    fresh = _load_pending(tbc_id) or pending
+
+    if fresh.get("tbc_status") == "awaiting_disposition" and fresh.get("tbc_audio"):
+        # Recording already here — act on it now using the parked bytes.
         _apply_disposition(tbc_id, action,
-                           bytes(pending["tbc_audio"]), pending,
+                           bytes(fresh["tbc_audio"]), fresh,
                            duration_seconds=None)
+    elif action in ("no_answer", "discard"):
+        # No recording yet (status 'pending'/'dialing'). A call that was never
+        # answered produces NO recording (record-from-answer-dual only records
+        # after the far end picks up), so the recording webhook will never fire.
+        # Without this, "Log Unanswered" / "Discard" hang in 'dialing' forever
+        # and the call is never saved. Neither action needs audio, so apply now.
+        # recording-callback stays idempotent if a late recording shows up.
+        _apply_disposition(tbc_id, action, None, fresh, duration_seconds=None)
 
     return jsonify({"ok": True, "action": action})
 
