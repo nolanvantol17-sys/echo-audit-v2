@@ -409,7 +409,7 @@ def reactivate_company(company_id):
 
 @api_bp.route("/locations", methods=["GET"])
 @login_required
-@role_required("manager", "admin", "super_admin")
+@role_required("caller", "manager", "admin", "super_admin")
 def list_locations():
     company_id, err = _require_company()
     if err: return err
@@ -469,6 +469,15 @@ def list_locations():
             g = r.get("graded_count") or 0
             n = r.get("no_answer_count") or 0
             r["no_answer_rate"] = (n / (g + n)) if (g + n) else None
+        # Callers have no reporting surface — they reach this endpoint only to
+        # populate the grade-form property picker (which needs id + name). Strip
+        # the company-wide performance aggregates so a caller (including a
+        # restricted-project trainee) can't read per-property scores via the API.
+        if current_user.role == "caller":
+            for r in rows:
+                for k in ("total_calls", "graded_count", "no_answer_count",
+                          "avg_score", "last_call_date", "no_answer_rate"):
+                    r[k] = None
         return jsonify(rows)
     finally:
         conn.close()
@@ -2424,15 +2433,23 @@ def list_team():
 
 @api_bp.route("/team/callers", methods=["GET"])
 @login_required
-@role_required("manager", "admin", "super_admin")
+@role_required("caller", "manager", "admin", "super_admin")
 def list_team_callers():
     company_id, err = _require_company()
     if err: return err
 
-    # Manager + flag on → scope to [self, AI Caller bot only]
-    if (current_user.role == "manager"
-            and is_feature_enabled(company_id, "ff_permission_filtering",
-                                   default=False)):
+    # Self-scope to [self, AI Caller bot only] when the requester shouldn't see
+    # the whole roster:
+    #   - caller: their job is to BE the caller — always self-scoped, so their
+    #     own name is the dropdown default (the grade form auto-selects it).
+    #   - manager: scoped only under ff_permission_filtering (RM portal rule).
+    role = current_user.role
+    self_scope = role == "caller" or (
+        role == "manager"
+        and is_feature_enabled(company_id, "ff_permission_filtering",
+                               default=False)
+    )
+    if self_scope:
         allowed_ids = [int(current_user.user_id)]
         ai_uid = ai_caller_user_id_for_company(company_id)
         if ai_uid is not None:
