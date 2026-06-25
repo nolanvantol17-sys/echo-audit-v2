@@ -982,10 +982,35 @@ def sweep_stuck_grade_jobs(company_id=None):
             except Exception:
                 n = 0
             total += n
+        # Repair interactions left stranded at transcribing(40)/grading(42)
+        # whose grade job is now failed — e.g. a worker that hung past the
+        # transcription timeout, or was orphaned by a restart so its own
+        # except-handler never reset the interaction. Put them back to
+        # 'submitted' (45) so they read as failed-and-retryable (matching the
+        # worker's normal failure path) instead of lying as "TRANSCRIBING".
+        sql2 = (
+            "UPDATE interactions SET status_id = 45 "
+            "WHERE status_id IN (40, 42) "
+            "AND interaction_id IN ("
+            "SELECT interaction_id FROM grade_jobs "
+            "WHERE gj_status = 'failed' AND interaction_id IS NOT NULL"
+        )
+        p2 = []
+        if company_id is not None:
+            sql2 += " AND company_id = %s"
+            p2.append(company_id)
+        sql2 += ")"
+        cur2 = conn.execute(sql2, tuple(p2))
+        try:
+            n2 = cur2.rowcount or 0
+        except Exception:
+            n2 = 0
         conn.commit()
-        if total > 0:
+        if total > 0 or n2 > 0:
             scope = f"company_id={company_id}" if company_id is not None else "global"
-            logger.info("sweep_stuck_grade_jobs: marked %d stuck jobs failed (%s)", total, scope)
+            logger.info(
+                "sweep_stuck_grade_jobs: marked %d stuck jobs failed, reset %d "
+                "stranded interactions (%s)", total, n2, scope)
     except Exception:
         try: conn.rollback()
         except Exception: pass

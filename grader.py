@@ -23,14 +23,20 @@ Requires env vars ASSEMBLYAI_API_KEY and ANTHROPIC_API_KEY.
 import json
 import logging
 import os
+import time
 
 import anthropic
 import assemblyai as aai
+from assemblyai import api as aai_api
 from dotenv import load_dotenv
 
 load_dotenv()
 
 aai.settings.api_key = os.getenv("ASSEMBLYAI_API_KEY")
+# Bound every individual AssemblyAI HTTP call (file upload + each status poll)
+# so a single hung request can't wedge the grade worker. The overall per-attempt
+# ceiling lives in transcribe() via _TRANSCRIBE_TIMEOUT_SECONDS.
+aai.settings.http_timeout = 60.0
 _claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 logger = logging.getLogger(__name__)
@@ -43,11 +49,26 @@ KEYTERMS_PROMPT_MAX_TERMS = 200
 KEYTERM_MIN_LENGTH = 5
 KEYTERM_MAX_LENGTH = 50
 
+# Transcription resilience. AssemblyAI occasionally accepts an audio file and
+# then never finishes it (the job wedges in 'processing' on their side). We
+# drive the poll loop ourselves with a hard per-attempt deadline so a wedged
+# job can't hang the grade worker forever, and resubmit a fresh transcript a
+# couple of times — a re-submission almost always clears a transient stall.
+_TRANSCRIBE_TIMEOUT_SECONDS = 180   # per-attempt wall-clock cap on AAI polling
+_TRANSCRIBE_MAX_ATTEMPTS    = 2     # total submissions before giving up
+
 
 class EmptyTranscriptError(RuntimeError):
     """Raised when transcription returns no usable text. Callers should surface
     a clear message rather than silently producing a graded interaction with
     empty content."""
+
+
+class TranscriptionTimeout(RuntimeError):
+    """Raised when AssemblyAI accepts the audio but never reaches a terminal
+    state (completed/error) within the per-attempt deadline — i.e. their job
+    wedged. Distinct from a hard error so transcribe() can resubmit, and so the
+    worker surfaces a clear 'timed out' failure instead of hanging forever."""
 
 # Default rubric used when caller does not provide one. Kept as legacy V1
 # structure so a graded call still produces useful output even with no
@@ -101,6 +122,35 @@ def build_rubric_prompt(criteria: list) -> str:
 # ── Transcription ──────────────────────────────────────────────
 
 
+def _await_terminal(transcriber, transcript):
+    """Poll AssemblyAI until `transcript` reaches a terminal state
+    (completed/error) or our per-attempt deadline passes; return the terminal
+    Transcript, or raise TranscriptionTimeout.
+
+    CRITICAL: poll with the SDK's SINGLE-SHOT api.get_transcript (one bounded GET,
+    capped by aai.settings.http_timeout) — NOT Transcript.get_by_id(), which
+    internally runs the SDK's own UNBOUNDED wait_for_completion() loop and would
+    block forever on a wedged job (the exact failure that stranded #306, where
+    control never returns to re-check our deadline). Once AAI is terminal we hand
+    back the rich Transcript via get_by_id, which returns immediately because the
+    transcript is already done."""
+    client = transcriber._client.http_client
+    tid = transcript.id
+    poll = max(2.0, float(aai.settings.polling_interval or 3))
+    deadline = time.monotonic() + _TRANSCRIBE_TIMEOUT_SECONDS
+    terminal = (aai.TranscriptStatus.completed, aai.TranscriptStatus.error)
+    status = transcript.status
+    while status not in terminal:
+        if time.monotonic() >= deadline:
+            raise TranscriptionTimeout(
+                f"AssemblyAI did not finish within {_TRANSCRIBE_TIMEOUT_SECONDS}s "
+                f"(transcript {tid}, status={status})"
+            )
+        time.sleep(poll)
+        status = aai_api.get_transcript(client, tid).status
+    return aai.Transcript.get_by_id(tid)
+
+
 def transcribe(audio_path, keyterms_prompt: list | None = None) -> str:
     """Transcribe an audio file. Returns speaker-labeled text.
 
@@ -141,31 +191,58 @@ def transcribe(audio_path, keyterms_prompt: list | None = None) -> str:
         )
 
     transcriber = aai.Transcriber()
+    cfg = aai.TranscriptionConfig(**config_kwargs)
+    cfg_no_hints = (
+        aai.TranscriptionConfig(
+            **{k: v for k, v in config_kwargs.items() if k != "keyterms_prompt"})
+        if "keyterms_prompt" in config_kwargs else None
+    )
 
-    def _do_transcribe(kwargs):
-        return transcriber.transcribe(
-            str(audio_path), config=aai.TranscriptionConfig(**kwargs)
-        )
+    def _submit(config):
+        # submit() returns immediately (status 'queued'); we own the poll loop
+        # in _await_terminal so a wedged job hits our deadline instead of
+        # blocking forever like the SDK's all-in-one transcribe() would.
+        return transcriber.submit(str(audio_path), config=config)
 
-    try:
-        transcript = _do_transcribe(config_kwargs)
-    except Exception as e:
-        # Defensive fallback: if AAI rejects the request with a keyterms-related
-        # error (e.g. limit changed upstream, or our cap missed an edge case),
-        # retry once without keyterms so the user's grade still proceeds.
-        msg = str(e)
-        if "keyterms_prompt" in msg and "keyterms_prompt" in config_kwargs:
-            logger.warning(
-                "transcribe: AAI rejected keyterms_prompt (%s); retrying without hints",
-                msg,
-            )
-            retry_kwargs = {k: v for k, v in config_kwargs.items() if k != "keyterms_prompt"}
-            transcript = _do_transcribe(retry_kwargs)
-        else:
-            raise
+    transcript = None
+    last_error = None
+    for attempt in range(1, _TRANSCRIBE_MAX_ATTEMPTS + 1):
+        try:
+            try:
+                t = _submit(cfg)
+            except Exception as e:
+                # Defensive fallback: if AAI rejects the keyterms_prompt (limit
+                # changed upstream, or our cap missed an edge case), resubmit
+                # once without hints so the user's grade still proceeds.
+                msg = str(e)
+                if cfg_no_hints is not None and "keyterms_prompt" in msg:
+                    logger.warning(
+                        "transcribe: AAI rejected keyterms_prompt (%s); retrying without hints",
+                        msg,
+                    )
+                    t = _submit(cfg_no_hints)
+                else:
+                    raise
+            t = _await_terminal(transcriber, t)
+            if t.status == aai.TranscriptStatus.error:
+                raise RuntimeError(t.error or "AssemblyAI returned an error status")
+            transcript = t
+            break  # completed
+        except TranscriptionTimeout as e:
+            last_error = e
+            logger.warning("transcribe: attempt %d/%d wedged (%s) — resubmitting",
+                           attempt, _TRANSCRIBE_MAX_ATTEMPTS, e)
+        except Exception as e:
+            last_error = e
+            logger.warning("transcribe: attempt %d/%d failed (%s)",
+                           attempt, _TRANSCRIBE_MAX_ATTEMPTS, e)
 
-    if transcript.status == aai.TranscriptStatus.error:
-        raise RuntimeError(f"{transcript.error}")
+    if transcript is None:
+        # All attempts exhausted — re-raise the last failure so the worker marks
+        # the job failed with a meaningful message and resets the interaction
+        # for retry (instead of hanging the worker indefinitely).
+        raise last_error if last_error is not None else RuntimeError(
+            "Transcription failed")
 
     if transcript.utterances:
         lines = []
