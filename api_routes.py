@@ -1057,6 +1057,27 @@ def get_location_intel(location_id):
             (location_id, _STATUS_NO_ANSWER),
         )
         no_answers = [_row_to_dict(r) for r in cur.fetchall()]
+
+        # Recent browser-call CONNECTION failures to this property (status
+        # 'failed' — number disconnected/wrong/rejecting, distinct from a
+        # ring-no-answer). Drives the grade form's "verify the number" flag.
+        # Postgres-only (twilio_browser_calls); skipped on SQLite dev.
+        recent_failed_calls = 0
+        if IS_POSTGRES:
+            try:
+                fc = conn.execute(
+                    """SELECT COUNT(*) AS c FROM twilio_browser_calls
+                        WHERE location_id = %s AND company_id = %s
+                          AND tbc_status = 'failed'
+                          AND tbc_created_at > NOW() - INTERVAL '30 days'""",
+                    (location_id, company_id),
+                ).fetchone()
+                recent_failed_calls = int((fc["c"] if fc else 0) or 0)
+            except Exception:
+                # Non-critical signal — never let it blank the whole intel card.
+                logger.warning("location-intel failed-call count errored (non-fatal)",
+                               exc_info=True)
+                recent_failed_calls = 0
     finally:
         conn.close()
 
@@ -1080,6 +1101,7 @@ def get_location_intel(location_id):
             "computed":          False,
             "location_id":       location_id,
             "recent_no_answers": recent,
+            "recent_failed_call_count": recent_failed_calls,
         })
 
     # Coerce numerics for predictable client-side handling.
@@ -1091,6 +1113,7 @@ def get_location_intel(location_id):
     row["computed"] = True
     row["location_id"] = location_id
     row["recent_no_answers"] = recent
+    row["recent_failed_call_count"] = recent_failed_calls
     return jsonify(row)
 
 

@@ -678,6 +678,18 @@
   .gj-pill.graded       { background: var(--success-bg);  color: var(--success); }
   .gj-pill.no_answer    { background: var(--surface-3);   color: var(--muted); }
   .gj-pill.failed       { background: var(--danger-bg);   color: var(--danger); cursor: help; }
+  /* "Verify the property number" flag on the intel card (Measure 3). */
+  .intel-fail-warn {
+    background: var(--danger-bg);
+    color: var(--danger);
+    border: 1px solid var(--danger);
+    border-radius: var(--radius, 6px);
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    line-height: 1.35;
+  }
   .gj-pill.timeout      { background: var(--danger-bg);   color: var(--danger); cursor: help; }
 
   /* Detail view (replaces queue list when a graded row is clicked). */
@@ -1622,6 +1634,22 @@
     }
     if (seq !== state.intelFetchSeq) return;
     renderLocationIntel(card, intel);
+    maybeShowFailedNumberWarning(card, intel);
+  }
+
+  // Measure 3: surface a "verify the number" flag when recent browser calls to
+  // this property failed to CONNECT (status 'failed' — not merely unanswered),
+  // which points at a wrong/disconnected number in the directory.
+  function maybeShowFailedNumberWarning(card, intel) {
+    const n = (intel && intel.recent_failed_call_count) || 0;
+    if (!n) return;
+    const warn = document.createElement("div");
+    warn.className = "intel-fail-warn";
+    warn.textContent = "⚠ " + n + " recent call" + (n > 1 ? "s" : "") +
+      " to this number failed to connect — double-check the property's phone number.";
+    card.insertBefore(warn, card.firstChild);
+    card.hidden = false;
+    card.classList.remove("compact");
   }
 
   function renderLocationIntel(card, intel) {
@@ -3312,6 +3340,8 @@
   // env vars aren't set (Jinja conditional above gates the whole block).
   const bcState = {
     activePendingId: null,
+    callErrored:    false,
+    everConnected:  false,
     timerInterval:  null,
     timerStart:     null,
   };
@@ -3377,7 +3407,7 @@
     if (!el) return;
     el.textContent = msg;
     el.hidden = false;
-    setTimeout(() => { el.hidden = true; }, 8000);
+    setTimeout(() => { el.hidden = true; }, 12000);
   }
 
   function startBcTimer() {
@@ -3416,6 +3446,8 @@
     }
 
     document.getElementById("bc-error").hidden = true;
+    bcState.callErrored = false;
+    bcState.everConnected = false;
     document.getElementById("btn-bc-dial").disabled = true;
     document.getElementById("bc-status-label").textContent = "Connecting…";
 
@@ -3454,27 +3486,62 @@
       stopBcTimer();
       document.getElementById("btn-bc-dial").disabled = false;
       bcShow("idle");
-      bcShowError(err.message || "Couldn't connect call.");
+      bcShowError(EA.TwilioVoice.friendlyError(err) || err.message || "Couldn't connect call.");
     }
   }
 
   function onBcCallEvent(ev) {
     const label = document.getElementById("bc-status-label");
     if (ev.type === "connecting" && label) label.textContent = "Connecting…";
-    if (ev.type === "connected"  && label) label.textContent = "On call";
+    if (ev.type === "connected") {
+      bcState.everConnected = true;
+      if (label) label.textContent = "On call";
+    }
     if (ev.type === "error") {
+      bcState.callErrored = true;
       stopBcTimer();
-      bcShow("idle");
-      document.getElementById("btn-bc-dial").disabled = false;
-      bcShowError(ev.message || "Call error.");
+      // Always surface a plain-English message instead of a raw Twilio code.
+      bcShowError(ev.friendly || ev.message || "The call couldn't be completed.");
+      // Resolve the panel HERE rather than waiting on a follow-up 'disconnect'
+      // event — the SDK doesn't guarantee one fires after an error, and relying
+      // on it could strand the UI in the active-call state.
+      if (bcState.everConnected) {
+        // The call had connected, so a recording may exist — show the post-call
+        // choice so the user can still Submit/Log it. We do NOT mark it failed.
+        bcShow("choice");
+      } else {
+        // Never connected (e.g. 31005 to a dead number) — no recording exists
+        // or ever will. Record it as failed and return to the dial form; don't
+        // offer post-call choices for a call that didn't happen.
+        bcShow("idle");
+        document.getElementById("btn-bc-dial").disabled = false;
+        reportBcCallError(ev);
+      }
     }
     if (ev.type === "disconnected") {
       stopBcTimer();
-      // Show the 4-button choice. The recording is still in flight on
-      // Twilio's side; whatever the user picks here gets honored when
-      // the recording webhook arrives 5–30s later.
+      if (bcState.callErrored) {
+        // An errored call is already fully resolved in the 'error' branch above;
+        // ignore the (idempotent) disconnect so we don't override that panel.
+        return;
+      }
+      // Normal hangup → show the 4-button choice. The recording is still in
+      // flight on Twilio's side; whatever the user picks gets honored when the
+      // recording webhook arrives 5–30s later.
       bcShow("choice");
     }
+  }
+
+  // Best-effort: tell the server a browser call failed (Twilio Voice SDK error)
+  // so the pending-call row is marked 'failed' with the reason instead of
+  // lingering in 'dialing'. Nothing user-facing depends on the response.
+  function reportBcCallError(ev) {
+    const pid = bcState.activePendingId;
+    if (!pid) return;
+    EA.fetchJSON("/api/twilio/pending-call/" + encodeURIComponent(pid) + "/report-error", {
+      method: "POST",
+      body: { code: (ev && ev.code) || null, message: (ev && ev.message) || "" },
+    }).catch(function () { /* best-effort */ });
   }
 
   function onBcHangup() { EA.TwilioVoice.hangup(); }

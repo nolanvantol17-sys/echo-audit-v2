@@ -727,3 +727,49 @@ def get_pending_call_status(tbc_id):
         "error":           pending.get("tbc_error"),
         "completed_at":    pending.get("tbc_completed_at"),
     })
+
+
+@twilio_bp.route("/pending-call/<int:tbc_id>/report-error", methods=["POST"])
+@login_required
+def report_call_error(tbc_id):
+    """Record a browser-side call failure (Twilio Voice SDK error) onto the
+    pending-call row, so a call that never connected is marked 'failed' WITH the
+    reason instead of being orphaned in 'dialing' (the #50 / 31005 case).
+
+    Body: {code?, message?}. Author or super_admin only. Guarded compare-and-set:
+    only finalizes a row that is still live AND undispositioned, so it can never
+    clobber a recording that already arrived or a choice the user already made.
+    Best-effort from the client's perspective — the UI has already handled the
+    user-facing side."""
+    body = request.get_json(silent=True) or {}
+    code = body.get("code")
+    message = (body.get("message") or "").strip()
+    detail = (f"client call error {code}: {message}").strip()[:500]
+
+    pending = _load_pending(tbc_id)
+    if not pending:
+        return _err("Pending call not found.", 404)
+    if (pending["caller_user_id"] != current_user.user_id
+            and not current_user.is_super_admin):
+        return _err("Not yours.", 403)
+
+    ts = "NOW()" if IS_POSTGRES else "CURRENT_TIMESTAMP"
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            q(f"""UPDATE twilio_browser_calls
+                     SET tbc_status = 'failed',
+                         tbc_error  = ?,
+                         tbc_completed_at = {ts}
+                   WHERE tbc_id = ?
+                     AND tbc_disposition IS NULL
+                     AND tbc_recording_sid IS NULL
+                     AND tbc_status NOT IN
+                         ('graded','discarded','no_answer_logged','failed','processing')"""),
+            (detail, tbc_id),
+        )
+        conn.commit()
+        marked = (cur.rowcount or 0) == 1
+    finally:
+        conn.close()
+    return jsonify({"ok": True, "marked_failed": marked})

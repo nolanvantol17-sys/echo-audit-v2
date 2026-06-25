@@ -41,6 +41,43 @@
     return window.Twilio && window.Twilio.Device ? window.Twilio.Device : null;
   }
 
+  // ── Friendly error translation ──────────────────────────────────
+  // Twilio Voice surfaces a numeric .code (the 3xxxx range) on its error
+  // objects. Map the ones a property caller can actually hit to plain,
+  // actionable sentences so we never dump a raw "ConnectionError (31005)" at
+  // the user again. Anything unmapped still gets a calm default that keeps the
+  // code for support.
+  const _CALL_ERROR_MESSAGES = {
+    31000: "Something went wrong with the call. Please try again.",
+    31003: "The call timed out before it could connect. Please try again.",
+    31005: "We couldn't connect to that number — it may be disconnected, " +
+           "wrong, or rejecting the call. Double-check the property's phone " +
+           "number, then try again or log it as unanswered.",
+    31008: "The call dropped before it connected. Please try again.",
+    31009: "Network trouble interrupted the call. Check your connection and try again.",
+    31201: "We couldn't access your microphone. Allow mic access in your browser, then try again.",
+    31208: "Microphone access was blocked. Allow it in your browser settings, then try again.",
+    31480: "The line was temporarily unavailable. Try again in a moment.",
+    31486: "The line was busy. Try again in a moment.",
+  };
+
+  function _errCode(e) {
+    if (!e) return null;
+    if (typeof e.code === "number") return e.code;
+    if (e.code != null) { const n = Number(e.code); return isNaN(n) ? e.code : n; }
+    return null;
+  }
+
+  function friendlyError(e) {
+    const code = _errCode(e);
+    const mapped = (code != null) ? _CALL_ERROR_MESSAGES[code] : null;
+    if (mapped) return mapped;
+    const tail = " — try again, or log it as unanswered.";
+    return (code != null)
+      ? "The call couldn't be completed (error " + code + ")" + tail
+      : "The call couldn't be completed" + tail;
+  }
+
   async function init(opts) {
     opts = opts || {};
     if (!opts.token) throw new Error("init: token required");
@@ -102,7 +139,12 @@
     });
     activeCall.on("error", (e) => {
       activeCall = null; isMuted = false;
-      onEvent({ type: "error", message: (e && e.message) || "Call error" });
+      onEvent({
+        type: "error",
+        code: _errCode(e),
+        message: (e && e.message) || "Call error",
+        friendly: friendlyError(e),
+      });
     });
 
     return activeCall;
@@ -146,5 +188,6 @@
 
   EA.TwilioVoice = {
     init, dial, mute, hangup, sendDigits, isInCall, muted, teardown,
+    friendlyError,
   };
 })();
