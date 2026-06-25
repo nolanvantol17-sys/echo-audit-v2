@@ -72,13 +72,6 @@
         <span class="daw-ms-caret">▾</span>
       </button>
 
-      <select class="daw-view-by">
-        <option value="date">By Date</option>
-        <option value="caller">By Caller</option>
-        <option value="location">By Location</option>
-        <option value="phone_routing">By Phone Routing</option>
-      </select>
-
       <button type="button" class="daw-ms-btn" data-key="callers">
         <span class="daw-ms-label">All Callers</span>
         <span class="daw-ms-caret">▾</span>
@@ -116,6 +109,15 @@
       </button>
     </div>
 
+    <div class="daw-sort-row">
+      <select class="daw-view-by" aria-label="Sort by">
+        <option value="date">Sorting - Date</option>
+        <option value="caller">Sorting - Caller</option>
+        <option value="location">Sorting - Property Name</option>
+        <option value="phone_routing">Sorting - Phone Routing</option>
+      </select>
+    </div>
+
     <section class="panel daw-chart-panel">
       <div class="panel-title daw-chart-title">Score Trend</div>
       <div class="daw-chart-wrap">
@@ -141,10 +143,16 @@
       font-size: 0.88rem; font-weight: 600; color: var(--text);
       margin-right: 6px; white-space: nowrap;
     }
-    .daw-filters .daw-view-by {
+    /* Sort/group-by control — its own row below the filter bar so it isn't
+       sandwiched between the location/campaign filters. */
+    .daw-sort-row {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 12px;
+    }
+    .daw-view-by {
       background: var(--surface-2); border: 1px solid var(--border);
       color: var(--text); font-size: 0.82rem; padding: 6px 10px;
-      border-radius: 6px; font-family: inherit; flex: 1 1 160px; min-width: 150px;
+      border-radius: 6px; font-family: inherit; min-width: 200px;
     }
     .daw-ms-btn {
       background: var(--surface-2); border: 1px solid var(--border);
@@ -303,8 +311,8 @@
         flex-wrap: wrap;
       }
       .daw-bar-title { width: 100%; margin-bottom: 4px; }
-      .daw-filters .daw-view-by,
       .daw-ms-btn { flex: 1 1 140px; }
+      .daw-view-by { width: 100%; min-width: 0; }
       .daw-date-pills { margin-left: 0; padding-left: 0; width: 100%; }
       .daw-share-btn { flex: 1 1 100%; margin-top: 4px; }
       .daw-chart-panel { min-height: 340px; }
