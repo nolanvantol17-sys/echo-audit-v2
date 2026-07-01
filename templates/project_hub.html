@@ -77,6 +77,55 @@
   /* Uses .history-table for the row layout; nothing else needed. */
   #campaigns-panel { padding: 20px 22px; }
 
+  /* ── Coverage Checklist editor (modal) ────────────────── */
+  .modal:has(.cov-editor) { width: min(600px, 94vw); max-width: 600px; }
+  .cov-editor { width: 100%; }
+  .cov-rollup { font-size: 0.85rem; color: var(--text-muted, #9aa0a6); margin-bottom: 10px; }
+  .cov-rollup b { color: var(--text, #e8e8e8); }
+  .cov-search {
+    width: 100%; padding: 7px 10px; margin-bottom: 10px; font-size: 0.9rem;
+    border: 1px solid var(--border); border-radius: 6px; box-sizing: border-box;
+    background: var(--surface-2, #181b1f); color: var(--text, #e8e8e8);
+  }
+  .cov-list {
+    max-height: 46vh; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 8px;
+  }
+  .cov-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 10px; border-bottom: 1px solid var(--border);
+  }
+  .cov-row:last-child { border-bottom: none; }
+  .cov-name {
+    flex: 1 1 auto; min-width: 0; font-size: 0.88rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .cov-excluded .cov-name { color: var(--text-muted, #9aa0a6); font-style: italic; }
+  .cov-boxes { display: inline-flex; gap: 3px; flex: 0 0 auto; cursor: default; }
+  .cov-box {
+    width: 15px; height: 15px; border-radius: 3px; font-size: 10px; line-height: 15px;
+    text-align: center; border: 1px solid var(--border); box-sizing: border-box;
+  }
+  .cov-box.cov-green { background: #1f7a3d; border-color: #1f7a3d; color: #fff; }
+  .cov-box.cov-red   { background: #a12d2d; border-color: #a12d2d; color: #fff; }
+  .cov-box.cov-empty { background: transparent; color: transparent; }
+  .cov-stepper { display: inline-flex; align-items: center; flex: 0 0 auto; }
+  .cov-stepper button {
+    width: 26px; height: 26px; border: 1px solid var(--border);
+    background: var(--surface-2, #181b1f); color: var(--text, #e8e8e8);
+    cursor: pointer; font-size: 15px; line-height: 1; padding: 0;
+  }
+  .cov-stepper button:first-child { border-radius: 6px 0 0 6px; }
+  .cov-stepper button:last-child  { border-radius: 0 6px 6px 0; }
+  .cov-stepper input {
+    width: 42px; height: 26px; text-align: center; box-sizing: border-box;
+    border: 1px solid var(--border); border-left: none; border-right: none;
+    background: var(--surface, #0f1113); color: var(--text, #e8e8e8);
+    font-size: 0.85rem; -moz-appearance: textfield;
+  }
+  .cov-stepper input::-webkit-outer-spin-button,
+  .cov-stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
   /* ── Project Settings popover ───────────────────────── */
   .settings-wrap { position: relative; display: inline-block; }
   .settings-popover {
@@ -508,6 +557,7 @@
             '<td>' + (Number(c.usage_count) || 0) + '</td>' +
             '<td>' + lastUsed + '</td>' +
             '<td style="text-align:right;">' +
+              '<button type="button" class="btn btn-ghost btn-sm camp-coverage" data-id="' + c.campaign_id + '">Coverage</button>' +
               '<button type="button" class="btn btn-ghost btn-sm camp-edit" data-id="' + c.campaign_id + '">Edit</button>' +
               '<button type="button" class="btn btn-ghost btn-sm camp-delete" data-id="' + c.campaign_id + '">Delete</button>' +
             '</td>' +
@@ -523,6 +573,9 @@
         '<table class="history-table"><thead><tr>' +
           '<th>Name</th><th>Start</th><th>Usage</th><th>Last used</th><th></th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
+      mount.querySelectorAll(".camp-coverage").forEach(function (b) {
+        b.onclick = function () { onCoverage(b.dataset.id); };
+      });
       mount.querySelectorAll(".camp-edit").forEach(function (b) {
         b.onclick = function () { onEdit(b.dataset.id); };
       });
@@ -578,6 +631,154 @@
         await load();
         EA.toast("Campaign deleted.", "success");
       } catch (err) { EA.toast(err.message || "Delete failed", "error"); }
+    }
+
+    // ── Coverage Checklist editor ──────────────────────────
+    // Mirrors the server box rule (coverage_checklist.py): greens fill first,
+    // then reds, capped at the target. Changing a target only changes N, so we
+    // recompute boxes from the row's (unchanged) answered/no_answer counts.
+    function covBoxes(target, answered, noAnswer) {
+      target   = Math.max(0, target   | 0);
+      answered = Math.max(0, answered | 0);
+      noAnswer = Math.max(0, noAnswer | 0);
+      const green = Math.min(answered, target);
+      const red   = Math.min(noAnswer, target - green);
+      return { green: green, red: red, empty: target - green - red,
+               covered: target > 0 && green >= target };
+    }
+
+    async function onCoverage(id) {
+      const camp = cache.find(function (x) { return String(x.campaign_id) === String(id); });
+      if (!camp) return;
+      let data;
+      try {
+        data = await EA.fetchJSON("/api/campaigns/" + encodeURIComponent(id) + "/coverage");
+      } catch (err) {
+        EA.toast(err.message || "Failed to load coverage", "error");
+        return;
+      }
+      const props = (data && data.properties) || [];
+
+      const wrap = document.createElement("div");
+      wrap.className = "cov-editor";
+      const rollup = document.createElement("div");
+      rollup.className = "cov-rollup";
+      const search = document.createElement("input");
+      search.type = "text"; search.className = "cov-search";
+      search.placeholder = "Filter properties…";
+      const list = document.createElement("div");
+      list.className = "cov-list";
+      wrap.appendChild(rollup); wrap.appendChild(search); wrap.appendChild(list);
+
+      function updateRollup() {
+        const onList = props.filter(function (p) { return (p.target | 0) > 0; });
+        const covered = onList.filter(function (p) { return p.covered; }).length;
+        rollup.innerHTML =
+          "Covered <b>" + covered + " / " + onList.length + "</b> · " +
+          (onList.length - covered) + " still need calls. " +
+          "Set a property to 0 to drop it from the checklist.";
+      }
+
+      function paintBoxes(boxEl, p) {
+        const b = covBoxes(p.target, p.answered, p.no_answer);
+        p.covered = b.covered;
+        let html = "";
+        for (let i = 0; i < b.green; i++) html += '<span class="cov-box cov-green">✓</span>';
+        for (let i = 0; i < b.red;   i++) html += '<span class="cov-box cov-red">✗</span>';
+        for (let i = 0; i < b.empty; i++) html += '<span class="cov-box cov-empty">▢</span>';
+        boxEl.innerHTML = html;
+        const attempts = (p.answered | 0) + (p.no_answer | 0);
+        boxEl.title = (p.answered | 0) + " answered · " + (p.no_answer | 0) +
+                      " no-answer · " + attempts + " attempts";
+      }
+
+      props.forEach(function (p) {
+        const row = document.createElement("div");
+        row.className = "cov-row";
+        row.dataset.name = (p.location_name || "").toLowerCase();
+
+        const name = document.createElement("div");
+        name.className = "cov-name";
+        name.textContent = p.location_name || ("Location " + p.location_id);
+        name.title = name.textContent;
+
+        const boxes = document.createElement("div");
+        boxes.className = "cov-boxes";
+
+        const stepper = document.createElement("div");
+        stepper.className = "cov-stepper";
+        const minus = document.createElement("button"); minus.type = "button"; minus.textContent = "−";
+        const input = document.createElement("input"); input.type = "number"; input.min = "0";
+        input.value = String(p.target | 0);
+        const plus  = document.createElement("button"); plus.type  = "button"; plus.textContent  = "+";
+        stepper.appendChild(minus); stepper.appendChild(input); stepper.appendChild(plus);
+
+        row.appendChild(name); row.appendChild(boxes); row.appendChild(stepper);
+        list.appendChild(row);
+
+        function paint() {
+          paintBoxes(boxes, p);
+          row.classList.toggle("cov-excluded", (p.target | 0) === 0);
+          updateRollup();
+        }
+
+        // Debounce the PUT so rapid +/- clicks coalesce into one save of the
+        // final value. UI updates immediately; the network catches up.
+        let timer = null;
+        function scheduleSave() {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(async function () {
+            const target = p.target | 0;
+            try {
+              await EA.fetchJSON(
+                "/api/campaigns/" + encodeURIComponent(id) +
+                "/coverage/" + encodeURIComponent(p.location_id),
+                { method: "PUT", body: { target_calls: target } });
+            } catch (err) {
+              EA.toast(err.message || "Save failed", "error");
+            }
+          }, 350);
+        }
+        function change(newTarget) {
+          newTarget = Math.max(0, newTarget | 0);
+          if (newTarget === (p.target | 0)) return;
+          p.target = newTarget;
+          input.value = String(newTarget);
+          paint();
+          scheduleSave();
+        }
+
+        minus.onclick = function () { change((p.target | 0) - 1); };
+        plus.onclick  = function () { change((p.target | 0) + 1); };
+        input.onchange = function () {
+          let v = parseInt(input.value, 10);
+          if (isNaN(v) || v < 0) v = 0;
+          input.value = String(v);
+          change(v);
+        };
+        // Enter/Escape inside the number field shouldn't close the modal.
+        input.addEventListener("keydown", function (e) {
+          e.stopPropagation();
+          if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+        });
+
+        paint();
+      });
+
+      updateRollup();
+      search.addEventListener("input", function () {
+        const query = search.value.trim().toLowerCase();
+        list.querySelectorAll(".cov-row").forEach(function (r) {
+          r.style.display = (!query || r.dataset.name.indexOf(query) !== -1) ? "" : "none";
+        });
+      });
+
+      await EA.confirmDialog({
+        title:       "Coverage — " + (camp.campaign_name || ""),
+        body:        wrap,
+        okLabel:     "Done",
+        cancelLabel: "Close",
+      });
     }
 
     load();

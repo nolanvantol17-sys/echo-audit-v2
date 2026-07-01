@@ -1935,6 +1935,146 @@ def delete_campaign(campaign_id):
 
 
 # ═══════════════════════════════════════════════════════════════
+# COVERAGE CHECKLIST  (per-campaign, per-property call targets)
+# ═══════════════════════════════════════════════════════════════
+#
+# Each campaign has, per property, a target number of calls (default 1). Admins
+# raise it (e.g. Bellevue = 3) or set it to 0 to drop a property from that
+# campaign's checklist. Only exceptions are stored (campaign_location_targets);
+# absence of a row = default 1. Progress (green/red/empty boxes) is DERIVED from
+# interactions by coverage_checklist. See COVERAGE_CHECKLIST_SPEC.md.
+
+
+def _campaign_universe_location_ids(conn, project_row, company_id):
+    """Properties on a campaign's checklist = its project's location scope.
+    project_all_locations => every active company location; otherwise the
+    project's single location (projects -> phone_routing -> locations)."""
+    if project_row.get("project_all_locations"):
+        cur = conn.execute(
+            q("""SELECT location_id FROM locations
+                 WHERE company_id = ? AND location_deleted_at IS NULL
+                 ORDER BY location_name"""),
+            (company_id,),
+        )
+        return [_row_to_dict(r)["location_id"] for r in cur.fetchall()]
+    row = _row_to_dict(conn.execute(
+        q("""SELECT phr.location_id
+             FROM projects p
+             LEFT JOIN phone_routing phr ON phr.phone_routing_id = p.phone_routing_id
+             WHERE p.project_id = ?"""),
+        (project_row["project_id"],),
+    ).fetchone())
+    lid = row.get("location_id") if row else None
+    return [lid] if lid else []
+
+
+@api_bp.route("/campaigns/<int:campaign_id>/coverage", methods=["GET"])
+@login_required
+@role_required("caller", "admin", "super_admin")
+def get_campaign_coverage(campaign_id):
+    """Coverage Checklist for a campaign: every in-scope property with its target
+    and derived box state (green/red/empty/covered), plus a rollup. Powers both
+    the admin config editor and (later) the property-picker boxes."""
+    from coverage_checklist import coverage_for_campaign
+
+    company_id, err = _require_company()
+    if err: return err
+
+    conn = get_conn()
+    try:
+        camp = _row_to_dict(_get_campaign_in_company(conn, campaign_id, company_id))
+        if not camp:
+            return _err("Campaign not found", 404)
+        project = _get_project(conn, camp["project_id"], company_id)
+        if not project:
+            return _err("Project not found", 404)
+
+        location_ids = _campaign_universe_location_ids(
+            conn, _row_to_dict(project), company_id)
+        if not location_ids:
+            return jsonify({"campaign_id": campaign_id, "properties": [],
+                            "summary": {"on_checklist": 0, "covered": 0, "remaining": 0}})
+
+        ph = ",".join(["?"] * len(location_ids))
+        names = {}
+        for r in conn.execute(
+            q(f"SELECT location_id, location_name FROM locations WHERE location_id IN ({ph})"),
+            tuple(location_ids),
+        ).fetchall():
+            d = _row_to_dict(r)
+            names[d["location_id"]] = d["location_name"]
+
+        boxes = coverage_for_campaign(campaign_id, location_ids, conn=conn)
+    finally:
+        conn.close()
+
+    properties = []
+    for lid in location_ids:
+        properties.append({"location_id": lid,
+                           "location_name": names.get(lid, ""),
+                           **boxes.get(lid, {})})
+    properties.sort(key=lambda p: (p["location_name"] or "").lower())
+
+    on_checklist = [p for p in properties if p.get("target", 0) > 0]
+    covered = [p for p in on_checklist if p.get("covered")]
+    summary = {"on_checklist": len(on_checklist), "covered": len(covered),
+               "remaining": len(on_checklist) - len(covered)}
+    return jsonify({"campaign_id": campaign_id, "properties": properties,
+                    "summary": summary})
+
+
+@api_bp.route("/campaigns/<int:campaign_id>/coverage/<int:location_id>", methods=["PUT"])
+@login_required
+@role_required("admin", "super_admin")
+def set_campaign_coverage_target(campaign_id, location_id):
+    """Upsert one property's call target for a campaign. target_calls must be an
+    int >= 0; 0 excludes the property from the checklist."""
+    company_id, err = _require_company()
+    if err: return err
+
+    body = _body()
+    try:
+        target = int(body.get("target_calls"))
+    except (TypeError, ValueError):
+        return _err("target_calls must be an integer >= 0", 400)
+    if target < 0:
+        return _err("target_calls must be >= 0", 400)
+
+    conn = get_conn()
+    try:
+        if not _get_campaign_in_company(conn, campaign_id, company_id):
+            return _err("Campaign not found", 404)
+        if not _get_location(conn, location_id, company_id):
+            return _err("Location not found", 404)
+
+        # Portable upsert: UPDATE, then INSERT if no row existed.
+        cur = conn.execute(
+            q("""UPDATE campaign_location_targets
+                 SET target_calls = ?, clt_updated_at = CURRENT_TIMESTAMP
+                 WHERE campaign_id = ? AND location_id = ?"""),
+            (target, campaign_id, location_id),
+        )
+        if not cur.rowcount:
+            conn.execute(
+                q("""INSERT INTO campaign_location_targets
+                         (campaign_id, location_id, target_calls)
+                     VALUES (?, ?, ?)"""),
+                (campaign_id, location_id, target),
+            )
+        write_audit_log(
+            current_user.user_id, ACTION_UPDATED, ENTITY_CAMPAIGN, campaign_id,
+            metadata={"coverage_target": {"location_id": location_id,
+                                          "target_calls": target}},
+            conn=conn,
+        )
+        conn.commit()
+        return jsonify({"campaign_id": campaign_id, "location_id": location_id,
+                        "target_calls": target})
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════
 # GET /api/projects/<id>/summary   — project hub page payload
 # ═══════════════════════════════════════════════════════════════
 #

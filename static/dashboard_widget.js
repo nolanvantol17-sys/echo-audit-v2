@@ -265,6 +265,18 @@
     }
     .daw-popover-row:hover { background: var(--surface-2); }
     .daw-popover-row input { margin: 0; }
+    .daw-popover-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .daw-cov {
+      display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 3px;
+      flex: 0 1 auto; max-width: 55%; margin-left: auto; cursor: default;
+    }
+    .daw-cov-box {
+      width: 14px; height: 14px; border-radius: 3px; font-size: 9px; line-height: 14px;
+      text-align: center; border: 1px solid var(--border); box-sizing: border-box;
+    }
+    .daw-cov-g { background: #1f7a3d; border-color: #1f7a3d; color: #fff; }
+    .daw-cov-r { background: #a12d2d; border-color: #a12d2d; color: #fff; }
+    .daw-cov-e { background: transparent; color: transparent; }
     .daw-popover-empty {
       padding: 10px; color: var(--muted); font-size: 0.82rem; text-align: center;
     }
@@ -334,6 +346,8 @@
     options = options || {};
     const allLabel = options.allLabel || "All";
     const onChange = options.onChange || function () {};
+    // Optional: fn(id) -> extra trailing HTML for a row (e.g. coverage boxes).
+    const rowDecorator = options.rowDecorator || function () { return ""; };
     const filterRows = options.filterRows || null;  // optional fn(item, state) → bool
 
     const labelEl = button.querySelector(".daw-ms-label");
@@ -418,7 +432,8 @@
           '<label class="daw-popover-row">' +
             '<input type="checkbox" data-id="' + it.id + '"' +
               (checked ? " checked" : "") + '>' +
-            '<span>' + EA.esc(it.name || ("#" + it.id)) + '</span>' +
+            '<span class="daw-popover-name">' + EA.esc(it.name || ("#" + it.id)) + '</span>' +
+            rowDecorator(it.id) +
           '</label>'
         );
       }).join("");
@@ -944,10 +959,57 @@
       canvasEl.style.visibility = "visible";
     }
 
+    // ── Coverage Checklist boxes (analytics location dropdown) ──
+    // Additive: boxes appear next to each property in the Locations filter ONLY
+    // when exactly one campaign is selected (coverage is per-campaign). Any
+    // failure leaves the dropdown exactly as it was — the filter never breaks.
+    let coverageBoxesByLoc = {};
+
+    function coverageBoxHtml(p) {
+      const target = Math.max(0, p.target | 0);
+      if (target <= 0) return "";
+      const answered = Math.max(0, p.answered | 0);
+      const noAns    = Math.max(0, p.no_answer | 0);
+      const green = Math.min(answered, target);
+      const red   = Math.min(noAns, target - green);
+      const empty = target - green - red;
+      let s = '<span class="daw-cov" title="' + answered + ' answered · ' +
+              noAns + ' no-answer · ' + (answered + noAns) + ' attempts">';
+      for (let i = 0; i < green; i++) s += '<span class="daw-cov-box daw-cov-g">✓</span>';
+      for (let i = 0; i < red;   i++) s += '<span class="daw-cov-box daw-cov-r">✗</span>';
+      for (let i = 0; i < empty; i++) s += '<span class="daw-cov-box daw-cov-e">▢</span>';
+      return s + '</span>';
+    }
+
+    async function refreshCoverage() {
+      try {
+        const camp = campMS.get();
+        if (camp.all || camp.ids.length !== 1) {
+          coverageBoxesByLoc = {};
+          locMS.refreshList();
+          return;
+        }
+        const data = await EA.fetchJSON(
+          "/api/campaigns/" + encodeURIComponent(camp.ids[0]) + "/coverage");
+        const map = {};
+        ((data && data.properties) || []).forEach((p) => {
+          const html = coverageBoxHtml(p);
+          if (html) map[p.location_id] = html;
+        });
+        coverageBoxesByLoc = map;
+        locMS.refreshList();
+      } catch (e) {
+        coverageBoxesByLoc = {};
+        try { locMS.refreshList(); } catch (_) {}
+        console.warn("coverage fetch failed:", e);
+      }
+    }
+
     // Multi-selects
     const locMS = createMultiSelect(root.querySelector('[data-key="locations"]'), {
       allLabel: "All Locations",
       onChange: () => { narrowPhoneRoutingsByLocation(); reload(); },
+      rowDecorator: (id) => coverageBoxesByLoc[id] || "",
     });
     const callerMS = createMultiSelect(root.querySelector('[data-key="callers"]'), {
       allLabel: "All Callers",
@@ -959,7 +1021,7 @@
     });
     const campMS = createMultiSelect(root.querySelector('[data-key="campaigns"]'), {
       allLabel: "All Campaigns",
-      onChange: reload,
+      onChange: () => { refreshCoverage(); reload(); },
     });
 
     // ── Hydrate widget state from window.location.search ──
@@ -1328,6 +1390,8 @@
         // Now that location names are known, refresh the host's "viewing"
         // header (reflects any selection hydrated from a shared link).
         notifyLocations();
+        // Paint coverage boxes if the hydrated state is a single campaign.
+        refreshCoverage();
       } catch (err) {
         // Filters are non-critical — chart still works with no options.
         console.warn("Failed to load filter options:", err);

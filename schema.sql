@@ -604,6 +604,42 @@ CREATE TRIGGER trg_campaigns_updated_at BEFORE UPDATE ON campaigns
 
 
 -- ================================================================
+-- 14d. campaign_location_targets  (Coverage Checklist)
+-- ================================================================
+-- Per-campaign, per-property call target ("Coverage Checklist"). A row here
+-- OVERRIDES the implicit default of 1 call for that property in that campaign;
+-- target_calls = 0 means the property is intentionally EXCLUDED from the
+-- campaign's checklist. Absence of a row = default target 1 — so we store ONLY
+-- exceptions (overrides + exclusions), never one row per property. Coverage
+-- PROGRESS is derived by counting interactions (campaign_id +
+-- interaction_location_id), never stored here.
+-- ================================================================
+CREATE TABLE campaign_location_targets (
+    campaign_location_target_id SERIAL PRIMARY KEY,
+    campaign_id   INTEGER NOT NULL
+                      REFERENCES campaigns (campaign_id) ON DELETE CASCADE,
+    location_id   INTEGER NOT NULL
+                      REFERENCES locations (location_id) ON DELETE CASCADE,
+    target_calls  INTEGER NOT NULL DEFAULT 1,
+    clt_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    clt_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT chk_clt_target_nonneg CHECK (target_calls >= 0)
+);
+
+CREATE UNIQUE INDEX uq_campaign_location_target
+    ON campaign_location_targets (campaign_id, location_id);
+CREATE INDEX idx_clt_campaign_id
+    ON campaign_location_targets (campaign_id);
+
+CREATE OR REPLACE FUNCTION set_clt_updated_at() RETURNS TRIGGER AS $$
+BEGIN NEW.clt_updated_at = NOW(); RETURN NEW; END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER trg_clt_updated_at BEFORE UPDATE ON campaign_location_targets
+    FOR EACH ROW EXECUTE FUNCTION set_clt_updated_at();
+
+
+-- ================================================================
 -- 15. interactions
 -- ================================================================
 -- Tenant scope is derived through interaction → project, but the

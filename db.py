@@ -677,6 +677,33 @@ _ADDITIVE_MIGRATIONS = [
             UPDATE companies SET company_respondent_count_backfilled_at = NOW();
         END IF;
     END $$""",
+
+    # Coverage Checklist — per-campaign, per-property call target. A row OVERRIDES
+    # the implicit default of 1 call for that (campaign, location); target_calls = 0
+    # EXCLUDES the property from that campaign's checklist. Absence of a row = default
+    # 1, so we store only exceptions (overrides + exclusions). Progress is derived from
+    # interactions, never stored. Full CREATE TABLE IF NOT EXISTS so it also lands on
+    # the existing prod DB (which skips schema.sql) — mirrors the schema.sql block.
+    """CREATE TABLE IF NOT EXISTS campaign_location_targets (
+        campaign_location_target_id SERIAL PRIMARY KEY,
+        campaign_id   INTEGER NOT NULL REFERENCES campaigns (campaign_id) ON DELETE CASCADE,
+        location_id   INTEGER NOT NULL REFERENCES locations (location_id) ON DELETE CASCADE,
+        target_calls  INTEGER NOT NULL DEFAULT 1,
+        clt_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        clt_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT chk_clt_target_nonneg CHECK (target_calls >= 0)
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_campaign_location_target ON campaign_location_targets (campaign_id, location_id)",
+    "CREATE INDEX IF NOT EXISTS idx_clt_campaign_id ON campaign_location_targets (campaign_id)",
+    """CREATE OR REPLACE FUNCTION set_clt_updated_at() RETURNS TRIGGER AS $$
+    BEGIN NEW.clt_updated_at = NOW(); RETURN NEW; END;
+    $$ LANGUAGE plpgsql""",
+    """DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_clt_updated_at') THEN
+            CREATE TRIGGER trg_clt_updated_at BEFORE UPDATE ON campaign_location_targets
+                FOR EACH ROW EXECUTE FUNCTION set_clt_updated_at();
+        END IF;
+    END $$""",
 ]
 
 
