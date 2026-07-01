@@ -224,6 +224,22 @@
     margin-top: 12px;
   }
 
+  /* ── Coverage Checklist strip (per campaign + selected property) ──
+     Mirrors the admin Coverage editor palette (project_hub.html) so callers
+     see the same boxes here. Shown the moment a property is picked. */
+  .gf-cov { margin-top: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .gf-cov[hidden] { display: none !important; }
+  .gf-cov-boxes { display: inline-flex; gap: 3px; cursor: default; }
+  .gf-cov-box {
+    width: 15px; height: 15px; border-radius: 3px; font-size: 10px; line-height: 15px;
+    text-align: center; border: 1px solid var(--border); box-sizing: border-box;
+  }
+  .gf-cov-g { background: #1f7a3d; border-color: #1f7a3d; color: #fff; }
+  .gf-cov-r { background: #a12d2d; border-color: #a12d2d; color: #fff; }
+  .gf-cov-e { background: transparent; color: transparent; }
+  .gf-cov-label { font-size: 12px; color: var(--muted, #9aa0a6); }
+  .gf-cov-done .gf-cov-label { color: #3ea866; font-weight: 600; }
+
   /* ── Property intel card (shown when a location is selected) ── */
   .intel-card {
     margin-top: 14px;
@@ -784,6 +800,7 @@
         </select>
         <div id="gf-location-phone" class="muted text-small" style="margin-top:4px;" hidden></div>
         <div id="gf-location-empty" class="muted text-small" style="margin-top:4px;" hidden></div>
+        <div id="gf-location-coverage" class="gf-cov" hidden></div>
       </div>
       <div class="field">
         <label class="field-label" for="gf-campaign">Campaign</label>
@@ -1468,6 +1485,68 @@
     $("#form-hint").textContent = "";
     refreshLocationIntel(locId);
     loadLocationNotes(locId);
+    refreshGradeCoverage();
+  }
+
+  // ── Coverage Checklist strip (per campaign + selected property) ──────
+  // Shows the selected property's call-target progress as colored boxes the
+  // instant a location is picked — the same boxes the admin sets in the
+  // Coverage editor. Coverage is per-campaign, so this needs BOTH a campaign
+  // (from the combobox) and a location. Fully defensive: any failure just
+  // hides the strip and never blocks grading. A monotonic seq guards against
+  // rapid campaign/location switches racing.
+  let gradeCovSeq = 0;
+
+  function gradeCovBoxesHtml(p) {
+    const green = Math.max(0, p.green | 0);
+    const red   = Math.max(0, p.red   | 0);
+    const empty = Math.max(0, p.empty | 0);
+    let html = "";
+    for (let i = 0; i < green; i++) html += '<span class="gf-cov-box gf-cov-g">✓</span>';
+    for (let i = 0; i < red;   i++) html += '<span class="gf-cov-box gf-cov-r">✗</span>';
+    for (let i = 0; i < empty; i++) html += '<span class="gf-cov-box gf-cov-e">▢</span>';
+    return html;
+  }
+
+  async function refreshGradeCoverage() {
+    const strip = document.getElementById("gf-location-coverage");
+    if (!strip) return;
+    const campaignId = state.campaignCombo ? state.campaignCombo.getValue() : null;
+    const locId = $("#gf-location").value;
+    if (!campaignId || !locId) { strip.hidden = true; strip.innerHTML = ""; return; }
+    const seq = ++gradeCovSeq;
+    let data;
+    try {
+      data = await EA.fetchJSON(
+        "/api/campaigns/" + encodeURIComponent(campaignId) + "/coverage"
+      );
+    } catch (err) {
+      if (seq === gradeCovSeq) { strip.hidden = true; strip.innerHTML = ""; }
+      return;  // non-fatal — grading is never blocked by coverage
+    }
+    if (seq !== gradeCovSeq) return;  // a newer request superseded this one
+    const props = (data && data.properties) || [];
+    const p = props.find(function (x) { return String(x.location_id) === String(locId); });
+    if (!p || (p.target | 0) === 0) {
+      // Unknown location, or set to 0 (excluded from the checklist) — hide.
+      strip.hidden = true; strip.innerHTML = "";
+      return;
+    }
+    const target   = p.target | 0;
+    const green    = p.green  | 0;
+    const done     = !!p.covered;
+    const attempts = (p.answered | 0) + (p.no_answer | 0);
+    strip.classList.toggle("gf-cov-done", done);
+    strip.innerHTML =
+      '<span class="gf-cov-boxes" title="' +
+        (p.answered | 0) + ' answered · ' + (p.no_answer | 0) +
+        ' no-answer · ' + attempts + ' attempts">' +
+        gradeCovBoxesHtml(p) +
+      '</span>' +
+      '<span class="gf-cov-label">' +
+        (done ? '✓ Coverage met' : (green + ' of ' + target + ' calls done')) +
+      '</span>';
+    strip.hidden = false;
   }
 
   // Toggle the render-on-demand project field. Visible only when the user
@@ -1513,6 +1592,7 @@
     if (String(state.campaignProjectId) === String(projectId) && state.campaignCombo) {
       // Same project — just apply the preferred pre-selection if asked.
       if (preferId !== null) state.campaignCombo.setValue(preferId);
+      refreshGradeCoverage();
       return;
     }
     try {
@@ -1561,6 +1641,7 @@
       placeholder: items.length ? "Select or create…" : "No campaigns yet — type to create.",
       createLabel: "Create '{q}'",
       emptyLabel: "No campaigns yet — type to create.",
+      onSelect: function () { refreshGradeCoverage(); },
       onCreate: async function (name) {
         try {
           const created = await EA.fetchJSON(
@@ -1575,6 +1656,7 @@
       },
     });
     dbg("mountCampaignCombo:done", { projectId: projectId });
+    refreshGradeCoverage();
   }
 
   function destroyCampaignCombo() {
@@ -2664,6 +2746,9 @@
     switchTab(state.activePanel || (window.MediaRecorder ? "record" : "upload"));
     // Form section stays visible — no modal in split-pane mode. Don't
     // touch project/location/campaign/intel-card — those are preserved.
+    // Coverage boxes DO refresh: the call just logged should turn a box
+    // green (or red) immediately, since location + campaign are preserved.
+    refreshGradeCoverage();
   }
 
   // ── No-answer flow ─────────────────────────────────
